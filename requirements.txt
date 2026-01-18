@@ -1,0 +1,10 @@
+Flask
+MetaTrader5
+pandas
+pandas_ta
+numpy
+requests
+waitress
+python-dotenv
+colorama
+pyinstaller

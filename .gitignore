@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# Database & Logs
+*.db
+*.log
+logs/
+data/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# PST Specific
+PailsSentinelTrade/Tools/migrate_to_pst.py
+
+# Distribution
+build/
+dist/
+*.spec

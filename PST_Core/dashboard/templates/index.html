@@ -1,0 +1,2580 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PAILS SENTINEL TRADE</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- USANDO VERSION ESPECIFICA PARA EVITAR ERRORES DE API -->
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --accent: #38bdf8;
+            --trend: #22c55e;
+            --range: #6366f1;
+            --volatile: #f59e0b;
+            --text: #f1f5f9;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            background-image: radial-gradient(circle at 50% -20%, #1e293b, #0f172a);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 30px;
+        }
+
+        .title-group h1 {
+            margin: 0;
+            font-size: 24px;
+            background: linear-gradient(90deg, #fff, var(--accent));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            padding: 20px;
+            margin-bottom: 80px; 
+        }
+
+        /* Grid Layout */
+        #symbols-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 50px; /* Increased to 50px to fix overlap */
+            padding-bottom: 60px;
+            /* align-items: stretch; (Default) ensures equal height cards in row */
+        }
+
+        .grid {
+            display: grid;
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: transform 0.3s ease, border 0.3s ease;
+            cursor: pointer;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            border: 1px solid var(--accent);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .symbol { font-weight: 700; font-size: 18px; }
+        
+        .badge {
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-trend { background: rgba(34, 197, 94, 0.2); color: var(--trend); }
+        .badge-range { background: rgba(99, 102, 241, 0.2); color: var(--range); }
+        .badge-volatile { background: rgba(245, 158, 11, 0.2); color: var(--volatile); }
+
+        .price { font-size: 28px; font-weight: 300; margin: 10px 0; color: #fff; }
+        .adx { color: #94a3b8; font-size: 13px; }
+
+        .signals-box {
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 25px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; color: #64748b; font-size: 12px; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        td { padding: 12px 10px; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; }
+
+        .buy-signal { color: var(--trend); font-weight: 600; }
+        .sell-signal { color: #ef4444; font-weight: 600; }
+
+        /* Card Layout */
+        .card {
+            background: rgba(30, 41, 59, 0.7);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+        .card:hover { transform: translateY(-5px); border-color: var(--accent); }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .symbol { font-weight: 800; font-size: 1.2rem; }
+        
+        .card-header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-toggle {
+            cursor: pointer;
+            opacity: 0.5;
+            transition: 0.2s;
+            font-size: 14px;
+            padding: 4px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.05);
+        }
+        .card-toggle:hover { opacity: 1; color: var(--trend); background: rgba(255,255,255,0.1); }
+
+        .market-closed {
+            filter: grayscale(0.8);
+            opacity: 0.7;
+        }
+        .market-closed .card-toggle, .market-closed .btn-close {
+            pointer-events: auto;
+        }
+        .status-closed {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 11px;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            margin-top: 15px;
+            text-transform: uppercase;
+        }
+
+        .tech-data-view {
+            padding: 10px 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .tech-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .tech-label { color: #64748b; font-size: 9px; text-transform: uppercase; font-weight: 700; }
+        .tech-value { font-family: monospace; font-weight: 600; font-size: 13px; }
+        .tech-footer {
+            grid-column: span 2;
+            text-align: center;
+            padding-top: 10px;
+            font-size: 10px;
+            opacity: 0.5;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            margin-top: 5px;
+        }
+
+        /* Quick Stats Bar */
+        .quick-stats {
+            display: flex;
+            gap: 15px;
+            margin: 10px 0;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            font-size: 11px;
+        }
+        .qs-item { display: flex; align-items: center; gap: 5px; }
+        .qs-label { color: #64748b; font-weight: 700; font-size: 9px; }
+        .qs-value { font-weight: 600; }
+        
+        /* Toggle Trading Mode */
+        .mode-toggle {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: rgba(255,255,255,0.03);
+            padding: 8px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 34px;
+            height: 20px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #475569;
+            transition: .4s;
+            border-radius: 34px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px; width: 14px;
+            left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: var(--trend); }
+        input:checked + .slider:before { transform: translateX(14px); }
+        .mode-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #94a3b8; }
+        .mode-label.active { color: #fff; }
+
+        .btn-reset {
+            background: rgba(239, 68, 68, 0.05);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.1);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 9px;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            line-height: 1.2;
+        }
+        .btn-reset:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--trend);
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: var(--bg);
+            width: 85%;
+            max-width: 1000px;
+            height: 600px;
+            border-radius: 20px;
+            border: 1px solid var(--accent);
+            padding: 30px;
+            position: relative;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        }
+        #chart-container { 
+            width: 100%; 
+            height: 480px; 
+            margin-top: 20px;
+            background: #111827;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .close-btn {
+            position: absolute; top: 20px; right: 20px;
+            color: #fff; cursor: pointer; font-size: 24px;
+        }
+
+        /* Responsive Improvements */
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 20px;
+            }
+            #account-status {
+                flex-wrap: wrap;
+                gap: 15px;
+                text-align: left !important;
+                justify-content: flex-start;
+            }
+            .modal-content {
+                width: 95%;
+                padding: 15px;
+                height: 80vh;
+            }
+            #chart-container {
+                height: 350px;
+            }
+        }
+        /* Botones de Trading */
+        .trade-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .btn-trade {
+            flex: 1;
+            padding: 8px 0;
+            border-radius: 8px;
+            border: none;
+            font-weight: 700;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+        .btn-buy {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--trend);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .btn-buy:hover { background: var(--trend); color: #000; }
+        
+        .btn-sell {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .btn-sell:hover { background: #ef4444; color: #fff; }
+
+        .btn-close {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid #ef4444;
+            margin-top: 10px;
+            width: 100%;
+            padding: 8px 0;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-close:hover { background: #ef4444; color: #fff; }
+
+        .btn-emergency {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid #ef4444;
+            padding: 5px 15px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .btn-emergency:hover { background: #ef4444; color: #fff; }
+
+        /* HUD Overlay bar below chart */
+        .chart-hud {
+            display: none; /* Se activa al cargar chart */
+            background: rgba(15, 23, 42, 0.9);
+            padding: 10px 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+        .hud-group { display: flex; align-items: center; gap: 10px; }
+        .hud-label { font-size: 9px; color: #94a3b8; font-weight: 700; text-transform: uppercase; }
+        .hud-value { font-size: 13px; font-weight: 800; font-family: monospace; color: var(--accent); }
+        .hud-score { font-size: 16px; font-weight: 900; color: var(--trend); }
+        .hud-signal { font-size: 11px; font-weight: 800; background: rgba(34, 197, 94, 0.1); color: var(--trend); padding: 4px 10px; border-radius: 6px; }
+
+        /* Tooltip container */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+            cursor: help;
+        }
+
+        /* Tooltip text */
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 250px;
+            background-color: #0f172a;
+            color: #e2e8f0;
+            text-align: left;
+            border-radius: 8px;
+            padding: 12px;
+            position: absolute;
+            z-index: 10000; /* Increased Z-Index */
+            bottom: 140%; /* Slightly higher */
+            left: 0; /* Align Left */
+            margin-left: 0; /* Remove Center offset */
+            opacity: 0;
+            transition: opacity 0.2s;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            font-size: 11px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            line-height: 1.4;
+            pointer-events: none;
+        }
+
+        /* Triangle Arrow (Optional but nice) */
+        .tooltip .tooltiptext::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 10px; /* Aligned with left start */
+            margin-left: 0;
+            border-width: 6px;
+            border-style: solid;
+            border-color: rgba(56, 189, 248, 0.3) transparent transparent transparent;
+        }
+
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .tooltip-header {
+            font-weight: bold;
+            color: #38bdf8;
+            margin-bottom: 5px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 3px;
+            font-size: 12px;
+        }
+        
+        .tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title-group">
+            <h1>PAILS SENTINEL TRADE <small id="version-tag" style="font-size: 10px; opacity: 0.5;">v6.2.2-FINAL</small></h1>
+            <div style="font-size: 12px; color: #94a3b8; margin-top: 5px;">
+                <span id="bot-status-dot" class="live-dot"></span> <span id="bot-status-text">MOTOR ONLINE</span>
+            </div>
+        </div>
+        <div id="account-status" style="display: flex; gap: 40px; align-items: center;">
+            <!-- Panel de Control Core -->
+            <div style="display: flex; gap: 20px; align-items: center; background: rgba(255,255,255,0.03); padding: 10px 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+                <div class="mode-toggle" style="background: none; border: none; padding: 0;">
+                    <span class="mode-label" style="font-size: 9px; opacity: 0.7; margin-bottom: 2px;">MODO TRADING</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="mode-label" id="label-manual">Manual</span>
+                        <label class="switch">
+                            <input type="checkbox" id="mode-checkbox" onchange="toggleTradingMode()">
+                            <span class="slider"></span>
+                        </label>
+                        <span class="mode-label" id="label-auto">Auto</span>
+                    </div>
+                </div>
+                <div style="width: 1px; height: 30px; background: rgba(255,255,255,0.1);"></div>
+                <button class="btn-reset" onclick="resetDashboardData()" style="padding: 5px 12px; border-radius: 6px; margin: 0; min-width: 90px; height: 34px;">♻️ Limpiar<br>DB</button>
+            </div>
+
+            <!-- Stats Financieras -->
+            <div style="display: flex; gap: 30px;">
+                <div class="stats-item">
+                    <div style="font-size: 10px; color: #64748b; font-weight: 800; text-transform: uppercase;">Balance</div>
+                    <div id="balance-val" style="font-size: 18px; font-weight: 600; color: #fff;">$0.00</div>
+                </div>
+                <div class="stats-item">
+                    <div style="font-size: 10px; color: #64748b; font-weight: 800; text-transform: uppercase;">Equity</div>
+                    <div id="equity-val" style="font-size: 18px; font-weight: 600; color: #fff;">$0.00</div>
+                </div>
+                <div class="stats-item">
+                    <div style="font-size: 10px; color: #64748b; font-weight: 800; text-transform: uppercase;">P&L Total</div>
+                    <div id="pnl-val" style="font-size: 18px; font-weight: 600;">$0.00</div>
+                </div>
+            </div>
+            <button class="btn-emergency" onclick="openStats()">📊 ESTADÍSTICAS</button>
+
+            <button class="btn-emergency" onclick="closeAllPositions()">CERRAR TODO</button>
+        </div>
+    </div>
+
+    <div class="grid" id="symbols-grid">
+        <!-- Tarjetas de símbolos cargadas por JS -->
+    </div>
+
+    <div class="signals-box" style="display: none;">
+        <h3 style="margin-top: 0;">Historial de Operaciones Cierres <small style="color: #64748b; font-size: 11px;">(Últimas 15 ejecutadas)</small></h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>CIERRE</th>
+                    <th>SÍMBOLO</th>
+                    <th>TIPO</th>
+                    <th>LOTE</th>
+                    <th>ENTRADA</th>
+                    <th>SALIDA</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody id="signals-table">
+                <!-- Operaciones cargadas por JS -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- MODAL DE ESTADÍSTICAS AVANZADAS -->
+    <div id="stats-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h2>📈 Rendimiento Histórico</h2>
+                <span class="close-btn" onclick="closeStats()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <!-- KPI Cards -->
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 25px;">
+                    <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 12px; color: #94a3b8;">BENEFICIO NETO</div>
+                        <div id="stat-net-profit" style="font-size: 24px; font-weight: bold; margin-top: 5px;">---</div>
+                    </div>
+                    <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 12px; color: #94a3b8;">WIN RATE</div>
+                        <div id="stat-win-rate" style="font-size: 24px; font-weight: bold; margin-top: 5px; color: var(--trend);">---</div>
+                    </div>
+                    <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 12px; color: #94a3b8;">TOTAL TRADES</div>
+                        <div id="stat-total-trades" style="font-size: 24px; font-weight: bold; margin-top: 5px;">---</div>
+                    </div>
+                    <div class="stat-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 12px; color: #94a3b8;">PROFIT FACTOR</div>
+                        <div id="stat-profit-factor" style="font-size: 24px; font-weight: bold; margin-top: 5px;">---</div>
+                    </div>
+                </div>
+
+                <!-- Best/Worst Performers -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 25px;">
+                    <div style="background: rgba(16, 185, 129, 0.1); padding: 15px; border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.2);">
+                        <div style="font-size: 12px; color: var(--trend); font-weight: bold;">💎 MEJOR ACTIVO</div>
+                        <div id="stat-best-symbol" style="font-size: 18px; margin-top: 5px;">---</div>
+                        <div id="stat-best-pnl" style="font-size: 14px; opacity: 0.8;">---</div>
+                    </div>
+                    <div style="background: rgba(239, 68, 68, 0.1); padding: 15px; border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.2);">
+                        <div style="font-size: 12px; color: #ef4444; font-weight: bold;">💀 PEOR ACTIVO</div>
+                        <div id="stat-worst-symbol" style="font-size: 18px; margin-top: 5px;">---</div>
+                        <div id="stat-worst-pnl" style="font-size: 14px; opacity: 0.8;">---</div>
+                    </div>
+                </div>
+
+                <!-- Symbol Detail Table (Scrollable) -->
+                <h3 style="font-size: 16px; margin-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px;">Detalle por Símbolo</h3>
+                <div style="overflow-y: auto; max-height: 300px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                        <thead style="position: sticky; top: 0; background: #0f172a; z-index: 1;">
+                            <tr style="text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                                <th style="padding: 10px;">Símbolo</th>
+                                <th style="padding: 10px; text-align: center;">Trades</th>
+                                <th style="padding: 10px; text-align: center;">Win Rate</th>
+                                <th style="padding: 10px; text-align: right;">P&L Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stats-table-body">
+                            <!-- Populated via JS -->
+                        </tbody>
+                    </table>
+                </div>
+                <!-- IMPORT BUTTON -->
+                <div style="margin-top: 20px; text-align: right; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
+                    <button onclick="importHistory()" style="background: rgba(37, 99, 235, 0.2); border: 1px solid #3b82f6; color: #60a5fa; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                        📥 IMPORTAR HISTORIAL (30 DÍAS)
+                    </button>
+                    <div style="font-size: 9px; color: #64748b; margin-top: 5px;">*Úsalo solo si las estadísticas están vacías. No duplica datos.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STRATEGY INSPECTOR MODAL -->
+    <div id="strategy-inspector-modal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.8); justify-content: center; align-items: center;">
+        <div class="modal-content" style="max-width: 750px;">
+            <div class="modal-header">
+                <h2 id="inspector-title">🧐 Inspector de Estrategia</h2>
+                <span class="close-btn" onclick="closeInspector()">&times;</span>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <!-- HEADER: SCORE + METRICS -->
+                <div style="display: flex; justify-content: center; align-items: center; gap: 30px; margin-bottom: 20px;">
+                    <!-- Left: Score Circle -->
+                    <div style="text-align: center;">
+                        <div style="position: relative; width: 90px; height: 90px; margin: 0 auto;">
+                            <svg viewBox="0 0 36 36" class="circular-chart orange">
+                                <path class="circle-bg" stroke="#334155" stroke-width="3" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                <path id="score-circle-path" class="circle" stroke="#3b82f6" stroke-dasharray="0, 100" stroke-width="3" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                            </svg>
+                            <div id="inspector-score" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 22px; font-weight: bold; color: #fff;">0</div>
+                        </div>
+                        <div style="margin-top: 5px; color: #64748b; font-size: 10px; font-weight: bold; letter-spacing: 1px;">PUNTUACIÓN</div>
+                    </div>
+
+                    <!-- Right: Global Metrics (Grid-like Wrap) -->
+                    <div id="inspector-header-metrics" style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-start; max-width: 500px;">
+                        <!-- Injected via JS -->
+                    </div>
+                </div>
+
+                <!-- Breakdown Table -->
+                <h3 style="font-size: 13px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; color: #cbd5e1;">Desglose de Factores</h3>
+                <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                    <tbody id="inspector-table-body">
+                        <!-- Populated via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- CHART MODAL (LIGHTWEIGHT CHARTS) -->
+    <div id="chart-modal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; background-color: rgba(0,0,0,0.9); justify-content: center; align-items: center;">
+        <div class="modal-content" style="width: 95%; max-width: 1000px; height: 80vh; display: flex; flex-direction: column; background: #111827; border: 1px solid #334155;">
+            <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding: 15px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <h2 id="modal-title" style="margin: 0; font-size: 18px; display: flex; align-items: center;">Análisis Técnico</h2>
+                    <!-- Timeframe Toolbar -->
+                    <div id="tf-toolbar" style="display: flex; gap: 5px; flex-wrap: wrap;">
+                        <button class="btn-buy" onclick="toggleLevelMode()" id="btn-draw-level" title="Nivel Horizontal" style="padding: 4px 8px; font-size: 14px; border-radius: 4px; border: 1px solid var(--trend);">🎯</button>
+                        <button class="btn-buy" onclick="startDrawTrendline('SUPPORT')" title="Dibujar Soporte (Verde)" style="padding: 4px 8px; font-size: 14px; border-radius: 4px; border: 1px solid #10b981; color: #10b981;">📉</button>
+                        <button class="btn-sell" onclick="startDrawTrendline('RESISTANCE')" title="Dibujar Resistencia (Roja)" style="padding: 4px 8px; font-size: 14px; border-radius: 4px; border: 1px solid #ef4444; color: #ef4444;">📈</button>
+                        <button class="btn-trade btn-sell" onclick="fixAutoChannels()" title="Fijar Canales Actuales" style="padding: 4px 8px; font-size: 14px; border-radius: 4px; border: 1px solid #f59e0b; color: #f59e0b;">🔒</button>
+                        <button class="btn-sell" onclick="resetUserLevels()" title="Borrar Todo" style="padding: 4px 8px; font-size: 14px; border-radius: 4px;">🗑️</button>
+                        
+                        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 5px;"></div>
+                        
+                        <!-- NEW: Checkboxes for Channels -->
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 3px;">
+                                <input type="checkbox" id="chk-macro" checked onchange="toggleChannelConfig()" style="accent-color: #FACC15;"> Mac
+                            </label>
+                            <label style="font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 3px;">
+                                <input type="checkbox" id="chk-tactical" checked onchange="toggleChannelConfig()" style="accent-color: #22D3EE;"> Tac
+                            </label>
+                        </div>
+
+                        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 5px;"></div>
+                        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 5px;"></div>
+                        <button class="tf-btn" onclick="loadChartData(currentSymbol, 'M1')">M1</button>
+                        <button class="tf-btn active" onclick="loadChartData(currentSymbol, 'M5')">M5</button>
+                        <button class="tf-btn" onclick="loadChartData(currentSymbol, 'M15')">M15</button>
+                        <button class="tf-btn" onclick="loadChartData(currentSymbol, 'M30')">M30</button>
+                        <button class="tf-btn" onclick="loadChartData(currentSymbol, 'H1')">H1</button>
+                        <button class="tf-btn" onclick="loadChartData(currentSymbol, 'H4')">H4</button>
+                        <button class="tf-btn" onclick="loadChartData(currentSymbol, 'D1')">D1</button>
+                        
+                        <div style="display: flex; align-items: center; gap: 10px; margin-left: 15px; background: rgba(0,0,0,0.3); padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);">
+                            <div style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #22D3EE; display: inline-block;"></span> <span style="font-size: 9px; opacity: 0.7;">Bot (Auto)</span></div>
+                            <div style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #ef4444; display: inline-block;"></span> <span style="font-size: 9px; opacity: 0.7;">Res manual</span></div>
+                            <div style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #22c55e; display: inline-block;"></span> <span style="font-size: 9px; opacity: 0.7;">Sup manual</span></div>
+                        </div>
+                    </div>
+                </div>
+                <span class="close-btn" onclick="closeModal()" style="font-size: 28px;">&times;</span>
+            </div>
+            
+            <style>
+                .tf-btn {
+                    background: transparent;
+                    border: 1px solid rgba(255,255,255,0.2);
+                    color: #94a3b8;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    font-weight: bold;
+                    transition: all 0.2s;
+                }
+                .tf-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+                .tf-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+            </style>
+            <div class="modal-body" style="flex-grow: 1; padding: 0; position: relative; display: flex; flex-direction: column;">
+                <div id="chart-container" style="width: 100%; flex-grow: 1;"></div>
+                <div id="chart-hud" class="chart-hud">
+                    <div class="hud-group" style="min-width: 120px;">
+                        <span class="hud-label" id="hud-lbl-up">Ref Res (Auto):</span>
+                        <span id="hud-dist-up" style="color: #ef4444; font-weight: bold; font-family: 'Roboto Mono', monospace;">--- %</span>
+                    </div>
+                    <div class="hud-group" style="min-width: 120px;">
+                        <span class="hud-label" id="hud-lbl-low">Ref Sup (Auto):</span>
+                        <span id="hud-dist-low" style="color: #10b981; font-weight: bold; font-family: 'Roboto Mono', monospace;">--- %</span>
+                    </div>
+                    <div class="hud-group">
+                        <span class="hud-label">Score:</span>
+                        <span id="hud-score-val" class="hud-score">0</span>
+                    </div>
+                     <div class="hud-group" style="border-left: 1px solid rgba(255,255,255,0.1); padding-left: 15px;">
+                        <span id="hud-signal-badge" style="padding: 3px 10px; border-radius: 4px; font-weight: bold; font-size: 13px; background: rgba(255,255,255,0.05); color: #94a3b8; letter-spacing: 0.5px;">WAIT</span>
+                         <span id="drawing-indicator" style="display: none; margin-left:10px; color: #f59e0b; font-weight: 800; animation: pulse 1s infinite;">✍️ DIBUJANDO...</span>
+                    </div>
+                    </div>
+                </div>
+                
+                <!-- NEW LEVELS LIST INTEGRATED INTO FOOTER -->
+                <div id="levels-list-container" style="background: #0f172a; border-top: 1px solid rgba(255,255,255,0.1); padding: 5px 15px;">
+                    <div style="font-size: 10px; color: #64748b; margin-bottom: 3px; font-weight: bold; text-transform: uppercase;">Detalle de Niveles Activos:</div>
+                    <div id="levels-list-items" style="display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px;">
+                         <!-- Items will be injected here as spans -->
+                         <div style="color: #475569;">Esperando datos...</div>
+                    </div>
+                </div>
+                
+                <!-- MONITOR REMOVED (Previous Location) -->
+                
+                <!-- MONITOR REMOVED FROM HERE -->
+            </div>
+        </div>
+    </div>
+    
+                <!-- MONITOR REMOVED FROM HERE -->
+
+    <!-- NUCLEAR MONITOR REMOVED -->
+
+    <script>
+        function closeInspector() {
+            document.getElementById('strategy-inspector-modal').style.display = 'none';
+        }
+
+        window.showStrategyInspector = function(symbol, forceType = null) {
+            const data = window.dashboardData;
+            if (!data || !data.regimes) return;
+            
+            const asset = data.regimes.find(r => r.symbol === symbol);
+            if (!asset) return;
+            const tech = asset.tech_data || {};
+            
+            // 1. Fetch latest details (Added timestamp for cache busting)
+            fetch(`/api/chart/${symbol}?tf=M5&t=${Date.now()}`)
+                .then(r => r.json())
+                .then(res => {
+                    const analysis = res.analysis || {};
+                    const tech_meta = analysis.strat_status || {};
+                    const levels_data = analysis.all_levels_data || [];
+                    
+                    const manualScore = asset.manual_score || 0;
+                    const autoScore = analysis.score || 0;
+                    const dashScore = (asset.tech_data && asset.tech_data.score) ? asset.tech_data.score : (asset.tech_data?.strat_status?.total_score || 0);
+                    
+                    // Determine which logic to show
+                    let scoreToDisplay = autoScore;
+                    let liveStratName = analysis.active_strategy || tech.active_strategy || "Signal Master PST";
+                    let stratName = liveStratName;
+                    let factors = analysis.factors || {}; // Default to best found by server
+                    
+                    // Logic override based on click source or priority
+                    const isManualSource = (forceType === 'MANUAL') || (!forceType && manualScore > 0 && manualScore >= autoScore);
+                    
+                    if (isManualSource) {
+                        scoreToDisplay = manualScore; // Fallback inicial
+                        stratName = "Niveles Manuales (PST)"; 
+                        
+                        // Strict search for Manual Levels only
+                        // Sort by proximity
+                        const manualLevels = levels_data.filter(l => l.source === 'MANUAL');
+                        if (manualLevels.length > 0) {
+                            // Sort logic: Prioritize active ones (score>0), then distance
+                            manualLevels.sort((a,b) => {
+                                if ((a.strat_score||0) !== (b.strat_score||0)) return (b.strat_score||0) - (a.strat_score||0);
+                                return Math.abs(a.dist||99) - Math.abs(b.dist||99);
+                            });
+                            
+                            const bestManual = manualLevels[0];
+                            // Extract factors from the manual level metadata explicitly
+                            factors = {
+                                "Acción": (bestManual.action_reco || 'N/A').replace('WATCH','VIGILAR').replace('BREAK','ROTURA').replace('BOUNCE','REBOTE'),
+                                "Tipo Nivel": (bestManual.type || 'N/A').replace('RESISTANCE','Resistencia').replace('SUPPORT','Soporte'),
+                                "Distancia": `${bestManual.dist || 0}%`,
+                                "Validación": bestManual.validation || "Standard"
+                            };
+                            
+                            // SYNC: Usar la puntuación en vivo del nivel para el círculo y el HUD del modal
+                            scoreToDisplay = bestManual.strat_score || 0;
+
+                            // BACK-SYNC TO DASHBOARD: Update local state so card matches modal immediately
+                            asset.manual_score = scoreToDisplay;
+                        } else {
+                            factors = { "Estado": "Sin niveles manuales activos" };
+                        }
+                    } else {
+                        // Auto Strategy Logic
+                        // Use active strategy from latest chart response or fallback to status
+                        if (tech.active_strategy && tech.active_strategy !== 'None') stratName = tech.active_strategy;
+                        else if (asset.tech_data && asset.tech_data.active_strategy) stratName = asset.tech_data.active_strategy;
+                        
+                        // If factors empty, try to derive basic info
+                        if (Object.keys(factors).length === 0) {
+                             if (analysis.score > 0) factors["Nota"] = "Análisis completo en logs";
+                             else factors["Estado"] = "Sin señal clara";
+                        }
+
+                        // BACK-SYNC TO DASHBOARD for Auto Strategy
+                        if (!asset.tech_data) asset.tech_data = {};
+                        asset.tech_data.score = scoreToDisplay;
+                    }
+
+                    // Update UI
+                    document.getElementById('inspector-title').innerHTML = `🧐 Análisis: ${symbol} <span style="font-size: 12px; color: #64748b; margin-left:10px;">(${stratName})</span> <span style="font-size: 9px; background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 2px 5px; border-radius: 4px; margin-left: 10px; border: 1px solid #10b981;">ANALISIS EN VIVO ⚡</span>`;
+                    document.getElementById('inspector-score').innerText = scoreToDisplay;
+                    
+                    // NEW: Show Dashboard Score for comparison (Transparency)
+                    const subLabel = document.createElement('div');
+                    subLabel.id = 'inspector-subscore';
+                    subLabel.style.cssText = "font-size: 9px; color: #64748b; margin-top: 2px;";
+                    subLabel.innerHTML = `ANTERIOR: ${dashScore}`;
+                    
+                    const scoreContainer = document.getElementById('inspector-score').parentElement;
+                    const oldSub = document.getElementById('inspector-subscore');
+                    if (oldSub) oldSub.remove();
+                    scoreContainer.appendChild(subLabel);
+
+                    const circle = document.getElementById('score-circle-path');
+                    circle.setAttribute('stroke-dasharray', `${scoreToDisplay}, 100`);
+                    circle.setAttribute('stroke', scoreToDisplay >= 70 ? '#10b981' : (scoreToDisplay >= 50 ? '#f59e0b' : '#ef4444'));
+
+                    const tbody = document.getElementById('inspector-table-body');
+                    const factorDescriptions = {
+                        "Acción": "La recomendación actual basada en el nivel y tendencia.",
+                        "Tipo Nivel": "Si es Soporte (Suelo) o Resistencia (Techo).",
+                        "Distancia": "Proximidad al nivel clave.",
+                        "RSI": "Estado del indicador de fuerza relativa.",
+                        "Volumen": "Confirmación de interés de mercado.",
+                        "Estado": "Estado del monitor (Neutral/Vigilar).",
+                        "Nivel Prox": "Distancia al nivel más cercano.",
+                        "Zona": "Zona de actuación (>0.4% Neutro, <0.08% Acción).",
+                        "Validación": "Criterios extra (RSI, Vol) cumplidos.",
+                        "Francotirador (Rango)": "Estrategia de reversión a la media (Bollinger + RSI) para mercados laterales.",
+                        "Tendencia Élite": "Estrategia de seguimiento de tendencia fuerte (H1 EMA + ADX).",
+                        "Tendencia (Pullback)": "Busca entradas en retrocesos dentro de una tendencia establecida.",
+                        "Ruptura Volatilidad": "Detecta explosiones de precio tras periodos de compresión (Squeeze).",
+                        "Cazador Divergencias": "Detecta discrepancias entre Precio y RSI (Reversiones tempranas).",
+                        "Contra-Noticia (Fade)": "Opera en contra de movimientos eufóricos insostenibles (Reversión a la media).",
+                        "Maestro de Sesión (ORB)": "Estrategia de ruptura del rango inicial de la sesión.",
+                        "Estado Rango Apertura": "Situación del precio respecto al Rango de Apertura.",
+                        "Alineación Tendencia": "Si la operación va a favor de la tendencia principal (EMA50).",
+                        "Patrón Divergencia": "Tipo de divergencia detectada (Regular/Oculta).",
+                        "Espacio en RSI": "Si el RSI tiene espacio para moverse antes de saturarse.",
+                        "Velón Volatilidad": "Detección de vela climática (>3x promedio).",
+                        "Extensión vs Media": "Distancia excesiva respecto a la media móvil (EMA21).",
+                        "Rechazo (Mecha)": "Si la vela muestra mechas que indican agotamiento.",
+                        "Retroceso RSI": "Nivel de sobreventa/sobrecompra en el retroceso.",
+                        "Potencia ADX": "Intensidad de la fuerza direccional.",
+                        "Compresión": "Si las Bandas de Bollinger se han estrechado (Squeeze).",
+                        "Ruptura": "Cierre de vela fuera de las bandas.",
+                        "RSI Extremo": "RSI en niveles de sobrecompra (>70) o sobreventa (<30).",
+                        "Zona RSI": "RSI en zona moderada.",
+                        "Toque Bandas": "Precio interactuando con Bandas de Bollinger.",
+                        "Patrón Velas": "Formaciones de velas japonesas (Pinbar, Engulfing)."
+                    };
+
+                    // --- SMART SORTING & GROUPING LOGIC ---
+                    const keys = Object.keys(factors);
+                    if (keys.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: #64748b; padding: 10px;">Sin desglose disponible</td></tr>';
+                    } else {
+                        // 1. Categorize
+                        const strategies = [];
+                        const subFactors = {};
+                        const metrics = [];
+                        
+                        // Re-scan with strik rules
+                        const entries = Object.entries(factors);
+                        const activeStrats = [];
+                        const inactiveStrats = [];
+                        const globalMetrics = [];
+                        const manualDetails = []; // NEW: Specific for Manual Level details
+
+                        // Keys specific to Manual Analysis that should go to Table, NOT Header
+                        const manualKeys = ['Tipo Nivel', 'Distancia', 'Acción', 'Validación', 'Zona'];
+
+                        entries.forEach(([key, val]) => {
+                            const valStr = String(val);
+                            
+                            if (manualKeys.includes(key)) {
+                                manualDetails.push({ k: key, v: val });
+                            } else if (key.includes('↳')) {
+                                globalMetrics.push({ k: key, v: val, type: 'DETAIL' });
+                            } else if (valStr.includes('/100')) {
+                                const score = parseInt(valStr.split('/')[0]);
+                                if (score > 0) activeStrats.push({ k: key, v: val, s: score });
+                                else inactiveStrats.push({ k: key, v: val, s: 0 });
+                            } else {
+                                // Real Metrics (RSI, Regimen, Puntuacion Nivel)
+                                globalMetrics.push({ k: key, v: val, type: 'METRIC' });
+                            }
+                        });
+
+
+                        // BUILD HTML
+                        let html = '';
+                        const metricsContainer = document.getElementById('inspector-header-metrics');
+                        metricsContainer.innerHTML = ''; // Clear previous
+
+                        // SECTION A: GLOBAL METRICS (Populate Header Container)
+                        // Filter out 'details' (arrows) and 'manual details' from header
+                        const pureMetrics = globalMetrics.filter(m => !m.k.includes('↳'));
+                        
+                        if (pureMetrics.length > 0) {
+                            pureMetrics.forEach(m => {
+                                // Colorize Metric Badges
+                                let badgeColor = 'rgba(255,255,255,0.05)';
+                                let textColor = '#cbd5e1';
+                                let icon = '📊';
+                                
+                                if (m.k.includes('RSI')) {
+                                    icon = '📈';
+                                    const rsiVal = parseFloat(m.v);
+                                    if (rsiVal > 70 || rsiVal < 30) { badgeColor = 'rgba(245, 158, 11, 0.2)'; textColor = '#f59e0b'; }
+                                }
+                                if (m.k.includes('Regimen')) {
+                                     icon = '🧭';
+                                     badgeColor = 'rgba(59, 130, 246, 0.2)'; textColor = '#60a5fa'; 
+                                }
+                                if (m.k.includes('Puntuación Nivel')) {
+                                     icon = '🎯';
+                                     badgeColor = 'rgba(16, 185, 129, 0.2)'; textColor = '#34d399';
+                                }
+
+                                const badge = document.createElement('div');
+                                badge.style.cssText = `background: ${badgeColor}; padding: 6px 12px; border-radius: 6px; font-size: 11px; display: flex; gap: 8px; align-items: center; border: 1px solid rgba(255,255,255,0.05); min-width: 120px;`;
+                                badge.innerHTML = `
+                                    <span style="font-size: 12px;">${icon}</span>
+                                    <div style="display: flex; flex-direction: column; line-height: 1;">
+                                        <span style="color: #64748b; font-size: 9px; font-weight: bold; text-transform: uppercase;">${m.k}</span>
+                                        <span style="color: ${textColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${m.v}</span>
+                                    </div>
+                                `;
+                                metricsContainer.appendChild(badge);
+                            });
+                        }
+
+                        // SECTION B: MANUAL LEVEL DETAILS (Prioritized Table Section)
+                        if (manualDetails.length > 0) {
+                             html += `<tr class="section-header"><td colspan="2" style="padding-top:5px; padding-bottom:5px; color: #22d3ee; font-size: 10px; font-weight: bold; text-transform: uppercase;">📍 Detalles del Nivel</td></tr>`;
+                             manualDetails.forEach(d => {
+                                 let valColor = '#fff';
+                                 if (d.v.includes('BUY')) valColor = '#4ade80';
+                                 if (d.v.includes('SELL')) valColor = '#ef4444';
+                                 
+                                 html += `
+                                    <tr style="background: rgba(34, 211, 238, 0.05);">
+                                        <td style="padding: 10px 5px; color: #cbd5e1; font-size: 12px; border-left: 3px solid #22d3ee;">
+                                            ${d.k}
+                                        </td>
+                                        <td style="padding: 10px 5px; text-align: right; color: ${valColor}; font-weight: bold; font-family: monospace;">
+                                            ${d.v}
+                                        </td>
+                                    </tr>
+                                 `;
+                             });
+                        }
+
+                        // SECTION C: ACTIVE STRATEGIES
+                        if (activeStrats.length > 0) {
+                            html += `<tr class="section-header"><td colspan="2" style="padding-top:5px; padding-bottom:5px; color: #fff; font-size: 10px; font-weight: bold; text-transform: uppercase;">🚀 Estrategias (Score > 0)</td></tr>`;
+                            
+                            activeStrats.forEach(strat => {
+                                // Dynamic Color Logic based on SCORE
+                                let stratColor = '#ef4444'; // Base Red (Neutral/Weak)
+                                let barColor = 'rgba(239, 68, 68, 0.2)';
+                                
+                                if (strat.s >= 70) { stratColor = '#4ade80'; barColor = '#4ade80'; } // Green (Action)
+                                else if (strat.s >= 40) { stratColor = '#f59e0b'; barColor = '#f59e0b'; } // Orange (Watch)
+                                
+                                // Render Strategy Row
+                                html += `
+                                    <tr style="background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%);">
+                                        <td style="padding: 10px 5px; color: #fff; font-size: 12px; font-weight: bold; border-left: 3px solid ${stratColor}; font-family: 'Inter', sans-serif;">
+                                            ${strat.k}
+                                        </td>
+                                        <td style="padding: 10px 5px; text-align: right; color: ${stratColor}; font-weight: bold; font-family: monospace;">
+                                            ${strat.v}
+                                        </td>
+                                    </tr>
+                                `;
+                            });
+                        }
+
+                        // SECTION C: CONTRIBUTING FACTORS (Details)
+                        const details = globalMetrics.filter(m => m.k.includes('↳'));
+                        if (details.length > 0) {
+                             html += `<tr class="section-header"><td colspan="2" style="padding-top:10px; padding-bottom:5px; color: #cbd5e1; font-size: 10px; font-weight: bold; text-transform: uppercase; margin-left: 10px;">🔍 Factores Detectados</td></tr>`;
+                             details.forEach(d => {
+                                 // Clean arrow
+                                 const label = d.k.replace('↳', '').trim();
+                                 const desc = factorDescriptions[label] || "Detalle específico del cálculo.";
+                                 
+                                 // Simple logic for detail values (green if positive/bullish words)
+                                 const valStr = String(d.v);
+                                 let valColor = '#e2e8f0';
+                                 if (valStr.includes('(+')) valColor = '#4ade80'; // Points added = Green
+                                 
+                                 html += `
+                                    <tr style="border-bottom: 1px dashed rgba(255,255,255,0.05);">
+                                        <td style="padding: 6px 0 6px 15px; color: #94a3b8; font-size: 11px; display: flex; align-items: center; gap: 5px;">
+                                            <span style="color: #64748b;">↳</span> ${label}
+                                            <div class="tooltip" style="display: inline-block;">
+                                                <span style="font-size: 9px; cursor: help; opacity: 0.5;">ℹ️</span>
+                                                <div class="tooltiptext" style="bottom: 100%; left: 0;">${desc}</div>
+                                            </div>
+                                        </td>
+                                        <td style="padding: 6px 0; text-align: right; font-size: 11px; font-family: monospace; color: ${valColor};">${d.v}</td>
+                                    </tr>
+                                 `;
+                             });
+                        }
+
+                        // SECTION D: INACTIVE STRATEGIES (Bottom)
+                        if (inactiveStrats.length > 0) {
+                             html += `<tr class="section-header"><td colspan="2" style="padding-top:15px; padding-bottom:5px; color: #475569; font-size: 10px; font-weight: bold; text-transform: uppercase;">💤 Inactivas (Score 0)</td></tr>`;
+                             inactiveStrats.forEach(strat => {
+                                  html += `
+                                    <tr>
+                                        <td style="padding: 5px 0; color: #475569; font-size: 11px;">${strat.k}</td>
+                                        <td style="padding: 5px 0; text-align: right; color: #475569; font-size: 11px;">${strat.v}</td>
+                                    </tr>
+                                  `;
+                             });
+                        }
+
+                        tbody.innerHTML = html;
+                        
+                        // ADD FOOTNOTE ABOUT LIVE RECALCULATION
+                        const footerNote = document.createElement('tr');
+                        footerNote.innerHTML = `
+                            <td colspan="2" style="padding-top: 20px; text-align: center; color: #475569; font-size: 10px; font-style: italic; border-top: 1px solid rgba(255,255,255,0.05);">
+                                ⚠️ NOTA: Este análisis se recalcula en tiempo real. La puntuación puede variar respecto al momento del disparo debido a la volatilidad actual del mercado.
+                            </td>
+                        `;
+                        tbody.appendChild(footerNote);
+                    }
+                    
+                    // FORCE RE-RENDER DASHBOARD CARD IF POSSIBLE
+                    // This makes the card update visually while the modal is open or just after
+                    if (typeof renderDashboardUI === 'function') renderDashboardUI(window.dashboardData);
+
+                    document.getElementById('strategy-inspector-modal').style.display = 'flex'; // FLEX para centrar
+                });
+        };
+    </script>
+
+    <script>
+        let currentTradingMode = 'AUTO';
+
+        async function toggleTradingMode() {
+            const isAuto = document.getElementById('mode-checkbox').checked;
+            const newMode = isAuto ? 'AUTO' : 'MANUAL';
+            
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: 'trading_mode', value: newMode })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    currentTradingMode = newMode;
+                    updateModeUI();
+                }
+            } catch (e) {
+                console.error("Error toggling mode:", e);
+                alert("Error al cambiar modo de trading");
+            }
+        }
+
+        async function resetDashboardData() {
+            if (!confirm("⚠️ ¿Estás seguro de que quieres BORRAR TODO EL HISTORIAL?\n(Se borrarán señales, historial de regímenes y contexto de gráficos)")) return;
+            if (!confirm("⚠️ ¿ESTÁS REALMENTE SEGURO? Esta acción no se puede deshacer.")) return;
+            
+            try {
+                const res = await fetch('/api/reset', { method: 'POST' });
+                const result = await res.json();
+                if (result.success) {
+                    alert("✅ Historial limpiado correctamente.");
+                    location.reload();
+                }
+            } catch (e) {
+                console.error("Error resetting data:", e);
+                alert("Error al resetear datos");
+            }
+        }
+
+        function updateModeUI() {
+            const isAuto = currentTradingMode === 'AUTO';
+            document.getElementById('mode-checkbox').checked = isAuto;
+            document.getElementById('label-auto').classList.toggle('active', isAuto);
+            document.getElementById('label-manual').classList.toggle('active', !isAuto);
+            
+            const dot = document.getElementById('bot-status-dot');
+            const text = document.getElementById('bot-status-text');
+            
+            if (isAuto) {
+                dot.style.background = 'var(--trend)';
+                text.innerText = 'AUTO-TRADING ACTIVO';
+                text.style.color = 'var(--trend)';
+            } else {
+                dot.style.background = '#3b82f6'; // Azul para manual
+                text.innerText = 'SOLO MODO MANUAL';
+                text.style.color = '#3b82f6';
+            }
+        }
+
+        async function updateDashboard() {
+            try {
+                // Sincronizar modo una vez si es necesario
+                if (!window.modeSynced) {
+                    try {
+                        const resConfig = await fetch('/api/config?key=trading_mode');
+                        const config = await resConfig.json();
+                        if (config.value) {
+                            currentTradingMode = config.value;
+                            updateModeUI();
+                        }
+                        window.modeSynced = true;
+                    } catch (e) { console.error("Error syncing mode:", e); }
+                }
+
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                window.dashboardData = data; // Permitir acceso global para modales
+                renderDashboardUI(data);
+            } catch (e) {
+                console.error("Error updating dashboard:", e);
+            }
+        }
+
+        function renderDashboardUI(data) {
+            if (!data) return;
+            
+            // 1. Stats de Cuenta
+                document.getElementById('balance-val').innerText = `$${data.account.balance.toLocaleString()}`;
+                document.getElementById('equity-val').innerText = `$${data.account.equity.toLocaleString()}`;
+                
+                let totalPnL = 0;
+                const posMap = {};
+                data.positions.forEach(p => {
+                    totalPnL += p.profit;
+                    posMap[p.symbol] = p;
+                });
+
+                const pnlElement = document.getElementById('pnl-val');
+                pnlElement.innerText = (totalPnL >= 0 ? '+' : '') + `$${totalPnL.toFixed(2)}`;
+                pnlElement.style.color = totalPnL >= 0 ? 'var(--trend)' : '#ef4444';
+
+                // 2. Grid de Símbolos
+                const grid = document.getElementById('symbols-grid');
+                // Ordenar por tipo: Cripto > Indices > Metales > Acciones
+                const priority = {
+                    'BTCUSD': 1, 'ETHUSD': 1,
+                    'US500.cash': 2, 'EU50.cash': 2,
+                    'XAUUSD': 3, 'XAGUSD': 3,
+                    'GOLD': 3, 'SILVER': 3
+                };
+                
+                const getPriority = (sym) => priority[sym] || 4; // 4 = Acciones (Default)
+                
+                const sortedRegimes = data.regimes.sort((a, b) => {
+                    const pA = getPriority(a.symbol);
+                    const pB = getPriority(b.symbol);
+                    if (pA !== pB) return pA - pB;
+                    return a.symbol.localeCompare(b.symbol);
+                });
+
+                grid.innerHTML = sortedRegimes.map((r, index) => {
+                    const activeTrade = posMap[r.symbol];
+                    
+                    // ESTILO DE LA TARJETA
+                    let cardStyle = `
+                        border-radius: 12px;
+                        padding: 12px;
+                        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+                        border: 1px solid rgba(255, 255, 255, 0.08);
+                        display: flex;
+                        flex-direction: column;
+                        position: relative;
+                        overflow: visible;
+                        height: 100%; 
+                        min-height: 320px; 
+                        justify-content: flex-start;
+                        gap: 5px; 
+                    `;
+                    
+                    // Alternancia Visual (Par/Impar)
+                    const isEven = index % 2 === 0;
+                    if (!isEven && r.market_open) {
+                         cardStyle += `background: linear-gradient(135deg, rgba(30, 58, 138, 0.2), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(59, 130, 246, 0.2);`; 
+                    } else if (r.market_open) {
+                         cardStyle += `background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.95));`;
+                    }
+
+                    const tech = r.tech_data || {};
+                    const viewId = `view-${r.symbol.replace('.', '-')}`;
+                    const currentView = window[`view_state_${r.symbol.replace('.', '-')}`] || 'PRICE';
+                    
+                    // GENERACION DE DIAGNOSTICO (HTML)
+                    // GENERACION DE DIAGNOSTICO (HTML)
+                    let strat_html = '';
+                    const meta = tech.strat_status || {}; // FIXED: Read from tech.strat_status
+                    const score = tech.score || (meta.total_score) || 0; // FIXED: Read from tech.score
+                    const hasMeta = meta.score_breakdown && Object.keys(meta.score_breakdown).length > 0;
+                    
+                    if (!tech.strat_status && !hasMeta) {
+                        strat_html = '<div style="font-size:10px; color:#64748b; margin-top:10px; text-align: center;">Esperando datos...</div>';
+                    } else {
+                        const direction = tech.signal_direction || 'NONE';
+                        let dirHtml = '';
+                        
+                        // 1. DIRECTION / BIAS INDICATOR
+                        if(direction === 'BUY') {
+                            dirHtml = `<span style="color: #10b981; font-weight: bold; font-size: 11px; margin-left: auto;">ESPERANDO: <span style="background: rgba(16, 185, 129, 0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #10b981;">BUY 🚀</span></span>`;
+                        } else if(direction === 'SELL') {
+                            dirHtml = `<span style="color: #ef4444; font-weight: bold; font-size: 11px; margin-left: auto;">ESPERANDO: <span style="background: rgba(239, 68, 68, 0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid #ef4444;">SELL 🔻</span></span>`;
+                        } else {
+                            // HEURISTIC BIAS (Futuro) - Cuando el score es bajo
+                            let bias = "NEUTRAL";
+                            let biasColor = "#94a3b8";
+                            let biasIcon = "⚖️";
+                            
+                            const align = tech.ema_alignment || "";
+                            
+                            if (align.includes("BULL")) { bias = "BUSCANDO LONG"; biasColor = "#34d399"; biasIcon = "🔭 📈"; }
+                            else if (align.includes("BEAR")) { bias = "BUSCANDO SHORT"; biasColor = "#f87171"; biasIcon = "🔭 📉"; }
+                            
+                            dirHtml = `<span style="color: ${biasColor}; font-size: 10px; font-weight: bold; opacity: 0.8; margin-left: auto;">${biasIcon} ${bias}</span>`;
+                        }
+
+                        // 1. SCORE BAR
+                        let barColor = score >= 60 ? '#10b981' : (score >= 30 ? '#f59e0b' : '#ef4444');
+                        strat_html += `
+                            <div style="margin-top: 10px; margin-bottom: 5px;">
+                                <div style="display: flex; align-items: center; font-size: 10px; color: #94a3b8; margin-bottom: 2px;">
+                                    <span>Score: <b style="color: ${barColor}; font-size: 12px;">${score}</b>/100</span>
+                                    ${dirHtml}
+                                </div>
+                                <div style="height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin-top: 4px;">
+                                    <div style="height: 100%; width: ${score}%; background: ${barColor}; transition: width 0.5s;"></div>
+                                </div>
+                            </div>
+                        `;
+
+                        // 2. BOTON INSPECTOR (Siempre habilitado)
+                        strat_html += `
+                             <button onclick="event.stopPropagation(); showStrategyInspector('${r.symbol}', 'AUTO')" style="width: 100%; padding: 6px; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; border-radius: 6px; font-size: 11px; cursor: pointer; margin-top: 5px; display: flex; align-items: center; justify-content: center; gap: 5px;">
+                                 🤖 ANALIZAR ESTRATEGIA
+                            </button>
+                         `;
+                        // 3. LEGACY GRID (Fallback si no hay MTF pero hay status legacy)
+                        if (tech.strat_status && !hasMeta) { // Only show legacy grid if no new meta and legacy status exists
+                            strat_html += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 5px;">`;
+                            for (const [key, m] of Object.entries(tech.strat_status)) {
+                                const icon = m.val === true ? '✅' : (m.val === false ? '❌' : 'ℹ️');
+                                const color = m.val === true ? '#22c55e' : (m.val === false ? '#ef4444' : '#94a3b8');
+                                strat_html += `
+                                <div style="background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; border-left: 3px solid ${color}; display: flex; flex-direction: column; justify-content: center; min-height: 35px; text-align: center;">
+                                    <div style="font-size: 9px; color: #cbd5e1; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;">${m.desc || key}</div>
+                                    <div style="font-size: 10px; display: flex; align-items: center; justify-content: center; gap: 5px;">
+                                        <span style="color: ${color}; font-weight: 800;">${icon} ${typeof m.val === 'boolean' ? (m.val ? 'SI' : 'NO') : m.val}</span>
+                                    </div>
+                                </div>`;
+                            }
+                            strat_html += `</div>`;
+                        }
+                    }
+
+                    return `
+                        <div class="symbol-card" style="position: relative; opacity: ${r.market_open ? '1' : '0.6'}; ${cardStyle}">
+                            ${!r.tech_data.market_open ? '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 5; border-radius: 12px; backdrop-filter: grayscale(100%);"></div>' : ''}
+                            
+                            <!-- HEADER -->
+                            <div class="card-header" style="position: relative; z-index: 6; height: 35px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <h3>${r.symbol}</h3>
+                                    ${!r.tech_data.market_open ? '<span style="font-size: 9px; background: #7f1d1d; padding: 2px 6px; border-radius: 4px; color: #fca5a5; font-weight: bold; border: 1px solid #ef4444; letter-spacing: 0.5px;">CLOSED</span>' : ''}
+                                </div>
+                                <div style="display: flex; gap: 5px; align-items: center;">
+                                    <button onclick="openChart('${r.symbol}')" style="background: rgba(255,255,255,0.1); border: none; color: #94a3b8; cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 14px; transition: 0.2s;" title="Abrir Gráfico">📈</button>
+                                    <span class="badge badge-${r.mode.toLowerCase()}">${r.mode}</span>
+                                    <div class="card-toggle" onclick="event.stopPropagation(); toggleCardView('${r.symbol}')" style="cursor:pointer; opacity:0.7;">ℹ️</div>
+                                </div>
+                            </div>
+                            
+                            ${currentView === 'PRICE' ? `
+                                <!-- PRICE SECTION -->
+                                <div class="price" style="height: 40px; display: flex; align-items: center; justify-content: center; font-size: 1.8em; margin-bottom: 10px;">
+                                    ${r.price > 0 ? r.price.toFixed(2) : '---'}
+                                </div>
+                                
+                                <!-- INDICATORS BAR -->
+                                <div style="font-size: 10px; color: #94a3b8; display: flex; justify-content: space-around; margin-bottom: 5px; height: 20px; align-items: center; background: rgba(0,0,0,0.3); padding: 0 10px; border-radius: 6px;">
+                                    <span>RSI: <b style="color: ${tech.rsi > 70 ? '#ef4444' : tech.rsi < 30 ? '#10b981' : '#e2e8f0'}">${tech.rsi ? tech.rsi.toFixed(1) : '0'}</b></span>
+                                    <span>TREND: <b style="color: var(--trend)">${tech.ema_alignment || 'Wait'}</b></span>
+                                    <span>ADX: <b>${r.adx ? r.adx.toFixed(1) : '0'}</b></span>
+                                </div>
+
+                                <!-- STRATEGY SCORE (MAIN VIEW) -->
+                                <!-- STRATEGY SCORE (MAIN VIEW) -->
+                                <div style="margin-bottom: 10px;">
+                                    <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 3px; color: #94a3b8; align-items: center;">
+                                        <div style="display: flex; align-items: center; gap: 5px;">
+                                            <span>Strategy Score</span>
+                                            <div class="tooltip" onclick="event.stopPropagation()">
+                                                <span style="opacity: 0.7; font-size: 12px;">ℹ️</span>
+                                                <div class="tooltiptext">
+                                                    <div class="tooltip-header">${r.manual_strat_name || 'Estrategia Desconocida'}</div>
+                                                    <div style="margin-bottom: 8px; font-size: 10px; color: #cbd5e1;">${r.manual_strat_desc || 'Sin descripción disponible.'}</div>
+                                                    
+                                                    <div class="tooltip-header">Diagnóstico</div>
+                                                    <div class="tooltip-row"><span>Razón:</span> <span style="color: #cbd5e1; text-align: right;">${r.manual_desc || 'N/A'}</span></div>
+                                                    <div class="tooltip-row"><span>Acción:</span> <span style="font-weight: bold; color: ${r.manual_action && r.manual_action.includes('BUY')?'#4ade80':'#f87171'}">${r.manual_action || 'WAIT'}</span></div>
+                                                    <div class="tooltip-row"><span>Score:</span> <span style="font-weight: bold;">${r.manual_score || 0}/100</span></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <span style="color: ${r.manual_score >= 70 ? '#22c55e' : r.manual_score >= 50 ? '#eab308' : '#64748b'}">${r.manual_score || 0}/100</span>
+                                    </div>
+                                    <div style="height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden; position: relative;">
+                                        <div style="width: ${r.manual_score || 0}%; background: ${r.manual_score >= 70 ? '#22c55e' : '#eab308'}; height: 100%;"></div>
+                                    </div>
+                                    
+                                    <div style="display: flex; gap: 5px; margin-top: 5px;">
+                                         <button onclick="showStrategyInspector('${r.symbol}', 'MANUAL')" style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #cbd5e1; border-radius: 4px; padding: 3px; font-size: 10px; cursor: pointer; transition: 0.2s;">
+                                            📏 ANALIZAR NIVEL
+                                        </button>
+                                        ${r.manual_action && r.manual_action !== 'NEUTRAL' ? `
+                                            <div style="flex: 1; text-align: center; font-size: 10px; font-weight: bold; color: ${r.manual_action.includes('BUY') ? '#4ade80' : '#f87171'}; background: rgba(0,0,0,0.2); border-radius: 4px; padding: 3px; border: 1px solid ${r.manual_action.includes('BUY') ? 'rgba(74, 222, 128, 0.3)' : 'rgba(248, 113, 113, 0.3)'};">
+                                                ${r.manual_action}
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                </div>
+
+                                <!-- AUTO / LEGACY ANALYSIS (BUTTON) -->
+                                <div style="margin-bottom: 10px;">
+                                    ${strat_html}
+                                </div>
+
+                                <!-- FOOTER & ACTIONS (Spacer to push clear to bottom) -->
+                                <div style="margin-top: auto;">
+                                    ${activeTrade ? `
+                                        <div style="margin-bottom: 10px; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px;">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                                <span style="font-weight: bold; font-size: 12px; color: ${activeTrade.type === 'BUY' ? '#10b981' : '#ef4444'}">
+                                                    ${activeTrade.type === 'BUY' ? 'BUY' : 'SELL'} ${activeTrade.volume}
+                                                </span>
+                                                <span style="font-weight: bold; font-size: 12px; color: ${activeTrade.profit >= 0 ? '+' : ''}${activeTrade.profit.toFixed(2)}">
+                                                    ${activeTrade.profit >= 0 ? '+' : ''}${activeTrade.profit.toFixed(2)}
+                                                </span>
+                                            </div>
+                                            <div style="font-size: 9px; color: #94a3b8; margin-bottom: 4px;">
+                                                ${activeTrade.comment ? activeTrade.comment.replace('PST_', '') : 'Manual'}
+                                            </div>
+                                            <div style="font-size: 9px; color: #64748b; display: flex; justify-content: space-between;">
+                                                <span>TP: ${activeTrade.tp.toFixed(2)}</span>
+                                                <span>SL: ${activeTrade.sl.toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                        <button class="btn btn-sell" style="width: 100%; border: 1px solid #7f1d1d; background: rgba(127, 29, 29, 0.2); padding: 8px; border-radius: 6px; cursor: pointer; color: #fca5a5; font-weight: bold; font-size: 11px;" onclick="closePosition('${r.symbol}')">CERRAR OPERACIÓN</button>
+                                    ` : (r.market_open ? `
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                            <button class="btn btn-buy" style="padding: 10px; border-radius: 6px; background: rgba(16, 185, 129, 0.1); border: 1px solid #059669; color: #34d399; font-weight: bold; cursor: pointer;" onclick="executeManualTrade('${r.symbol}', 'BUY')">BUY</button>
+                                            <button class="btn btn-sell" style="padding: 10px; border-radius: 6px; background: rgba(239, 68, 68, 0.1); border: 1px solid #dc2626; color: #f87171; font-weight: bold; cursor: pointer;" onclick="executeManualTrade('${r.symbol}', 'SELL')">SELL</button>
+                                        </div>
+                                    ` : `<div style="text-align: center; color: #94a3b8; font-size: 10px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px;">MERCADO FINALIZADO</div>`)}
+                                </div>
+                            ` : `
+                                <!-- DETAILED VIEW (TECH + DIAGNOSIS) -->
+                                <div class="tech-data-view" style="padding: 5px; display: flex; flex-direction: column; gap: 10px;">
+                                    <div style="font-size: 10px; font-weight: bold; color: #64748b; text-transform: uppercase;">Métricas Técnicas</div>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                        <div class="tech-item"><div class="tech-label">EMA 21 Dist</div><div class="tech-value">${tech.dist_ema21 ? tech.dist_ema21.toFixed(3) : '---'}%</div></div>
+                                        <div class="tech-item"><div class="tech-label">EMA 50 Dist</div><div class="tech-value">${tech.dist_ema50 ? tech.dist_ema50.toFixed(3) : '---'}%</div></div>
+                                        <div class="tech-item"><div class="tech-label">EMA 200 Dist</div><div class="tech-value">${tech.dist_ema200 ? tech.dist_ema200.toFixed(3) : '---'}%</div></div>
+                                        <div class="tech-item"><div class="tech-label">RSI (14)</div><div class="tech-value">${tech.rsi ? tech.rsi.toFixed(1) : '---'}</div></div>
+                                    </div>
+                                    
+                                    <div style="flex-grow: 1;"></div> 
+                                    
+                                    <button onclick="event.stopPropagation(); toggleCardView('${r.symbol}')" style="margin-top: auto; width: 100%; padding: 8px; background: rgba(255,255,255,0.05); border: none; color: #94a3b8; cursor: pointer; border-radius: 6px; font-size: 10px;">🔙 VOLVER</button>
+                                </div>
+                            `}
+                        </div>
+                    `;
+                }).join('');
+
+                // 3. Historial de Operaciones
+                const table = document.getElementById('signals-table');
+                table.innerHTML = (data.history || []).map(h => {
+                    const profitStr = (h.profit || 0).toFixed(2);
+                    const pnlClass = (h.profit || 0) >= 0 ? 'buy-signal' : 'sell-signal';
+                    const timeStr = h.timestamp ? h.timestamp.split(' ')[1] || h.timestamp : '--:--';
+
+                    return `
+                    <tr onclick="openChart('${h.symbol}')">
+                        <td style="color: #64748b">${timeStr}</td>
+                        <td style="font-weight: 600;">${h.symbol}</td>
+                        <td class="${h.type === 'BUY' ? 'buy-signal' : 'sell-signal'}">${h.type}</td>
+                        <td style="font-family: monospace;">${(h.volume || 0).toFixed(2)}</td>
+                        <td style="font-family: monospace;">${(h.price_in || 0).toFixed(5)}</td>
+                        <td style="font-family: monospace;">${(h.price_out || 0).toFixed(5)}</td>
+                        <td class="${pnlClass}" style="font-weight: 800;">
+                            ${(h.profit || 0) >= 0 ? '+' : ''}${profitStr}
+                        </td>
+                    </tr>
+                `}).join('');
+
+            if(!data.history || data.history.length === 0) {
+                table.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #64748b; padding: 40px;">No hay cierres recientes...</td></tr>';
+            }
+        }
+
+        function toggleCardView(symbol) {
+            const key = `view_state_${symbol.replace('.', '-')}`;
+            window[key] = window[key] === 'TECH' ? 'PRICE' : 'TECH';
+            updateDashboard(); // Forzar refresco visual inmediato
+        }
+
+        async function executeManualTrade(symbol, type) {
+            // 1. Obtener parámetros inteligentes
+            let params;
+            try {
+                const res = await fetch(`/api/trade/params/${symbol}/${type}`);
+                params = await res.json();
+                if (params.error) throw new Error(params.error);
+            } catch (err) {
+                alert(`❌ Error calculando parámetros: ${err.message}`);
+                return;
+            }
+
+            const msg = `🚀 INTELIGENCIA PST - CONFIRMACIÓN ENTRADA\n\n` +
+                        `Símbolo: ${symbol}\n` +
+                        `Tipo: ${type}\n` +
+                        `Lote: ${params.lot} (Riesgo: 0.5%)\n` +
+                        `---------------------------\n` +
+                        `Stop Loss: ${params.sl}\n` +
+                        `Take Profit: ${params.tp}\n\n` +
+                        `¿Ejecutar orden ahora?`;
+
+            if (!confirm(msg)) return;
+            
+            try {
+                const res = await fetch('/api/trade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        symbol, 
+                        type,
+                        volume: params.lot,
+                        sl: params.sl,
+                        tp: params.tp
+                    })
+                });
+                const result = await res.json();
+                
+                if (result.success) {
+                    alert(`✅ ¡ORDEN SMART EJECUTADA!\nTicket: ${result.ticket}`);
+                    updateDashboard();
+                } else {
+                    alert(`❌ Error: ${result.error}`);
+                }
+            } catch (err) {
+                alert(`❌ Error de conexión: ${err.message}`);
+            }
+        }
+
+        async function closePosition(symbol) {
+            if (!confirm(`¿Confirmas CERRAR todas las posiciones de ${symbol}?`)) return;
+            try {
+                const res = await fetch('/api/close', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    alert(`✅ Posición cerrada: ${symbol}`);
+                    updateDashboard();
+                } else {
+                    alert(`❌ Error: ${result.error}`);
+                }
+            } catch (err) {
+                alert(`❌ Error de conexión: ${err.message}`);
+            }
+        }
+
+        async function closeAllPositions() {
+            if (!confirm('⚠️ ¿ESTÁS SEGURO? Esto cerrará TODAS las posiciones de la cuenta inmediatamente.')) return;
+            try {
+                const res = await fetch('/api/close_all', { method: 'POST' });
+                const result = await res.json();
+                if (result.success) {
+                    alert('🚨 TODAS las posiciones han sido cerradas.');
+                    updateDashboard();
+                } else {
+                    alert(`❌ Error: ${result.error}`);
+                }
+            } catch (err) {
+                alert(`❌ Error de conexión: ${err.message}`);
+            }
+        }
+
+        async function resetUserLevels() {
+            if (!confirm("⚠️ ¿BORRAR todos tus niveles manuales para este símbolo?")) return;
+            try {
+                const res = await fetch(`/api/levels/${currentSymbol}`, { method: 'DELETE' });
+                const result = await res.json();
+                if (result.success) {
+                    alert("♻️ Niveles eliminados. Volviendo a análisis automático.");
+                    loadChartData(currentSymbol, 'M5'); // O el TF actual
+                }
+            } catch (e) { alert("Error al borrar niveles"); }
+        }
+
+        async function importHistory() {
+            if (!confirm('¿Importar historial de los últimos 30 días desde MT5?\nEsto puede tardar unos segundos.')) return;
+            
+            try {
+                // Feedback visual inmediato
+                const btn = event.target;
+                const originalText = btn.innerText;
+                btn.innerText = "⏳ Importando...";
+                btn.disabled = true;
+
+                const res = await fetch('/api/import_history', { method: 'POST' });
+                const result = await res.json();
+                
+                if (result.success) {
+                    alert(`✅ ¡Importación Completada!\n\nSe han recuperado ${result.count} operaciones.`);
+                    openStats(); // Recargar stats
+                } else {
+                    alert(`⚠️ Error: ${result.error}`);
+                }
+                
+                btn.innerText = originalText;
+                btn.disabled = false;
+            } catch (err) {
+                alert(`❌ Error de conexión: ${err.message}`);
+            }
+        }
+
+        let chart = null;
+        let candleSeries = null;
+        let emaSeries = null;
+        let ema50Series = null; 
+        let upperLocalSeries = null; 
+        let lowerLocalSeries = null; 
+        let currentSymbol = null; 
+        let currentTF = 'M5';
+        let activePriceLines = []; 
+        let manualLevelLines = [];
+        let isDrawingLevel = false;
+        let lastAnalysisResult = null; // Store analysis for global access
+
+        function toggleLevelMode() {
+            isDrawingLevel = !isDrawingLevel;
+            const btn = document.getElementById('btn-draw-level');
+            const indicator = document.getElementById('drawing-indicator');
+            if (isDrawingLevel) {
+                btn.innerText = "🎯 Capturando...";
+                btn.style.background = "#f59e0b"; // Orange
+                btn.style.borderColor = "#f59e0b";
+                if(indicator) indicator.style.display = 'inline';
+            } else {
+                btn.innerText = "🎯 Marcar Nivel";
+                btn.style.background = "rgba(34, 197, 94, 0.1)";
+                btn.style.borderColor = "var(--trend)";
+                if(indicator) indicator.style.display = 'none';
+            }
+        }
+
+        function openStats() {
+            const modal = document.getElementById('stats-modal');
+            modal.style.display = 'flex';
+            
+            fetch('/api/stats/advanced')
+                .then(r => r.json())
+                .then(data => {
+                    if(!data.success) return;
+                    
+                    const g = data.general;
+                    document.getElementById('stat-net-profit').innerText = `$${g.net_profit.toFixed(2)}`;
+                    document.getElementById('stat-net-profit').style.color = g.net_profit >= 0 ? 'var(--trend)' : '#ef4444';
+                    
+                    document.getElementById('stat-win-rate').innerText = `${g.win_rate}%`;
+                    document.getElementById('stat-total-trades').innerText = g.total_trades;
+                    document.getElementById('stat-profit-factor').innerText = g.profit_factor;
+                    
+                    if(data.best_symbol) {
+                        document.getElementById('stat-best-symbol').innerText = data.best_symbol.symbol;
+                        document.getElementById('stat-best-pnl').innerText = `+$${data.best_symbol.pnl.toFixed(2)}`;
+                    }
+                    
+                    if(data.worst_symbol) {
+                        document.getElementById('stat-worst-symbol').innerText = data.worst_symbol.symbol;
+                        document.getElementById('stat-worst-pnl').innerText = `$${data.worst_symbol.pnl.toFixed(2)}`;
+                    }
+                    
+                    const tbody = document.getElementById('stats-table-body');
+                    tbody.innerHTML = data.symbols.map(s => `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding: 10px; font-weight: bold;">${s.symbol}</td>
+                            <td style="padding: 10px; text-align: center;">${s.trades}</td>
+                            <td style="padding: 10px; text-align: center; color: ${s.win_rate >= 50 ? 'var(--trend)' : '#ef4444'}">${s.win_rate.toFixed(1)}%</td>
+                            <td style="padding: 10px; text-align: right; color: ${s.pnl >= 0 ? 'var(--trend)' : '#ef4444'}; font-weight: bold;">
+                                ${s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(2)}
+                            </td>
+                        </tr>
+                    `).join('');
+                });
+        }
+
+        function closeStats() {
+            document.getElementById('stats-modal').style.display = 'none';
+        }
+
+        // Wrapper to open default M5
+        async function openChart(symbol) {
+            currentSymbol = symbol;
+            const modal = document.getElementById('chart-modal');
+            modal.style.display = 'flex';
+            await loadChartData(symbol, 'M5');
+        }
+
+
+        function applyChannelVisibility() {
+            const showMacro = document.getElementById('chk-macro').checked;
+            const showTactical = document.getElementById('chk-tactical').checked;
+            
+            if (upperChannelSeries) upperChannelSeries.applyOptions({ visible: showMacro });
+            if (lowerChannelSeries) lowerChannelSeries.applyOptions({ visible: showMacro });
+            if (upperLocalSeries) upperLocalSeries.applyOptions({ visible: showTactical });
+            if (lowerLocalSeries) lowerLocalSeries.applyOptions({ visible: showTactical });
+        }
+
+        async function toggleChannelConfig() {
+            if (!currentSymbol) return;
+            const config = {
+                enable_macro: document.getElementById('chk-macro').checked,
+                enable_tactical: document.getElementById('chk-tactical').checked
+            };
+            
+            // Apply visually immediately
+            applyChannelVisibility();
+            
+            // Save to Backend
+            try {
+                await fetch(`/api/channel-config/${currentSymbol}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                console.log("Channel Config Saved:", config);
+            } catch (e) {
+                console.error("Error saving channel config:", e);
+            }
+        }
+        
+        async function loadChartData(symbol, tf) {
+            const container = document.getElementById('chart-container');
+            const title = document.getElementById('modal-title');
+            
+            // UI Feedback
+            if(chart) {
+                 // Update Title only while loading
+                 title.innerHTML = `Análisis Técnico: ${symbol} <span style="font-size: 12px; color: #64748b; margin-left:10px;">(Cargando ${tf}...)</span>`;
+            } else {
+                 container.innerHTML = '<div style="color: #64748b; text-align: center; padding-top: 200px;">Generando vista técnica...</div>';
+                 title.innerHTML = `Análisis Técnico: ${symbol}`;
+            }
+
+            // Update Active Buttons
+            document.querySelectorAll('.tf-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.innerText === tf);
+            });
+
+            try {
+                const res = await fetch(`/api/chart/${symbol}?tf=${tf}`);
+                const result = await res.json();
+                
+                if (!result.data || result.data.length === 0) {
+                    container.innerHTML = '<div style="color: #ef4444; text-align: center; padding-top: 200px;">Error: No hay datos disponibles.</div>';
+                    return;
+                }
+                
+                // Save for Editing
+                window.lastStatusData = result;
+
+                if (!chart) {
+                     container.innerHTML = ''; 
+                     const chartOptions = {
+                        width: container.clientWidth || 940,
+                        height: 480,
+                        layout: { background: { type: 'solid', color: '#111827' }, textColor: '#94a3b8' },
+                        grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+                        timeScale: { timeVisible: true }
+                    };
+                    chart = LightweightCharts.createChart(container, chartOptions);
+                    
+                    // --- ONE-TIME EVENT SUBSCRIPTIONS ---
+                    chart.subscribeClick(async (param) => {
+                        if (!isDrawingLevel || !param.point || !currentSymbol) return;
+                        
+                        // Robust Price Capture
+                        let price = param.price;
+                        if (!price) {
+                            try {
+                                price = candleSeries.coordinateToPrice(param.point.y);
+                            } catch(e) { console.error("Error converting coordinate:", e); }
+                        }
+
+                        if (!price) return;
+
+                        // UI Feedback: Temporal disable drawing mode to avoid multiple clicks
+                        isDrawingLevel = false; 
+                        const type = confirm(`¿NIVEL DETECTADO: ${price.toFixed(5)}?\n\nAceptar para RESISTENCIA (Roja)\nCancelar para SOPORTE (Verde)`) ? 'RESISTANCE' : 'SUPPORT';
+                        
+                        if (type) {
+                            try {
+                                const res = await fetch('/api/levels', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ symbol: currentSymbol, price, type })
+                                });
+                                const result = await res.json();
+                                if (result.success) {
+                                    // toggleLevelMode usually handles UI state, we call it if it was disabled above
+                                    // In this case, it was already set to false, so toggleLevelMode logic might need to be careful
+                                }
+                            } catch (e) { alert("Error guardando nivel manual"); }
+                        }
+                        
+                        // Force UI Refresh and Reset Mode
+                        isDrawingLevel = true; // Temporary reset to call toggle once
+                        toggleLevelMode(); // Turn off mode
+                        loadChartData(currentSymbol, 'M5'); // Refresh
+                    });
+
+                    candleSeries = chart.addCandlestickSeries({
+                        upColor: '#10b981', downColor: '#ef4444', borderVisible: false, wickUpColor: '#10b981', wickDownColor: '#ef4444'
+                    });
+                    
+                    emaSeries = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, title: 'EMA 21' });
+                    ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'EMA 50' }); 
+                    
+                    // Inicializar Canales (Estilo Refinado: Amarillos y Sólidos)
+                    // Upper = Resistance
+                    upperChannelSeries = chart.addLineSeries({ 
+                        color: '#FACC15', // Yellow 
+                        lineWidth: 2, 
+                        lineStyle: 0, // Solid
+                        title: 'Resistance Channel' 
+                    });
+                    
+                    // Lower = Support
+                    lowerChannelSeries = chart.addLineSeries({ 
+                        color: '#FACC15', 
+                        lineWidth: 2, 
+                        lineStyle: 0, 
+                        title: 'Macro Support' 
+                    });
+
+                    // TACTICAL CHANNELS (Cyan / Solid)
+                    upperLocalSeries = chart.addLineSeries({
+                        color: '#22D3EE',
+                        lineWidth: 2,
+                        lineStyle: 0, // Solid
+                        title: 'Tactical Resistance'
+                    });
+                    lowerLocalSeries = chart.addLineSeries({
+                        color: '#22D3EE',
+                        lineWidth: 2,
+                        lineStyle: 0, // Solid
+                        title: 'Tactical Support'
+                    });
+                }
+                
+                // Update Title... (Omitted for brevity, assume same)
+                let pnlHtml = '';
+                if (result.trade && result.trade.profit !== undefined) {
+                     const color = result.trade.profit >= 0 ? 'var(--trend)' : '#ef4444';
+                     pnlHtml = `<span id="modal-pnl" style="font-size: 14px; margin-left: 15px; color: ${color}; font-weight: bold;">(${result.trade.profit >= 0 ? '+' : ''}${result.trade.profit.toFixed(2)})</span>`;
+                }
+                lastAnalysisResult = result.analysis;
+                currentTF = tf;
+                
+                const formattedData = result.data.map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000),
+                    open: d.open, high: d.high, low: d.low, close: d.close
+                }));
+
+                const emaData = result.data.filter(d => d.ema_21 !== null).map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.ema_21
+                }));
+                
+                const ema50Data = result.data.filter(d => d.ema_50 !== null).map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.ema_50
+                }));
+                
+                // Formatear datos de canales
+                const macroUpper = (result.channel_macro_upper || []).map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                }));
+                const macroLower = (result.channel_macro_lower || []).map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                }));
+                const localUpper = (result.channel_local_upper || []).map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                }));
+                const localLower = (result.channel_local_lower || []).map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                }));
+
+                candleSeries.setData(formattedData);
+                emaSeries.setData(emaData);
+                ema50Series.setData(ema50Data);
+                
+                // Set Data Canales
+                if(upperChannelSeries) upperChannelSeries.setData(macroUpper);
+                if(lowerChannelSeries) lowerChannelSeries.setData(macroLower);
+                // Set Data Canales
+                if(upperChannelSeries) upperChannelSeries.setData(macroUpper);
+                if(lowerChannelSeries) lowerChannelSeries.setData(macroLower);
+                if(upperLocalSeries) upperLocalSeries.setData(localUpper);
+                if(lowerLocalSeries) lowerLocalSeries.setData(localLower); // Fixed typo from upperLocalSeries
+                
+                // --- LOAD & APPLY CHANNEL CONFIG FOR VISIBILITY ---
+                fetch(`/api/channel-config/${symbol}`)
+                    .then(res => res.json())
+                    .then(cfg => {
+                        document.getElementById('chk-macro').checked = cfg.enable_macro !== undefined ? cfg.enable_macro : true;
+                        document.getElementById('chk-tactical').checked = cfg.enable_tactical !== undefined ? cfg.enable_tactical : true;
+                        
+                        // Apply Visibility
+                        applyChannelVisibility();
+                    });
+
+                // --- UPDATE HUD (Horizontal Bottom Bar) ---
+                const hud = document.getElementById('chart-hud');
+                if (result.analysis) {
+                    hud.style.display = 'flex';
+                    const monitor = document.getElementById('levels-monitor');
+                    
+                    const meta = result.analysis || {};
+                    console.log("HUD UPDATE DEBUG - Result:", result, "Meta:", meta, "Levels:", meta.all_levels_data);
+                    
+                    const srcUp = meta.source_upper === 'MANUAL' ? 'MAN (M)' : 'AUTO';
+                    const srcLow = meta.source_lower === 'MANUAL' ? 'MAN (M)' : 'AUTO';
+                    
+                    document.getElementById('hud-lbl-up').innerText = `Ref Res [${srcUp}]`;
+                    document.getElementById('hud-lbl-low').innerText = `Ref Sup [${srcLow}]`;
+                    
+                    // ... Existing HUD Code ...
+                    
+                    // --- UPDATE FOOTER LIST ---
+                    const listContainer = document.getElementById('levels-list-container');
+                    const itemsContainer = document.getElementById('levels-list-items');
+                    
+                    if (meta.all_levels_data && meta.all_levels_data.length > 0) {
+                        itemsContainer.innerHTML = meta.all_levels_data.map(l => {
+                            const isRes = l.type === "RESISTANCE";
+                            const color = isRes ? "#f87171" : "#34d399";
+                            const icon = isRes ? "📉" : "📈";
+                            const borderColor = l.source === "MANUAL" ? color : "rgba(255,255,255,0.1)";
+                            const bg = l.source === "MANUAL" ? (isRes ? "rgba(239,68,68,0.1)" : "rgba(16,185,129,0.1)") : "rgba(255,255,255,0.02)";
+                            
+                            // Strategy Badge
+                            let stratBadge = "";
+                            if (l.action_reco && l.action_reco !== "WAIT") {
+                                const isBuy = l.action_reco.includes("BUY");
+                                const bColor = isBuy ? "#4ade80" : "#f87171";
+                                stratBadge = `<span style="font-size: 9px; background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; border: 1px solid ${bColor}; color: ${bColor}; margin-left: auto;">${l.action_reco} (${l.strat_score})</span>`;
+                            }
+
+                            // Delete Button Only for Manual Levels
+                            const deleteBtn = l.source === 'MANUAL' 
+                                ? `
+                                    <span onclick="editLevel(${l.id}); event.stopPropagation();" style="cursor: pointer; margin-left: 5px; opacity: 0.7; font-size: 10px;" title="Editar Nivel">✏️</span>
+                                    <span onclick="deleteLevel(${l.id}); event.stopPropagation();" style="cursor: pointer; margin-left: 5px; opacity: 0.7; font-size: 10px;" title="Borrar Nivel">❌</span>
+                                  ` 
+                                : '';
+
+                            return `
+                                <div onmouseover="highlightLevel(${l.id})" onmouseout="unhighlightLevel(${l.id})" title="${l.validation || ''}" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: ${bg}; border: 1px solid ${borderColor}; padding: 2px 6px; border-radius: 4px; border-left: 3px solid ${color}; width: 100%;">
+                                    <span style="color: ${color}; font-weight: bold; font-size: 11px; white-space: nowrap;">${icon} ${l.source === 'MANUAL' ? 'MAN' : l.source}</span>
+                                    <span style="color: #cbd5e1; font-family: monospace; font-size: 11px;">${l.price.toFixed(2)}</span>
+                                    ${stratBadge}
+                                    ${deleteBtn}
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        itemsContainer.innerHTML = '<div style="color: #475569; font-style: italic;">Sin niveles activos.</div>';
+                    }
+                    
+                    document.getElementById('hud-dist-up').innerText = result.analysis.dist_up_pct ? result.analysis.dist_up_pct.toFixed(2) + '%' : '---%';
+                    document.getElementById('hud-dist-low').innerText = result.analysis.dist_low_pct ? result.analysis.dist_low_pct.toFixed(2) + '%' : '---%';
+                    
+                    const score = result.analysis.score || 0;
+                    const scoreEl = document.getElementById('hud-score-val');
+                    scoreEl.innerText = score;
+                    scoreEl.style.color = score >= 70 ? 'var(--trend)' : (score >= 40 ? 'var(--volatile)' : '#94a3b8');
+                    
+                    // SIGNAL BADGE
+                    const signalBadge = document.getElementById('hud-signal-badge');
+                    const signalType = result.analysis.type || 'None';
+                    
+                    let badgeText = "WAIT";
+                    let badgeColor = "#94a3b8";
+                    let badgeBg = "rgba(255,255,255,0.05)";
+                    
+                    if (signalType.includes("BULL") || (result.analysis.entry > 0)) {
+                        badgeText = "BUY SIGNAL";
+                        badgeColor = "#22c55e"; // Green
+                        badgeBg = "rgba(34, 197, 94, 0.2)";
+                    } else if (signalType.includes("BEAR") || (result.analysis.entry < 0)) {
+                         badgeText = "SELL SIGNAL";
+                        badgeColor = "#ef4444"; // Red
+                        badgeBg = "rgba(239, 68, 68, 0.2)";
+                    }
+                    
+                    signalBadge.innerText = badgeText;
+                    signalBadge.style.color = badgeColor;
+                    signalBadge.style.background = badgeBg;
+
+                    window.lastStatusData = result;
+                } else {
+                    try { document.getElementById('chart-hud').style.display = 'none'; } catch(e){}
+                }
+
+                if (candleSeries) {
+                    activePriceLines.forEach(line => {
+                        try { candleSeries.removePriceLine(line); } catch(e) {}
+                    });
+                    activePriceLines = [];
+                }
+
+                if (result.trade) {
+                    const t = result.trade;
+                    
+                    const entryLine = { price: t.price, color: '#f59e0b', lineWidth: 2, title: `ENTRADA ${t.type}` };
+                    const l1 = candleSeries.createPriceLine(entryLine);
+                    activePriceLines.push(l1);
+
+                    if (t.sl > 0) {
+                        const l2 = candleSeries.createPriceLine({ price: t.sl, color: '#ef4444', lineWidth: 2, lineStyle: 2, title: 'SL' });
+                        activePriceLines.push(l2);
+                    }
+                    if (t.tp > 0) {
+                        const l3 = candleSeries.createPriceLine({ price: t.tp, color: '#10b981', lineWidth: 2, lineStyle: 2, title: 'TP' });
+                        activePriceLines.push(l3);
+                    }
+                }
+
+
+                chart.timeScale().fitContent();
+
+                chart.timeScale().fitContent();
+
+                // 3. Renderizar Niveles Manuales Guardados
+                fetch(`/api/levels/${symbol}`)
+                    .then(res => res.json())
+                    .then(levels => {
+                        // Limpiar Horizontal
+                        manualLevelLines.forEach(l => {
+                            try { candleSeries.removePriceLine(l); } catch(e) {}
+                        });
+                        manualLevelLines = [];
+                        
+                        // Limpiar Trendlines
+                        if (window.manualTrendlineSeries) {
+                            window.manualTrendlineSeries.forEach(s => {
+                                try { chart.removeSeries(s); } catch (e) { console.error("Error removing series:", e); }
+                            });
+                        }
+                        window.manualTrendlineSeries = [];
+
+                        levels.forEach(lvl => {
+                            let color = lvl.type === 'RESISTANCE' ? '#ef4444' : '#22c55e'; 
+                            if (lvl.label === '[FIXED_TACTICAL]') color = '#22D3EE'; 
+                            if (lvl.label === '[FIXED_MACRO]') color = '#FACC15';    
+                            
+                            // Check for Trendline
+                            if (lvl.price2 && lvl.time1 && lvl.time2) {
+                                try {
+                                    const series = chart.addLineSeries({
+                                        color: color,
+                                        lineWidth: 3,
+                                        lineStyle: 0,
+                                        lastValueVisible: false,
+                                        priceLineVisible: false,
+                                        crosshairMarkerVisible: false
+                                    });
+                                    // Parse times
+                                    // lvl.time1 string formats can vary. Assuming ISO or similar that Date() parses.
+                                    // If strict timestamp, might need adjustment.
+                                    // But Lightweight Charts needs UNIX timestamp (seconds).
+                                    // We'll trust "new Date()" for now as previous code did.
+                                    let t1 = Math.floor(new Date(lvl.time1).getTime() / 1000);
+                                    let t2 = Math.floor(new Date(lvl.time2).getTime() / 1000);
+                                    
+                                    // Safety check if t1 == t2
+                                    if (t1 === t2) t2 += 60; // Just to draw something
+                                    
+                                    const p1 = lvl.price;
+                                    const p2 = lvl.price2;
+                                    
+                                    const data = [
+                                        { time: t1, value: p1 },
+                                        { time: t2, value: p2 }
+                                    ];
+                                    // Store Metadata for Hit Testing
+                                    series._levelData = { id: lvl.id, type: lvl.type, t1: t1, t2: t2, p1: p1, p2: p2, symbol: lvl.symbol, label: lvl.label };
+                                    series.setData(data.sort((a,b) => a.time - b.time));
+                                    window.manualTrendlineSeries.push(series);
+                                } catch(e) { console.error("Error rendering trendline:", e); }
+                            } else {
+                                // Horizontal
+                                const line = candleSeries.createPriceLine({
+                                    price: lvl.price,
+                                    color: color,
+                                    lineWidth: 3, 
+                                    lineStyle: 0,
+                                    axisLabelVisible: true,
+                                    title: `[MANUAL] ${lvl.type}`
+                                });
+                                manualLevelLines.push(line);
+                            }
+                        });
+                    }); // Close fetch().then()
+
+
+                        // --- MANUAL DRAWING LOGIC (Trendlines) ---
+                        window.drawState = { active: false, step: 0, p1: null, type: null };
+
+                        window.startDrawTrendline = (type) => {
+                            window.drawState = { active: true, step: 1, p1: null, type: type };
+                            document.getElementById('chart-container').style.cursor = 'crosshair';
+                            alert(`🖊️ MODO DIBUJO ACTIVADO (${type})\n1. Haz click en el PUNTO INICIAL\n2. Haz click en el PUNTO FINAL`);
+                        };
+
+                        // --- INTERACTIVE EDITING LOGIC ---
+                        if (!window.editParams) window.editParams = { selected: null, draggingPoint: null };
+                        
+                        // Clean up handles if any
+                        if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
+                        
+                        // UNSUBSCRIBE PREVIOUS LISTENER TO PREVENT DUPLICATION
+                         try {
+                            if (window.clickHandler) {
+                                chart.unsubscribeClick(window.clickHandler);
+                            }
+                        } catch(e) {}
+
+                        // DEFINE HANDLER
+                        window.clickHandler = (param) => {
+                            if (!param.point) {
+                                window.editParams.selected = null;
+                                if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
+                                return;
+                            }
+                            
+                            // *** DRAWING MODE HANDLER ***
+                            if (window.drawState.active && param.time) {
+                                const price = candleSeries.coordinateToPrice(param.point.y);
+                                const time = param.time;
+
+                                // UX REFINEMENT: SINGLE CLICK EDIT
+                                if (window.drawState.editTarget) {
+                                     let p1, p2;
+                                     if (window.drawState.editTarget === 'p1') {
+                                          p1 = { time: time, price: price };
+                                          p2 = window.drawState.fixedP2;
+                                     } else {
+                                          p1 = window.drawState.fixedP1;
+                                          p2 = { time: time, price: price };
+                                     }
+                                     
+                                     // Common Save Logic
+                                     const payload = {
+                                         symbol: currentSymbol,
+                                         price: p1.price, price2: p2.price,
+                                         type: window.drawState.type,
+                                         label: "Manual Trendline",
+                                         time1: new Date(p1.time * 1000).toISOString(),
+                                         time2: new Date(p2.time * 1000).toISOString()
+                                     };
+                                     if (window.editingLevelId) payload.id = window.editingLevelId;
+
+                                     fetch('/api/levels', { method: 'POST', headers: {'Content-Type':'application/json'}, body:JSON.stringify(payload)})
+                                        .then(res=>res.json()).then(data => {
+                                             if(data.success) { alert("✅ Nivel Actualizado"); window.editingLevelId=null; loadChartData(currentSymbol, currentTF); }
+                                             else { alert("❌ Error: "+data.error); }
+                                             window.drawState = { active: false, step: 0 };
+                                             document.getElementById('chart-container').style.cursor = 'default';
+                                             if(window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries=null; }
+                                        });
+                                     return;
+                                }
+                                
+                                if (window.drawState.step === 1) {
+                                    // P1 Captured
+                                    window.drawState.p1 = { time, price };
+                                    window.drawState.step = 2;
+                                    console.log("P1 Set:", time, price);
+                                    
+                                    // Temporary visual marker
+                                    if (window.handleSeries) chart.removeSeries(window.handleSeries);
+                                    window.handleSeries = chart.addLineSeries({ color: '#fff', lineWidth: 0 });
+                                    window.handleSeries.setMarkers([{ time: time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 4, text: 'P1' }]);
+                                    
+                                } else if (window.drawState.step === 2) {
+                                    // P2 Captured -> SAVE
+                                    const p1 = window.drawState.p1;
+                                    console.log("P2 Set:", time, price);
+                                    
+                                    const payload = {
+                                        symbol: currentSymbol,
+                                        price: p1.price, // Start Price
+                                        price2: price,   // End Price
+                                        type: window.drawState.type,
+                                        label: "Manual Trendline",
+                                        time1: new Date(p1.time * 1000).toISOString(),
+                                        time2: new Date(time * 1000).toISOString()
+                                    };
+
+                                    // Check if Editing
+                                    if (window.editingLevelId) {
+                                        payload.id = window.editingLevelId;
+                                        console.log("✏️ Updating Level ID:", window.editingLevelId);
+                                    }
+                                    
+                                    fetch('/api/levels', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(payload)
+                                    }).then(res => res.json()).then(data => {
+                                        if (data.success) {
+                                            alert("✅ Línea guardada correctamente");
+                                            window.editingLevelId = null; // Reset Edit Mode
+                                            loadChartData(currentSymbol, currentTF); // Reload to show
+                                        } else {
+                                            alert("❌ Error guardando línea: " + data.error);
+                                        }
+                                        // Reset State
+                                        window.drawState = { active: false, step: 0, p1: null, type: null };
+                                        document.getElementById('chart-container').style.cursor = 'default';
+                                        if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
+                                    });
+                                }
+                                return; // Stop propagation to select logic
+                            }
+
+                            // Selection Logic (Pixel Based)
+                            const mouseX = param.point.x;
+                            const mouseY = param.point.y;
+                            let bestMatch = null;
+                            let minDistance = 20; // 20px tolerance
+                            
+                            window.manualTrendlineSeries.forEach(s => {
+                                const d = s._levelData;
+                                if (!d) return;
+                                // Convert to Screen Coords
+                                const x1 = chart.timeScale().timeToCoordinate(d.t1);
+                                const x2 = chart.timeScale().timeToCoordinate(d.t2);
+                                const y1 = candleSeries.priceToCoordinate(d.p1);
+                                const y2 = candleSeries.priceToCoordinate(d.p2);
+                                
+                                if (x1 === null || x2 === null || y1 === null || y2 === null) return;
+                                
+                                // Distance Point to Segment
+                                function distToSegment(px, py, x1, y1, x2, y2) {
+                                    const A = px - x1;
+                                    const B = py - y1;
+                                    const C = x2 - x1;
+                                    const D = y2 - y1;
+                                    const dot = A * C + B * D;
+                                    const len_sq = C * C + D * D;
+                                    let param = -1;
+                                    if (len_sq !== 0) param = dot / len_sq;
+                                    
+                                    let xx, yy;
+                                    if (param < 0) { xx = x1; yy = y1; }
+                                    else if (param > 1) { xx = x2; yy = y2; }
+                                    else { xx = x1 + param * C; yy = y1 + param * D; }
+                                    
+                                    const dx = px - xx;
+                                    const dy = py - yy;
+                                    return Math.sqrt(dx * dx + dy * dy);
+                                }
+                                
+                                const dist = distToSegment(mouseX, mouseY, x1, y1, x2, y2);
+                                if (dist < minDistance) {
+                                    minDistance = dist;
+                                    bestMatch = s;
+                                }
+                            });
+
+                            if (bestMatch) {
+                                window.editParams.selected = bestMatch;
+                                renderHandles(bestMatch);
+                            } else {
+                                window.editParams.selected = null;
+                                if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
+                            }
+                        };
+                        
+                        // SUBSCRIBE
+                        chart.subscribeClick(window.clickHandler);
+
+
+                        // Drag Logic with Pixel Distance
+                        const chartContainer = document.getElementById('chart-container');
+                        chartContainer.addEventListener('mousedown', (e) => {
+                             if (!window.editParams.selected) return;
+                             const rect = chartContainer.getBoundingClientRect();
+                             // Mouse coords relative to container
+                             const mx = e.clientX - rect.left;
+                             const my = e.clientY - rect.top;
+                             
+                             const d = window.editParams.selected._levelData;
+                             const x1 = chart.timeScale().timeToCoordinate(d.t1);
+                             const x2 = chart.timeScale().timeToCoordinate(d.t2);
+                             const y1 = candleSeries.priceToCoordinate(d.p1);
+                             const y2 = candleSeries.priceToCoordinate(d.p2);
+                             
+                             // Check distance to endpoints (20px)
+                             const dist1 = Math.sqrt((mx - x1)**2 + (my - y1)**2);
+                             const dist2 = Math.sqrt((mx - x2)**2 + (my - y2)**2);
+                             
+                             console.log("Drag Check (Pixels):", {mx, my, x1, y1, x2, y2, dist1, dist2});
+                             
+                             if (dist1 < 30 || dist2 < 30) {
+                                 window.editParams.draggingPoint = dist1 < dist2 ? 1 : 2;
+                                 console.log("Dragging Started:", window.editParams.draggingPoint);
+                                 chart.applyOptions({ handleScroll: false, handleScale: false });
+                             }
+                        });
+                        
+                        // We need to track logical position constantly
+                        let cursorTime = 0;
+                        let cursorPrice = 0;
+                        
+                        chart.subscribeCrosshairMove((param) => {
+                            if (!param.point || !param.time) return;
+                            cursorTime = param.time;
+                            cursorPrice = candleSeries.coordinateToPrice(param.point.y);
+                            
+                            if (window.editParams.draggingPoint) {
+                                // Update handle position visually
+                                // Ideally we update the trendline in real-time
+                                const series = window.editParams.selected;
+                                const d = series._levelData;
+                                
+                                if (window.editParams.draggingPoint === 1) {
+                                    d.t1 = cursorTime; d.p1 = cursorPrice;
+                                } else {
+                                    d.t2 = cursorTime; d.p2 = cursorPrice;
+                                }
+                                
+                                // Re-render Line
+                                const data = [
+                                    { time: Math.min(d.t1, d.t2), value: d.t1 < d.t2 ? d.p1 : d.p2 },
+                                    { time: Math.max(d.t1, d.t2), value: d.t1 < d.t2 ? d.p2 : d.p1 }
+                                ].sort((a,b) => a.time - b.time);
+                                series.setData(data); // Live update
+                                renderHandles(series); 
+                            }
+                        });
+                        
+                        chartContainer.addEventListener('mousedown', (e) => {
+                             // Duplicate Handler removed (was double added in previous snippet placeholder)
+                             // Logic moved to single handler above
+                        });
+                        
+                        chartContainer.addEventListener('mouseup', async (e) => {
+                            if (window.editParams.draggingPoint) {
+                                // Finish Drag
+                                const d = window.editParams.selected._levelData;
+                                console.log("Updating Level:", d);
+                                
+                                // API Update
+                                try {
+                                    await fetch('/api/levels', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ 
+                                            symbol: d.symbol, 
+                                            price: d.p1, 
+                                            type: d.type, 
+                                            label: d.label,
+                                            price2: d.p2,
+                                            time1: new Date(d.t1 * 1000).toISOString(), // Convert back to ISO
+                                            time2: new Date(d.t2 * 1000).toISOString()
+                                        })
+                                    });
+                                } catch(e) { console.error("Update failed", e); }
+                                
+                                window.editParams.draggingPoint = null;
+                                chart.applyOptions({ handleScroll: true, handleScale: true });
+                            }
+                        });
+
+            } catch (err) {
+                console.error("Chart Error:", err);
+                container.innerHTML = `<div style="color: #ef4444; text-align: center; padding-top: 150px;">Error cargando datos: ${err.message}</div>`;
+            }
+        }
+
+        // --- ACCIONES GLOBALES ---
+        window.fixAutoChannels = async () => {
+            if (!lastAnalysisResult || !currentSymbol) return;
+            
+            const choice = confirm("¿Qué canales deseas FIJAR para editar?\n\nACEPTAR -> Canal TÁCTICO (Cian)\nCANCELAR -> Canal MACRO (Amarillo)");
+            const isTactical = choice;
+            
+            let dataPacket = null;
+            let label = '';
+            
+            if (isTactical) {
+                if (lastAnalysisResult.tac_data) {
+                    const d = lastAnalysisResult.tac_data;
+                    dataPacket = {
+                        upper: { p1: d.p1_h, t1: d.t1, p2: d.p2_h, t2: d.t2 },
+                        lower: { p1: d.p1_l, t1: d.t1, p2: d.p2_l, t2: d.t2 }
+                    };
+                    label = '[FIXED_TACTICAL]';
+                }
+            } else {
+                if (lastAnalysisResult.mac_data) {
+                    const d = lastAnalysisResult.mac_data;
+                    dataPacket = {
+                        upper: { p1: d.p1_h, t1: d.t1, p2: d.p2_h, t2: d.t2 },
+                        lower: { p1: d.p1_l, t1: d.t1, p2: d.p2_l, t2: d.t2 }
+                    };
+                    label = '[FIXED_MACRO]';
+                }
+            }
+
+            if (!dataPacket) {
+                // Fallback to old logic (horizontal) if no trendline data
+                let upper, lower;
+                if(isTactical) { upper = lastAnalysisResult.tac_upper; lower = lastAnalysisResult.tac_lower; label='[FIXED_TACTICAL]'; }
+                else { upper = lastAnalysisResult.mac_upper; lower = lastAnalysisResult.mac_lower; label='[FIXED_MACRO]'; }
+                
+                if (!upper || !lower) { alert("No hay datos para fijar."); return; }
+
+                try {
+                    await fetch('/api/levels', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ symbol: currentSymbol, price: upper, type: 'RESISTANCE', label: label }) });
+                    await fetch('/api/levels', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ symbol: currentSymbol, price: lower, type: 'SUPPORT', label: label }) });
+                    alert("Canales fijados (Horizontal - Datos antiguos)");
+                    loadChartData(currentSymbol, currentTF);
+                } catch(e) {}
+                return;
+            }
+            
+            try {
+                // Save Upper Trendline
+                await fetch('/api/levels', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        symbol: currentSymbol, 
+                        price: dataPacket.upper.p1, 
+                        type: 'RESISTANCE', 
+                        label: label,
+                        price2: dataPacket.upper.p2,
+                        time1: dataPacket.upper.t1,
+                        time2: dataPacket.upper.t2
+                    })
+                });
+                // Save Lower Trendline
+                await fetch('/api/levels', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        symbol: currentSymbol, 
+                        price: dataPacket.lower.p1, 
+                        type: 'SUPPORT', 
+                        label: label,
+                        price2: dataPacket.lower.p2,
+                        time1: dataPacket.lower.t1,
+                        time2: dataPacket.lower.t2
+                    })
+                });
+                alert(`✅ Canal ${isTactical ? 'TÁCTICO' : 'MACRO'} fijado (Inclinado).`);
+                loadChartData(currentSymbol, currentTF);
+            } catch (e) { alert("Error al fijar canales: " + e.message); }
+        };
+
+        window.toggleChannelConfig = function() {
+            if (!currentSymbol) return;
+            const enableMacro = document.getElementById('chk-macro').checked ? 1 : 0;
+            const enableTactical = document.getElementById('chk-tactical').checked ? 1 : 0;
+
+            fetch('/api/channel-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: currentSymbol,
+                    enable_macro: enableMacro,
+                    enable_tactical: enableTactical
+                })
+            }).then(res => res.json()).then(data => {
+                console.log("Channel config updated:", data);
+                loadChartData(currentSymbol, currentTF);
+            }).catch(err => console.error(err));
+        };
+
+        function closeModal() {
+            document.getElementById('chart-modal').style.display = 'none';
+            if (chart) {
+                try { chart.remove(); } catch(e) {}
+                chart = null;
+            }
+        }
+
+        updateDashboard();
+        setInterval(updateDashboard, 5000);
+        window.deleteLevel = function(id) {
+            console.log("Intentando eliminar nivel ID:", id);
+            if (!confirm("¿Seguro que quieres borrar este nivel?")) return;
+            fetch(`/api/levels/${id}`, { method: 'DELETE' })
+                .then(res => res.json())
+                .then(data => {
+                    console.log("Respuesta eliminar:", data);
+                    if (data.success) {
+                        loadChartData(currentSymbol, currentTF);
+                    } else {
+                        alert("Error eliminando nivel: " + data.error);
+                    }
+                })
+                .catch(err => console.error("Error delete fetch:", err));
+        };
+
+        window.highlightLevel = function(id) {
+            if (!window.manualTrendlineSeries) return;
+            window.manualTrendlineSeries.forEach(s => {
+                if (s._levelData && s._levelData.id === id) {
+                    s.applyOptions({ lineWidth: 4, lineStyle: 0 }); // Thicker solid line
+                }
+            });
+        };
+
+            window.unhighlightLevel = function(id) {
+            if (!window.manualTrendlineSeries) return;
+            window.manualTrendlineSeries.forEach(s => {
+                if (s._levelData && s._levelData.id === id) {
+                    s.applyOptions({ lineWidth: 2, lineStyle: 2 }); // Revert to normal (Dashed)
+                }
+            });
+        };
+
+        // --- EDIT LEVEL ---
+        window.editingLevelId = null;
+
+        window.editLevel = function(id) {
+            if (!window.lastStatusData || !window.lastStatusData.analysis || !window.lastStatusData.analysis.all_levels_data) {
+                alert("No hay datos cargados para editar.");
+                return;
+            }
+            const level = window.lastStatusData.analysis.all_levels_data.find(l => l.id === id);
+            if (!level) return;
+
+            console.log("EDICIÓN INICIADA:", level);
+            window.editingLevelId = level.id;
+            
+            // UX Refinement: Choose Point
+            const editP1 = confirm(`EDITANDO NIVEL ${id}\n\n¿Quieres cambiar el PUNTO INICIAL (P1)?\nACEPTAR -> Mover P1 (P2 queda fijo)\nCANCELAR -> Mover P2 (P1 queda fijo)`);
+            
+            const parseTime = (tStr) => Math.floor(new Date(tStr).getTime() / 1000);
+            
+            let p1Price, p1Time, p2Price, p2Time;
+            let foundSeries = false;
+
+            // Try to find in rendered series first (High Precision)
+            if (window.manualTrendlineSeries) {
+                const s = window.manualTrendlineSeries.find(s => s._levelData && s._levelData.id === id);
+                if (s) {
+                    p1Price = s._levelData.p1; p1Time = s._levelData.t1;
+                    p2Price = s._levelData.p2; p2Time = s._levelData.t2;
+                    foundSeries = true;
+                }
+            }
+            
+            if (!foundSeries) {
+                // Fallback to Metadata
+                if (level.price2 && level.time1) {
+                    p1Price = level.price; p1Time = parseTime(level.time1);
+                    p2Price = level.price2; p2Time = parseTime(level.time2);
+                } else {
+                    p1Price = level.price; p1Time = parseTime(window.lastStatusData.data[window.lastStatusData.data.length-20].time);
+                    p2Price = level.price; p2Time = parseTime(window.lastStatusData.data[window.lastStatusData.data.length-1].time);
+                }
+            }
+
+            document.getElementById('chart-container').style.cursor = 'crosshair';
+            
+            // Reset Handle
+            if (window.handleSeries) { chart.removeSeries(window.handleSeries); chart.removeSeries(window.handleSeries); window.handleSeries = null; }
+            
+            if (editP1) {
+                // Edit P1, Fix P2
+                window.drawState = { active: true, step: 1, editTarget: 'p1', fixedP2: {time: p2Time, price: p2Price}, type: level.type };
+                
+                // Visual feedback for P2 (Fixed)
+                window.handleSeries = chart.addLineSeries({ color: '#fff', lineWidth: 0 });
+                window.handleSeries.setMarkers([{ time: p2Time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 4, text: 'P2 (Fijo)' }]);
+                
+                alert("Haz CLICK para establecer la nueva posición de P1 (Inicio).");
+            } else {
+                // Edit P2, Fix P1
+                window.drawState = { active: true, step: 1, editTarget: 'p2', fixedP1: {time: p1Time, price: p1Price}, type: level.type };
+                
+                // Visual feedback for P1 (Fixed)
+                window.handleSeries = chart.addLineSeries({ color: '#fff', lineWidth: 0 });
+                window.handleSeries.setMarkers([{ time: p1Time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 4, text: 'P1 (Fijo)' }]);
+                
+                alert("Haz CLICK para establecer la nueva posición de P2 (Fin).");
+            }
+        };
+
+    </script>
+</body>
+</html>
