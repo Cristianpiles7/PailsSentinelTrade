@@ -911,18 +911,11 @@
                         tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: #64748b; padding: 10px;">Sin desglose disponible</td></tr>';
                     } else {
                         // 1. Categorize
-                        const strategies = [];
-                        const subFactors = {};
-                        const metrics = [];
-                        
+                        const globalMetrics = [];
+                        const manualDetails = []; 
+
                         // Re-scan with strik rules
                         const entries = Object.entries(factors);
-                        const activeStrats = [];
-                        const inactiveStrats = [];
-                        const globalMetrics = [];
-                        const manualDetails = []; // NEW: Specific for Manual Level details
-
-                        // Keys specific to Manual Analysis that should go to Table, NOT Header
                         const manualKeys = ['Tipo Nivel', 'Distancia', 'Acción', 'Validación', 'Zona'];
 
                         entries.forEach(([key, val]) => {
@@ -933,11 +926,8 @@
                             } else if (key.includes('↳')) {
                                 globalMetrics.push({ k: key, v: val, type: 'DETAIL' });
                             } else if (valStr.includes('/100')) {
-                                const score = parseInt(valStr.split('/')[0]);
-                                if (score > 0) activeStrats.push({ k: key, v: val, s: score });
-                                else inactiveStrats.push({ k: key, v: val, s: 0 });
+                                // Ignore strategy strings here, we use grouped_strategies
                             } else {
-                                // Real Metrics (RSI, Regimen, Puntuacion Nivel)
                                 globalMetrics.push({ k: key, v: val, type: 'METRIC' });
                             }
                         });
@@ -949,141 +939,125 @@
                         metricsContainer.innerHTML = ''; // Clear previous
 
                         // SECTION A: GLOBAL METRICS (Populate Header Container)
-                        // Filter out 'details' (arrows) and 'manual details' from header
-                        const pureMetrics = globalMetrics.filter(m => !m.k.includes('↳'));
+                        const hasMtfRsi = !!analysis.rsi_mtf;
+                        const pureMetrics = globalMetrics.filter(m => !m.k.includes('↳') && (!hasMtfRsi || !m.k.includes('RSI')));
                         
-                        if (pureMetrics.length > 0) {
-                            pureMetrics.forEach(m => {
-                                // Colorize Metric Badges
+                        // 1. INJECT MTF RSI BADGES FIRST
+                        if (hasMtfRsi) {
+                            const rsis = analysis.rsi_mtf; 
+                            const intervals = [{k:'M1', v: rsis.m1}, {k:'M5', v: rsis.m5}, {k:'H1', v: rsis.h1}];
+                            
+                            intervals.forEach(intv => {
                                 let badgeColor = 'rgba(255,255,255,0.05)';
                                 let textColor = '#cbd5e1';
-                                let icon = '📊';
+                                let icon = '⏱️';
                                 
-                                if (m.k.includes('RSI')) {
-                                    icon = '📈';
-                                    const rsiVal = parseFloat(m.v);
-                                    if (rsiVal > 70 || rsiVal < 30) { badgeColor = 'rgba(245, 158, 11, 0.2)'; textColor = '#f59e0b'; }
-                                }
-                                if (m.k.includes('Regimen')) {
-                                     icon = '🧭';
-                                     badgeColor = 'rgba(59, 130, 246, 0.2)'; textColor = '#60a5fa'; 
-                                }
-                                if (m.k.includes('Puntuación Nivel')) {
-                                     icon = '🎯';
-                                     badgeColor = 'rgba(16, 185, 129, 0.2)'; textColor = '#34d399';
-                                }
-
+                                const rsiVal = parseFloat(intv.v);
+                                if (rsiVal < 30) { badgeColor = 'rgba(16, 185, 129, 0.2)'; textColor = '#34d399'; icon = '🟢'; }
+                                else if (rsiVal > 70) { badgeColor = 'rgba(239, 68, 68, 0.2)'; textColor = '#f87171'; icon = '🔴'; }
+                                
                                 const badge = document.createElement('div');
-                                badge.style.cssText = `background: ${badgeColor}; padding: 6px 12px; border-radius: 6px; font-size: 11px; display: flex; gap: 8px; align-items: center; border: 1px solid rgba(255,255,255,0.05); min-width: 120px;`;
-                                badge.innerHTML = `
-                                    <span style="font-size: 12px;">${icon}</span>
-                                    <div style="display: flex; flex-direction: column; line-height: 1;">
-                                        <span style="color: #64748b; font-size: 9px; font-weight: bold; text-transform: uppercase;">${m.k}</span>
-                                        <span style="color: ${textColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${m.v}</span>
-                                    </div>
-                                `;
+                                badge.style.cssText = `background: ${badgeColor}; padding: 6px 10px; border-radius: 6px; font-size: 11px; display: flex; gap: 6px; align-items: center; border: 1px solid rgba(255,255,255,0.05); min-width: 80px;`;
+                                badge.innerHTML = `<span style="font-size: 10px;">${icon}</span><div style="display: flex; flex-direction: column; line-height: 1;"><span style="color: #64748b; font-size: 8px; font-weight: bold; text-transform: uppercase;">RSI ${intv.k}</span><span style="color: ${textColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${intv.v}</span></div>`;
                                 metricsContainer.appendChild(badge);
                             });
                         }
 
-                        // SECTION B: MANUAL LEVEL DETAILS (Prioritized Table Section)
+                        if (pureMetrics.length > 0) {
+                            pureMetrics.forEach(m => {
+                                let badgeColor = 'rgba(255,255,255,0.05)';
+                                let textColor = '#cbd5e1';
+                                let icon = '📊';
+                                
+                                if (m.k.includes('RSI') && !hasMtfRsi) icon = '📉';
+                                if (m.k.includes('Regimen')) icon = '🧭';
+                                
+                                const badge = document.createElement('div');
+                                badge.style.cssText = `background: ${badgeColor}; padding: 6px 10px; border-radius: 6px; font-size: 11px; display: flex; gap: 6px; align-items: center; border: 1px solid rgba(255,255,255,0.05);`;
+                                badge.innerHTML = `<span style="font-size: 10px;">${icon}</span><div style="display: flex; flex-direction: column; line-height: 1;"><span style="color: #64748b; font-size: 8px; font-weight: bold; text-transform: uppercase;">${m.k}</span><span style="color: ${textColor}; font-weight: bold;">${m.v}</span></div>`;
+                                metricsContainer.appendChild(badge);
+                            });
+                        }
+
+                        // SECTION B: MANUAL LEVEL DETAILS
                         if (manualDetails.length > 0) {
                              html += `<tr class="section-header"><td colspan="2" style="padding-top:5px; padding-bottom:5px; color: #22d3ee; font-size: 10px; font-weight: bold; text-transform: uppercase;">📍 Detalles del Nivel</td></tr>`;
                              manualDetails.forEach(d => {
                                  let valColor = '#fff';
                                  if (d.v.includes('BUY')) valColor = '#4ade80';
                                  if (d.v.includes('SELL')) valColor = '#ef4444';
-                                 
-                                 html += `
-                                    <tr style="background: rgba(34, 211, 238, 0.05);">
-                                        <td style="padding: 10px 5px; color: #cbd5e1; font-size: 12px; border-left: 3px solid #22d3ee;">
-                                            ${d.k}
-                                        </td>
-                                        <td style="padding: 10px 5px; text-align: right; color: ${valColor}; font-weight: bold; font-family: monospace;">
-                                            ${d.v}
-                                        </td>
-                                    </tr>
-                                 `;
+                                 html += `<tr style="background: rgba(34, 211, 238, 0.05);"><td style="padding: 10px 5px; color: #cbd5e1; font-size: 12px; border-left: 3px solid #22d3ee;">${d.k}</td><td style="padding: 10px 5px; text-align: right; color: ${valColor}; font-weight: bold; font-family: monospace;">${d.v}</td></tr>`;
                              });
                         }
 
-                        // SECTION C: ACTIVE STRATEGIES
-                        if (activeStrats.length > 0) {
-                            html += `<tr class="section-header"><td colspan="2" style="padding-top:5px; padding-bottom:5px; color: #fff; font-size: 10px; font-weight: bold; text-transform: uppercase;">🚀 Estrategias (Score > 0)</td></tr>`;
-                            
-                            activeStrats.forEach(strat => {
-                                // Dynamic Color Logic based on SCORE
-                                let stratColor = '#ef4444'; // Base Red (Neutral/Weak)
-                                let barColor = 'rgba(239, 68, 68, 0.2)';
-                                
-                                if (strat.s >= 70) { stratColor = '#4ade80'; barColor = '#4ade80'; } // Green (Action)
-                                else if (strat.s >= 40) { stratColor = '#f59e0b'; barColor = '#f59e0b'; } // Orange (Watch)
-                                
-                                // Render Strategy Row
-                                html += `
-                                    <tr style="background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%);">
-                                        <td style="padding: 10px 5px; color: #fff; font-size: 12px; font-weight: bold; border-left: 3px solid ${stratColor}; font-family: 'Inter', sans-serif;">
-                                            ${strat.k}
-                                        </td>
-                                        <td style="padding: 10px 5px; text-align: right; color: ${stratColor}; font-weight: bold; font-family: monospace;">
-                                            ${strat.v}
-                                        </td>
-                                    </tr>
-                                `;
-                            });
-                        }
-
-                        // SECTION C: CONTRIBUTING FACTORS (Details)
-                        const details = globalMetrics.filter(m => m.k.includes('↳'));
-                        if (details.length > 0) {
-                             html += `<tr class="section-header"><td colspan="2" style="padding-top:10px; padding-bottom:5px; color: #cbd5e1; font-size: 10px; font-weight: bold; text-transform: uppercase; margin-left: 10px;">🔍 Factores Detectados</td></tr>`;
-                             details.forEach(d => {
-                                 // Clean arrow
-                                 const label = d.k.replace('↳', '').trim();
-                                 const desc = factorDescriptions[label] || "Detalle específico del cálculo.";
-                                 
-                                 // Simple logic for detail values (green if positive/bullish words)
-                                 const valStr = String(d.v);
-                                 let valColor = '#e2e8f0';
-                                 if (valStr.includes('(+')) valColor = '#4ade80'; // Points added = Green
-                                 
-                                 html += `
-                                    <tr style="border-bottom: 1px dashed rgba(255,255,255,0.05);">
-                                        <td style="padding: 6px 0 6px 15px; color: #94a3b8; font-size: 11px; display: flex; align-items: center; gap: 5px;">
-                                            <span style="color: #64748b;">↳</span> ${label}
-                                            <div class="tooltip" style="display: inline-block;">
-                                                <span style="font-size: 9px; cursor: help; opacity: 0.5;">ℹ️</span>
-                                                <div class="tooltiptext" style="bottom: 100%; left: 0;">${desc}</div>
-                                            </div>
-                                        </td>
-                                        <td style="padding: 6px 0; text-align: right; font-size: 11px; font-family: monospace; color: ${valColor};">${d.v}</td>
-                                    </tr>
-                                 `;
-                             });
-                        }
-
-                        // SECTION D: INACTIVE STRATEGIES (Bottom)
-                        if (inactiveStrats.length > 0) {
-                             html += `<tr class="section-header"><td colspan="2" style="padding-top:15px; padding-bottom:5px; color: #475569; font-size: 10px; font-weight: bold; text-transform: uppercase;">💤 Inactivas (Score 0)</td></tr>`;
-                             inactiveStrats.forEach(strat => {
-                                  html += `
-                                    <tr>
-                                        <td style="padding: 5px 0; color: #475569; font-size: 11px;">${strat.k}</td>
-                                        <td style="padding: 5px 0; text-align: right; color: #475569; font-size: 11px;">${strat.v}</td>
-                                    </tr>
-                                  `;
-                             });
-                        }
-
-                        tbody.innerHTML = html;
+                        // SECTION C: GROUPED STRATEGIES LIST
+                        let inactiveStratsList = [];
                         
-                        // ADD FOOTNOTE ABOUT LIVE RECALCULATION
+                        if (analysis.grouped_strategies && analysis.grouped_strategies.length > 0) {
+                            
+                            // Re-calculate inactive list (RESPECTING MODE)
+                            analysis.grouped_strategies.forEach(s => {
+                                const isMaestra = s.name.includes('Maestra') || s.name.includes('Canales');
+                                const shouldShow = isManualSource ? isMaestra : !isMaestra; // Toggle filter
+                                
+                                if (shouldShow && s.score <= 0) {
+                                     inactiveStratsList.push({ k: s.name, v: "0/100 (Neutral)" });
+                                }
+                            });
+
+                            html += `<div style="max-height: 350px; overflow-y: auto; padding-right: 5px;"><table style="width: 100%; border-collapse: collapse;">`;
+
+                            let visibleKeyStrategies = 0;
+                            analysis.grouped_strategies.forEach(strat => {
+                                const isMaestra = strat.name.includes('Maestra') || strat.name.includes('Canales');
+                                const shouldShow = isManualSource ? isMaestra : !isMaestra; // Toggle filter
+                                
+                                if (shouldShow) {
+                                    if (strat.score > 0) {
+                                        visibleKeyStrategies++;
+                                        let stratColor = '#ef4444'; 
+                                        let barColor = 'rgba(239, 68, 68, 0.2)';
+                                        if (strat.score >= 70) { stratColor = '#4ade80'; barColor = '#4ade80'; }
+                                        else if (strat.score >= 40) { stratColor = '#f59e0b'; barColor = '#f59e0b'; }
+
+                                        html += `<tr style="background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%); border-top: 1px solid rgba(255,255,255,0.1);"><td style="padding: 10px 5px; color: #fff; font-size: 13px; font-weight: bold; border-left: 3px solid ${stratColor}; font-family: 'Inter', sans-serif;">🚀 ${strat.name}</td><td style="padding: 10px 5px; text-align: right; color: ${stratColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${strat.score}/100 (${strat.status})</td></tr>`;
+
+                                        if (strat.factors && strat.factors.length > 0) {
+                                            strat.factors.forEach(f => {
+                                                const label = f.k;
+                                                let valColor = '#94a3b8';
+                                                if (f.v.includes('(+')) valColor = '#4ade80'; 
+                                                if (f.v.includes('(-')) valColor = '#ef4444'; 
+                                                if (f.v.includes('Bull')) valColor = '#4ade80';
+                                                if (f.v.includes('Bear')) valColor = '#ef4444';
+                                                html += `<tr><td style="padding: 4px 0 4px 20px; color: #cbd5e1; font-size: 11px; display: flex; align-items: center; gap: 5px;"><span style="color: #64748b;">↳</span> ${label}</td><td style="padding: 4px 10px 4px 0; text-align: right; font-size: 11px; font-family: monospace; color: ${valColor};">${f.v}</td></tr>`;
+                                            });
+                                        } else {
+                                            html += `<tr><td colspan="2" style="padding:4px 0 4px 20px; color:#64748b; font-size:10px; font-style:italic;">Sin factores relevantes detectedos.</td></tr>`;
+                                        }
+                                    }
+                                }
+                            });
+                            
+                            // Fallback Message ONLY for Auto mode (Manual mode usually has specific details)
+                            if (!isManualSource && visibleKeyStrategies === 0 && analysis.score > 0) {
+                                  html += `<tr style="border-top: 1px solid rgba(255,255,255,0.1);"><td colspan="2" style="padding: 15px; text-align: center; color: #94a3b8; font-size: 12px; font-style: italic;">ℹ️ La <strong>Estrategia Maestra</strong> está dirigiendo la operación (${analysis.score}/100).<br><span style="font-size: 10px; opacity: 0.7;">(Detalles ocultos en este modal. Verifica el gráfico)</span></td></tr>`;
+                            }
+
+                            html += `</table></div></td></tr>`;
+                        }
+
+                        // SECTION D: INACTIVE STRATEGIES
+                        if (inactiveStratsList.length > 0) {
+                             html += `<tr class="section-header"><td colspan="2" style="padding-top:15px; padding-bottom:5px; color: #475569; font-size: 10px; font-weight: bold; text-transform: uppercase;">💤 Inactivas (Score 0)</td></tr>`;
+                             inactiveStratsList.forEach(strat => {
+                                  html += `<tr><td style="padding: 5px 0; color: #475569; font-size: 11px;">${strat.k}</td><td style="padding: 5px 0; text-align: right; color: #475569; font-size: 11px;">${strat.v}</td></tr>`;
+                             });
+                        }
+                        
+                        tbody.innerHTML = html;
                         const footerNote = document.createElement('tr');
-                        footerNote.innerHTML = `
-                            <td colspan="2" style="padding-top: 20px; text-align: center; color: #475569; font-size: 10px; font-style: italic; border-top: 1px solid rgba(255,255,255,0.05);">
-                                ⚠️ NOTA: Este análisis se recalcula en tiempo real. La puntuación puede variar respecto al momento del disparo debido a la volatilidad actual del mercado.
-                            </td>
-                        `;
+                        footerNote.innerHTML = `<td colspan="2" style="padding-top: 20px; text-align: center; color: #475569; font-size: 10px; font-style: italic; border-top: 1px solid rgba(255,255,255,0.05);">⚠️ NOTA: Este análisis se recalcula en tiempo real. La puntuación puede variar respecto al momento del disparo debido a la volatilidad actual del mercado.</td>`;
                         tbody.appendChild(footerNote);
                     }
                     
@@ -1094,9 +1068,8 @@
                     document.getElementById('strategy-inspector-modal').style.display = 'flex'; // FLEX para centrar
                 });
         };
-    </script>
-
-    <script>
+        console.log("✅ showStrategyInspector function registered.");
+    // Merged Script Block
         let currentTradingMode = 'AUTO';
 
         async function toggleTradingMode() {
@@ -1396,10 +1369,10 @@
                                     ${activeTrade ? `
                                         <div style="margin-bottom: 10px; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px;">
                                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                                                <span style="font-weight: bold; font-size: 12px; color: ${activeTrade.type === 'BUY' ? '#10b981' : '#ef4444'}">
-                                                    ${activeTrade.type === 'BUY' ? 'BUY' : 'SELL'} ${activeTrade.volume}
+                                                <span style="font-weight: bold; font-size: 12px; color: white;">
+                                                    ${activeTrade.type === 'BUY' ? '🚀 BUY' : '🔻 SELL'} ${activeTrade.volume}
                                                 </span>
-                                                <span style="font-weight: bold; font-size: 12px; color: ${activeTrade.profit >= 0 ? '+' : ''}${activeTrade.profit.toFixed(2)}">
+                                                <span style="font-weight: bold; font-size: 12px; color: ${activeTrade.profit >= 0 ? '#10b981' : '#ef4444'}">
                                                     ${activeTrade.profit >= 0 ? '+' : ''}${activeTrade.profit.toFixed(2)}
                                                 </span>
                                             </div>
@@ -1450,11 +1423,11 @@
                     <tr onclick="openChart('${h.symbol}')">
                         <td style="color: #64748b">${timeStr}</td>
                         <td style="font-weight: 600;">${h.symbol}</td>
-                        <td class="${h.type === 'BUY' ? 'buy-signal' : 'sell-signal'}">${h.type}</td>
+                        <td style="color: white; font-weight: bold;">${h.type === 'BUY' ? '🚀 BUY' : '🔻 SELL'}</td>
                         <td style="font-family: monospace;">${(h.volume || 0).toFixed(2)}</td>
                         <td style="font-family: monospace;">${(h.price_in || 0).toFixed(5)}</td>
                         <td style="font-family: monospace;">${(h.price_out || 0).toFixed(5)}</td>
-                        <td class="${pnlClass}" style="font-weight: 800;">
+                        <td class="${pnlClass}" style="font-weight: 800; text-align: right;">
                             ${(h.profit || 0) >= 0 ? '+' : ''}${profitStr}
                         </td>
                     </tr>

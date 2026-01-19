@@ -9,6 +9,28 @@ Este bot (anteriormente "Project PST") es un sistema automatizado que escanea el
 *   **Estrategia Manual Híbrida:** Dibuja niveles en MT5 y el bot los gestiona (Alertas < 0.25%, Acción < 0.05%).
 *   **Dashboard Web:** Interfaz gráfica en tiempo real (http://127.0.0.1:5000) para monitorización y control.
 
+## 🧠 Estrategias Activas
+
+### 1. PST-Channel-Master (Ductilidad Táctica)
+El núcleo del sistema. Utiliza **Canales de Regresión Lineal** para identificar si el precio está "caro" o "barato" respecto a su tendencia central.
+*   **Lógica:** Compra en la banda inferior, Vende en la superior.
+*   **Filtros:** Pendiente del canal (evita operar contra tendencias fuertes) y desviación estándar adaptativa.
+*   **Niveles Manuales:** Si dibujas líneas en MT5, la estrategia las respeta y las usa como triggers de alta precisión.
+
+### 2. PST-RSI-Equities (Francotirador de Rangos)
+Diseñada para mercados laterales o activos volátiles en M1/M5.
+*   **Trigger:** Eventos de entrada/salida de zonas de sobrecompra (>70) y sobreventa (<30).
+*   **Confirmación:** Exige volumen superior a la media para validar el giro.
+*   **Adaptable:** Ajusta sus umbrales automáticamente si opera Cripto (más volátil) o Forex/Acciones.
+
+### 3. PST-EMA-Flow (Seguidor de Tendencia Puro)
+Estrategia robusta para capturar grandes movimientos institucionales.
+*   **Modo Estricto:** Solo dispara si detecta un evento (Cruce Dorado, Rebote Confirmado o Breakout) en las **últimas 3 velas**.
+*   **Filtros de Acero:**
+    *   **Jerarquía M15:** Solo opera si la tendencia de 15 minutos coincide.
+    *   **Anti-FOMO:** Si el precio se aleja >0.3% de la media, anula la entrada.
+    *   **Vela de Rechazo:** Para rebotes, exige que la vela cierre a favor de la tendencia (Verde en soporte, Roja en resistencia).
+
 ---
 
 ## 🛠️ Instalación (Desarrollador)

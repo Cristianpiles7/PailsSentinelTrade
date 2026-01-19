@@ -38,8 +38,14 @@ class PSTVolatilityBreakout:
         cols = bb.columns
         bbu_col = next((c for c in cols if c.startswith('BBU')), cols[2])
         bbl_col = next((c for c in cols if c.startswith('BBL')), cols[0])
+        
         upper_bb = bb[bbu_col].iloc[-1]
         lower_bb = bb[bbl_col].iloc[-1]
+        
+        # Previous values for Crossover Check
+        prev_upper_bb = bb[bbu_col].iloc[-2]
+        prev_lower_bb = bb[bbl_col].iloc[-2]
+        prev_close = df['close'].iloc[-2]
         
         # Squeeze Detection logic
         bandwidth = (upper_bb - lower_bb) / df['close'].iloc[-1]
@@ -68,33 +74,50 @@ class PSTVolatilityBreakout:
             breakdown["Squeeze"] = "Normal (0)"
             
         # C. Breakout Status (Max 40)
+        # Modified to prioritize EVENT (Fresh Breakout) over STATE (Outside Bands)
         breakout = 0 # 0, 1 (bull), -1 (bear)
+        is_fresh_breakout = False
+        
         if close > upper_bb:
-            score += 40
-            breakout = 1
-            breakdown["Breakout"] = "BULL Break (+40)"
+             score += 30
+             # Check for FRESH breakout (Event)
+             if prev_close <= prev_upper_bb:
+                 score += 10 # Bonus for freshness
+                 is_fresh_breakout = True
+                 breakdown["Breakout"] = "FRESH BULL BREAK (+40)"
+             else:
+                 breakdown["Breakout"] = "Above Bands (+30)"
+             breakout = 1
+             
         elif close < lower_bb:
-            score += 40
-            breakout = -1
-            breakdown["Breakout"] = "BEAR Break (+40)"
+             score += 30
+             # Check for FRESH breakout (Event)
+             if prev_close >= prev_lower_bb:
+                 score += 10
+                 is_fresh_breakout = True
+                 breakdown["Breakout"] = "FRESH BEAR BREAK (+40)"
+             else:
+                 breakdown["Breakout"] = "Below Bands (+30)"
+             breakout = -1
         else:
             breakdown["Breakout"] = "Inside Bands (0)"
 
         # --- SIGNAL GENERATION ---
         entry = 0
         
-        # Requires Breakdown + ADX support
+        # REGLA MAESTRA (STRICT):
+        # 1. Breakout activo (1 o -1)
+        # 2. ADX > 25 (Tendencia real)
+        # 3. GATILLO: Debe ser una ruptura FRESCA (Event) O un score altísimo (>85) 
+        
         if breakout == 1:
             if adx > 25 and rsi < 75:
-                entry = 1
+                if is_fresh_breakout or score >= 85:
+                    entry = 1
         elif breakout == -1:
             if adx > 25 and rsi > 25:
-                entry = -1
-        
-        # Force entry if Score is very high (strong breakout + strong adx)
-        if score >= 80 and entry == 0:
-             if close > upper_bb: entry = 1
-             elif close < lower_bb: entry = -1
+                 if is_fresh_breakout or score >= 85:
+                    entry = -1
 
         metadata = {
             "regime": "VOLATILE",

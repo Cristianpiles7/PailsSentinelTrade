@@ -4,14 +4,9 @@ from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sy
 from ..models.classifier import RegimeClassifier, RegimeMode
 from ..models.database import PSTDatabase
 from .executor import PSTExecutor
-from ..strategies.pst_trend_momentum import PSTTrendMomentum
-from ..strategies.pst_range_reversion import PSTRangeReversion
-from ..strategies.pst_volatility_breakout import PSTVolatilityBreakout
-from ..strategies.pst_trend_pullback import PSTTrendPullback
 from ..strategies.pst_channel_master import PSTChannelMaster
-from ..strategies.pst_session_master import PSTSessionMaster
-from ..strategies.pst_divergence_hunter import PSTDivergenceHunter
-from ..strategies.pst_news_fade import PSTNewsFade
+from ..strategies.pst_rsi_equities import PSTRSIEquities
+from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..portfolio.manager import PortfolioManager
 import pandas_ta as ta
 import pandas as pd
@@ -39,11 +34,11 @@ class SymbolTask:
         self.running = True
         self.classifier = RegimeClassifier()
         # Instanciar estrategias élite
+        # SIMPLIFICACIÓN ESTRATÉGICA: Master + RSI Equities + EMA Flow
         self.strategies = {
-            RegimeMode.TREND: [PSTTrendMomentum(), PSTTrendPullback(), PSTChannelMaster()],
-            RegimeMode.RANGE: [PSTRangeReversion(), PSTDivergenceHunter(), PSTChannelMaster()],
-            # Ahora VOLATILE tiene 3 especialistas: Breakout (Tendencia), ORB (Apertura), Fade (Reversión Noticia)
-            RegimeMode.VOLATILE: [PSTVolatilityBreakout(), PSTSessionMaster(), PSTNewsFade(), PSTChannelMaster()]
+            RegimeMode.TREND: [PSTChannelMaster(), PSTEMAFlow()],
+            RegimeMode.RANGE: [PSTChannelMaster(), PSTRSIEquities()],
+            RegimeMode.VOLATILE: [PSTChannelMaster(), PSTRSIEquities(), PSTEMAFlow()]
         }
 
     async def run(self):
@@ -65,7 +60,8 @@ class SymbolTask:
                 # Convert to dict format expected by strategy
                 user_levels = {
                     'levels': user_levels_list,
-                    'config': channel_config
+                    'config': channel_config,
+                    'symbol': self.symbol
                 }
                 
                 # Validación básica: Necesitamos al menos M15 y H1

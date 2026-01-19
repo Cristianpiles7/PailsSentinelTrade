@@ -77,19 +77,36 @@ class PSTTrendMomentum:
         
         # 3. ANÁLISIS M5 (TRIGGER) - Max 30 ptos
         entry_signal = 0
+        vwap_crossover = False # Flag de evento
+        
         if df_m5 is not None:
              m5_close = df_m5['close'].iloc[-1]
+             m5_prev_close = df_m5['close'].iloc[-2]
+             
              m5_vwap_df = ta.vwap(df_m5['high'], df_m5['low'], df_m5['close'], df_m5['tick_volume'])
              m5_vwap = m5_vwap_df.iloc[-1] if m5_vwap_df is not None else 0
+             m5_prev_vwap = m5_vwap_df.iloc[-2] if m5_vwap_df is not None else m5_vwap
              
              if m5_close > m5_vwap:
                  score += 10
                  breakdown["M5 VWAP"] = "Above (+10)"
-             else:
+                 # Detección de Cruce Alcista (Eventos)
+                 if m5_prev_close <= m5_prev_vwap:
+                     vwap_crossover = True
+                     breakdown["Trigger"] = "CROSSOVER BUY (+Bonus)"
+                     score += 5 # Bonus por frescura
+             elif m5_close < m5_vwap:
+                 # Detección de Cruce Bajista (Eventos)
+                 if m5_prev_close >= m5_prev_vwap:
+                     vwap_crossover = True
+                     breakdown["Trigger"] = "CROSSOVER SELL (+Bonus)"
+                     score += 5 # Bonus por frescura
                  breakdown["M5 VWAP"] = "Below (0)"
         
         # --- DECISIÓN FINAL ---
-        # Umbral: 60 puntos para entrar
+        # Umbral: 75 puntos para entrar (Más estricto) + REQUISITO DE EVENTO
+        # Excepción: Si el score es MUY alto (>85), permitimos entrada de continuación (Strong Trend Join)
+        
         direction = 0 
         
         # Detectamos dirección predominante de H1 (o M15 si no hay H1)
@@ -112,8 +129,17 @@ class PSTTrendMomentum:
             "total_score": score
         }
         
-        if score >= 60 and direction != 0:
-            entry_signal = direction
+        # REGLA MAESTRA:
+        # 1. Score >= 75 (Antes 60)
+        # 2. Dirección confirmada
+        # 3. Gatillo: O es un cruce fresco (Crossover) O es una tendencia masiva (>85 pts)
+        
+        is_fresh_signal = vwap_crossover
+        is_super_trend = score >= 85
+        
+        if direction != 0:
+            if (is_fresh_signal and score >= 70) or (is_super_trend):
+                 entry_signal = direction
             
         return {
             "entry": entry_signal,

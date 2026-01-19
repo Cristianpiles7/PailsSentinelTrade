@@ -9,13 +9,8 @@ from datetime import datetime
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_Core.utils.tech_utils import calculate_channel_boundary
 from ..strategies.pst_channel_master import PSTChannelMaster
-from ..strategies.pst_session_master import PSTSessionMaster
-from ..strategies.pst_divergence_hunter import PSTDivergenceHunter
-from ..strategies.pst_news_fade import PSTNewsFade
-from PST_Core.strategies.pst_trend_momentum import PSTTrendMomentum
-from PST_Core.strategies.pst_range_reversion import PSTRangeReversion
-from PST_Core.strategies.pst_volatility_breakout import PSTVolatilityBreakout
-from PST_Core.strategies.pst_trend_pullback import PSTTrendPullback
+from ..strategies.pst_rsi_equities import PSTRSIEquities
+from ..strategies.pst_ema_flow import PSTEMAFlow
 from PST_Core.models.classifier import RegimeMode
 import logging
 import asyncio # Added for asyncio.run
@@ -455,29 +450,49 @@ def get_chart_data(symbol):
         df = pd.DataFrame(rates)
         
         # --- MTF FETCH FOR STRATEGY HUD ---
+        rates_m1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 500)
         rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 500)
         rates_h1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 300)
         
+        df_m1 = pd.DataFrame(rates_m1) if rates_m1 is not None else None
         df_m15 = pd.DataFrame(rates_m15) if rates_m15 is not None else None
         df_h1 = pd.DataFrame(rates_h1) if rates_h1 is not None else None
         
         mtf_data = {
+            'm1': df_m1,
             'm5': df,
             'm15': df_m15,
             'h1': df_h1
         }
-        print(f"DEBUG: MTF OK. M5:{len(df)} M15:{len(df_m15) if df_m15 is not None else 0} H1:{len(df_h1) if df_h1 is not None else 0}")
+        print(f"DEBUG: MTF OK. M1:{len(df_m1) if df_m1 is not None else 0} M5:{len(df)} H1:{len(df_h1) if df_h1 is not None else 0}")
 
         # Calcular Indicadores
         df['ema_21'] = ta.ema(df['close'], length=21)
         df['ema_50'] = ta.ema(df['close'], length=50) 
         
-        # RSI H1 for metadata
+        # Calcular RSIs adicionales para el HUD (M1, M5, H1)
+        rsi_m1 = 50
+        rsi_m5 = 50
         rsi_h1 = 50
-        if df_h1 is not None and len(df_h1) > 20:
-             rsi_series_h1 = ta.rsi(df_h1['close'], length=14)
-             if rsi_series_h1 is not None and len(rsi_series_h1) > 0:
-                 rsi_h1 = rsi_series_h1.iloc[-1]
+        
+        try:
+             # RSI M1
+             if df_m1 is not None and len(df_m1) > 20:
+                 rsi_s = ta.rsi(df_m1['close'], length=14)
+                 if rsi_s is not None: rsi_m1 = rsi_s.iloc[-1]
+                 
+             # RSI M5 (Base DF)
+             if len(df) > 20:
+                 rsi_s = ta.rsi(df['close'], length=14)
+                 if rsi_s is not None: rsi_m5 = rsi_s.iloc[-1]
+                 
+             # RSI H1
+             if df_h1 is not None and len(df_h1) > 20:
+                 rsi_s = ta.rsi(df_h1['close'], length=14)
+                 if rsi_s is not None: rsi_h1 = rsi_s.iloc[-1]
+                 
+        except Exception as e:
+            print(f"Error calculating HUD RSIs: {e}")
         
         print("DEBUG: Indicators OK")
         
@@ -526,13 +541,8 @@ def get_chart_data(symbol):
             # Lista de estrategias por regime (Sync con orchestrator)
             # Enable ALL strategies for display (User Request: Show all even if 0)
             strat_instances = [
-                PSTRangeReversion(),
-                PSTTrendMomentum(),
-                PSTTrendPullback(),
-                PSTVolatilityBreakout(),
-                PSTSessionMaster(),
-                PSTDivergenceHunter(),
-                PSTNewsFade()
+                PSTRSIEquities(),
+                PSTEMAFlow()
             ]
             
             # Inyectar nombres de estrategias activas
@@ -574,9 +584,15 @@ def get_chart_data(symbol):
             
             # --- AUTO STRAT META INJECTION ---
             strategy_analysis['strat_meta'] = {
-                "name": "Channel Master PST",
-                "desc": "Estrategia híbrida que combina canales de regresión dinámica con niveles de soporte/resistencia. Busca entradas de reversión en extremos de canal y roturas de tendencia.",
-                "logic": "Puntuación basada en distancia a bandas (Bollinger/Canal), RSI y validación de tendencia."
+                "name": "Channel Master + RSI EQ",
+                "desc": "Estrategia híbrida que combina canales de regresión dinámica con niveles y RSI Multi-Timeframe.",
+                "logic": "Análisis de tendencias en Canales de Regresión + RSI en M1/M5 para entradas precisas."
+            }
+            # INJECTION OF MTF RSI FOR HUD
+            strategy_analysis['rsi_mtf'] = {
+                "m1": round(rsi_m1, 1),
+                "m5": round(rsi_m5, 1),
+                "h1": round(rsi_h1, 1)
             }
             
             # --- AGREGAR SUB-ESTRATEGIAS (Range, Momentum, etc.) ---
@@ -590,7 +606,11 @@ def get_chart_data(symbol):
                 "PST-Vol-Breakout": "Ruptura Volatilidad",
                 "PST-Session-Master": "Maestro de Sesión (ORB)",
                 "PST-Divergence": "Cazador Divergencias",
-                "PST-News-Fade": "Contra-Noticia (Fade)"
+                "PST-News-Fade": "Contra-Noticia (Fade)",
+                "PSTEmaFlow": "Flujo EMA (Tendencia)",
+                "PST-EMA-Flow": "Flujo EMA (Tendencia)",
+                "PSTRSIEquities": "RSI Equities (Multi-Asset)",
+                "PST-RSI-Equities": "RSI Equities (Multi-Asset)"
             }
             KEY_TRANS = {
                 "H1 Trend": "Tendencia H1",
@@ -617,55 +637,82 @@ def get_chart_data(symbol):
             }
 
             best_s_name = "Estrategia Maestra"
+            # --- STRUCTURED DATA FOR FRONTEND (Grouped View) ---
+            grouped_strategies = []
+            
+            # 1. Sub-Strategies
             for s in strat_instances:
                 try:
                     s_res = asyncio.run(s.calculate_signal(mtf_data, mode_str))
                     s_score = s_res.get('score', 0)
                     s_meta = s_res.get('metadata', {})
                     raw_s_name = getattr(s, 'STRATEGY_NAME', type(s).__name__)
-                    
-                    # 1. Translate Strategy Name
                     s_name = STRAT_TRANS.get(raw_s_name, raw_s_name)
                     
                     if s_score > max_sub_score:
                         max_sub_score = s_score
                         best_s_name = s_name
                     
-                    # Add to factors
                     status = "Neutral"
                     if s_score >= 70: status = "¡ACCIÓN!"
                     elif s_score >= 40: status = "Vigilar"
                     
-                    factors[s_name] = f"{s_score}/100 ({status})"
-                    
-                    # Add contributing factors ONLY for the current strategy to avoid mixing
-                    breakdown = s_meta.get('score_breakdown', {})
-                    for b_key, b_val in breakdown.items():
-                        if "(+" in str(b_val) or score > 0: # Show positive contributors
+                    # Collecting Factors
+                    s_factors = []
+                    for b_key, b_val in s_meta.get('score_breakdown', {}).items():
+                         if "(+" in str(b_val) or s_score > 0:
                              trans_key = KEY_TRANS.get(b_key, b_key)
-                             clean_val = str(b_val).strip() 
-                             factors[f"↳ {trans_key} ({s_name})"] = clean_val
+                             s_factors.append({"k": trans_key, "v": str(b_val)})
+                    
+                    grouped_strategies.append({
+                        "name": s_name,
+                        "score": s_score,
+                        "status": status,
+                        "factors": s_factors
+                    })
+                    
+                    # Legacy Flat Factors (Keep for compatibility if needed, but we rely on grouped now)
+                    factors[s_name] = f"{s_score}/100 ({status})"
+                    for f in s_factors: factors[f"↳ {f['k']} ({s_name})"] = f['v']
+                        
                 except Exception as ex:
                     logger.error(f"Error running sub-strat {type(s).__name__}: {ex}")
+                    print(f"DEBUG CRITICAL ERROR STRAT {type(s).__name__}: {ex}")
+                    import traceback
+                    traceback.print_exc()
 
-            # --- AGREGAR FACTORES DE ESTRATEGIA MAESTRA (CRITICAL) ---
+            # 2. Master Strategy
             master_score = strategy_analysis.get('score', 0)
             if master_score > 0:
                 m_status = "¡ACCIÓN!" if master_score >= 70 else "Vigilar"
-                factors["Estrategia Maestra (Canales)"] = f"{master_score}/100 ({m_status})"
-                
                 m_breakdown = strategy_analysis.get('score_breakdown', {})
+                m_factors = []
                 for b_key, b_val in m_breakdown.items():
                     trans_key = KEY_TRANS.get(b_key, b_key)
-                    factors[f"↳ {trans_key} (Maestra)"] = str(b_val)
-            
-            # SYNC SCORE: Ensure total score reflects the highest between Master and Sub-Strats
+                    m_factors.append({"k": trans_key, "v": str(b_val)})
+                
+                # Add to grouped
+                grouped_strategies.append({
+                    "name": "Estrategia Maestra (Canales)",
+                    "score": master_score,
+                    "status": m_status,
+                    "factors": m_factors
+                })
+                
+                # Legacy
+                factors["Estrategia Maestra (Canales)"] = f"{master_score}/100 ({m_status})"
+                for f in m_factors: factors[f"↳ {f['k']} (Maestra)"] = f['v']
+
+            # SYNC SCORE
             if master_score < max_sub_score:
                 strategy_analysis['score'] = max_sub_score
                 strategy_analysis['active_strategy'] = best_s_name # Live Win
             else:
                 strategy_analysis['score'] = master_score
                 strategy_analysis['active_strategy'] = "Estrategia Maestra (Canales)"
+            
+            # Inject grouped list into return object
+            strategy_analysis['grouped_strategies'] = grouped_strategies
 
             # --- POPULATE FACTORS IF MISSING (CRITICAL FOR UX) ---
             if True: # Always populate/merge factors now

@@ -26,8 +26,9 @@ class PSTChannelMaster:
         # Se espera que el 'user_levels' contenga una lista "special" o algo similar, pero 
         # mejor usamos el argumento extra que añadiremos al método
         config = user_levels.get('config', {}) if isinstance(user_levels, dict) else {}
-        enable_tactical = config.get('enable_tactical', True)
-        enable_macro = config.get('enable_macro', True)
+        # CAMBIO: Por defecto FALSE para que solo funcione con niveles manuales o activación explícita
+        enable_tactical = config.get('enable_tactical', False)
+        enable_macro = config.get('enable_macro', False)
 
         # 1. Calcular Canales (TÁCTICO y MACRO)
         # 2000 velas para Macro, 1200 para Táctico
@@ -41,8 +42,16 @@ class PSTChannelMaster:
         else:
             print(f"✅ [PSTChannelMaster] Channels OK. Tac={p_tac is not None}, Mac={p_mac is not None}")
         
-        if p_tac is None and not user_levels:
-            return {"entry": 0, "atr": 0, "metadata": {}, "score": 0}
+        # FIX: Check if we have ANY levels (Auto OR Manual)
+        has_manual = False
+        if isinstance(user_levels, dict) and user_levels.get('levels'):
+             if len(user_levels['levels']) > 0: has_manual = True
+        elif isinstance(user_levels, list) and len(user_levels) > 0:
+             has_manual = True
+             
+        if p_tac is None and p_mac is None and not has_manual:
+             # ABORT: No strategy possible
+             return {"entry": 0, "atr": 0, "metadata": {}, "score": 0}
 
         # 2. Extraer parámetros (Usamos el TÁCTICO para señales por defecto)
         params = p_tac if p_tac else p_mac
@@ -167,23 +176,46 @@ class PSTChannelMaster:
         breakdown = {}
 
         # --- LÓGICA DE RUPTURA (BREAKOUT) ---
+        # STRICT: Base Score 50. Requires filters to reach 80.
+        vol_val = df['tick_volume'].iloc[-1] if 'tick_volume' in df else 0
+        vol_ma = df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df else (vol_val or 1)
+        
+        is_green_candle = close > df['open'].iloc[-1]
+        is_red_candle = close < df['open'].iloc[-1]
+
         if close > chan_upper and prev_close <= chan_upper:
             # Ruptura Alcista
-            if adx > 25 and rsi > 55:
-                entry = 1
-                signal_type = "BULL_BREAKOUT"
-                score = 80
-                breakdown["Type"] = "Breakout UP"
-                breakdown["Momentum"] = f"ADX {adx:.1f} Confirmado"
+            if is_green_candle and vol_val > vol_ma: # Confirmación de vela y volumen
+                 score = 50 # Base
+                 breakdown["Type"] = "Breakout UP"
+                 
+                 # Modifiers
+                 if adx > 25: score += 15; breakdown["ADX"] = "High (+15)"
+                 if rsi > 55: score += 15; breakdown["RSI"] = "Bullish (+15)"
+                 
+                 if score >= 80:
+                     entry = 1
+                     signal_type = "BULL_BREAKOUT"
+            else:
+                 score = 20
+                 breakdown["Status"] = "Weak Breakout (No Vol/Color)"
         
         elif close < chan_lower and prev_close >= chan_lower:
             # Ruptura Bajista
-            if adx > 25 and rsi < 45:
-                entry = -1
-                signal_type = "BEAR_BREAKOUT"
-                score = 80
-                breakdown["Type"] = "Breakout DOWN"
-                breakdown["Momentum"] = f"ADX {adx:.1f} Confirmado"
+            if is_red_candle and vol_val > vol_ma:
+                 score = 50 # Base
+                 breakdown["Type"] = "Breakout DOWN"
+                 
+                 # Modifiers
+                 if adx > 25: score += 15; breakdown["ADX"] = "High (+15)"
+                 if rsi < 45: score += 15; breakdown["RSI"] = "Bearish (+15)"
+                 
+                 if score >= 80:
+                     entry = -1
+                     signal_type = "BEAR_BREAKOUT"
+            else:
+                 score = 20
+                 breakdown["Status"] = "Weak Breakout (No Vol/Color)"
 
         # --- LÓGICA DE REBOTE (REJECTION) ---
         if entry == 0:
@@ -192,22 +224,38 @@ class PSTChannelMaster:
             dist_lower = (low - chan_lower) / atr if atr > 0 else 999
             
             # Rebote en Techo (Venta)
-            if high >= chan_upper * 0.999 and close < prev_close:
-                if rsi > 65: # Sobrecompra relativa al canal
-                    entry = -1
-                    signal_type = "UPPER_REJECTION"
-                    score = 70
-                    breakdown["Type"] = "Techo Tocado"
-                    breakdown["RSI"] = f"{rsi:.1f} (Bearish)"
+            if high >= chan_upper * 0.999: # Tocado zona alta
+                if is_red_candle and close < prev_close: # Confirmed Rejection
+                    score = 50 # Base
+                    breakdown["Type"] = "Techo Rechazado"
+                    
+                    if rsi > 65: score += 20; breakdown["RSI"] = "Overbought (+20)"
+                    elif rsi > 55: score += 10; breakdown["RSI"] = "High (+10)"
+                    
+                    if vol_val > vol_ma: score += 15; breakdown["Vol"] = "High (+15)"
+                    
+                    if score >= 80:
+                        entry = -1
+                        signal_type = "UPPER_REJECTION"
+                else:
+                    breakdown["Status"] = "Hovering Res (Wait Red)"
                     
             # Rebote en Suelo (Compra)
-            elif low <= chan_lower * 1.001 and close > prev_close:
-                if rsi < 35: # Sobreventa relativa al canal
-                    entry = 1
-                    signal_type = "LOWER_REJECTION"
-                    score = 70
-                    breakdown["Type"] = "Suelo Tocado"
-                    breakdown["RSI"] = f"{rsi:.1f} (Bullish)"
+            elif low <= chan_lower * 1.001: # Tocado zona baja
+                if is_green_candle and close > prev_close: # Confirmed Rejection
+                    score = 50 # Base
+                    breakdown["Type"] = "Suelo Rechazado"
+                    
+                    if rsi < 35: score += 20; breakdown["RSI"] = "Oversold (+20)"
+                    elif rsi < 45: score += 10; breakdown["RSI"] = "Low (+10)"
+                    
+                    if vol_val > vol_ma: score += 15; breakdown["Vol"] = "High (+15)"
+                    
+                    if score >= 80:
+                        entry = 1
+                        signal_type = "LOWER_REJECTION"
+                else:
+                    breakdown["Status"] = "Hovering Sup (Wait Green)"
 
         # Helper to get points (Using Slice Context)
         def get_channel_points(params, df_slice):
@@ -316,31 +364,64 @@ class PSTChannelMaster:
                 # BASE ACTION SCORE = 50
                 strat_score = 50
                 
+                # --- STRICT CONFIRMATION LOGIC (Refined) ---
+                # To prevent oscillation (Buy/Sell/Buy/Sell) when hovering:
+                # 1. Require distinct candle closure (Color match).
+                # 2. Require Volume confirmation for breakouts.
+                
+                is_green_candle = close > df['open'].iloc[-1]
+                is_red_candle = close < df['open'].iloc[-1]
+                
                 # BREAKOUT CHECK (Crossed Level)
-                if is_res and dist_val > 0:
-                    action_reco = "BREAK BUY"
-                    strat_score += 20
-                    if rsi > 55: strat_score += 10; val_msg.append("RSI Bullish")
-                    if vol_val > vol_ma: strat_score += 15; val_msg.append("Vol High")
-                elif is_sup and dist_val < 0:
-                    action_reco = "BREAK SELL"
-                    strat_score += 20
-                    if rsi < 45: strat_score += 10; val_msg.append("RSI Bearish")
-                    if vol_val > vol_ma: strat_score += 15; val_msg.append("Vol High")
+                if is_res and dist_val > 0: # Price is ABOVE Resistance
+                    # Require strong close to confirm breakout (not just a wick)
+                    if is_green_candle and vol_val > vol_ma: 
+                        action_reco = "BREAK BUY"
+                        strat_score += 20
+                        if rsi > 55: strat_score += 10; val_msg.append("RSI Bullish")
+                        val_msg.append("Vol High")
+                    else:
+                        action_reco = "WATCH BREAK"
+                        strat_score += 10
+                        val_msg.append("Wait Conf")
+                        
+                elif is_sup and dist_val < 0: # Price is BELOW Support
+                    if is_red_candle and vol_val > vol_ma:
+                        action_reco = "BREAK SELL"
+                        strat_score += 20
+                        if rsi < 45: strat_score += 10; val_msg.append("RSI Bearish")
+                        val_msg.append("Vol High")
+                    else:
+                        action_reco = "WATCH BREAK"
+                        strat_score += 10
+                        val_msg.append("Wait Conf")
                 
                 # BOUNCE CHECK (Touching Level but not crossed/sustained)
-                elif is_res: 
-                    action_reco = "BOUNCE SELL"
-                    strat_score += 10
-                    # Proximity Bonus within Action Zone (Max +15) -> 15 / THR_ACTION = 15 / 0.05 = 300.0
-                    strat_score += (THR_ACTION - abs_dist_pct) * 300.0
-                    if rsi > 70: strat_score += 15; val_msg.append("RSI OB")
-                elif is_sup:
-                    action_reco = "BOUNCE BUY"
-                    strat_score += 10
-                    # Proximity Bonus within Action Zone (Max +15)
-                    strat_score += (THR_ACTION - abs_dist_pct) * 187.5
-                    if rsi < 30: strat_score += 15; val_msg.append("RSI OS")
+                elif is_res: # Price is BELOW Resistance (Potential Ceiling)
+                    # Sell Bounce requires RED candle rejection
+                    if is_red_candle:
+                        action_reco = "BOUNCE SELL"
+                        strat_score += 20 # Higher base confidence if candle confirms
+                        # Proximity Bonus (Max +15)
+                        strat_score += (THR_ACTION - abs_dist_pct) * 300.0
+                        if rsi > 70: strat_score += 15; val_msg.append("RSI OB")
+                    else:
+                        action_reco = "WATCH RES" 
+                        strat_score += 5 # Low score if just hovering green
+                        val_msg.append("Wait Red")
+
+                elif is_sup: # Price is ABOVE Support (Potential Floor)
+                    # Buy Bounce requires GREEN candle rejection
+                    if is_green_candle:
+                        action_reco = "BOUNCE BUY"
+                        strat_score += 20
+                        # Proximity Bonus (Max +15)
+                        strat_score += (THR_ACTION - abs_dist_pct) * 187.5
+                        if rsi < 30: strat_score += 15; val_msg.append("RSI OS")
+                    else:
+                        action_reco = "WATCH SUP"
+                        strat_score += 5 # Low score if just hovering red
+                        val_msg.append("Wait Green")
 
             metadata["all_levels_data"].append({
                 "type": lvl['type'],
