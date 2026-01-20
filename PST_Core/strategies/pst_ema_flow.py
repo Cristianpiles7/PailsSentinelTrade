@@ -125,6 +125,18 @@ class PSTEMAFlow:
         else:
             return {"entry": 0, "atr": 0, "metadata": {}, "score": 0}
 
+        # --- CRITICAL CONFIRMATION (User Request) ---
+        # Ensure current price confirms the signal (No Reversion)
+        latest_c = df['close'].iloc[-1]
+        latest_ema21 = ema21_s.iloc[-1]
+        
+        if direction == 1 and latest_c <= latest_ema21:
+             net_score = 0
+             breakdown["Validation"] = "Failed (Close < EMA21)"
+        elif direction == -1 and latest_c >= latest_ema21:
+             net_score = 0
+             breakdown["Validation"] = "Failed (Close > EMA21)"
+
         # 2. HTF FILTER (M15)
         if direction == 1 and htf_filter == -1:
             net_score = 0; breakdown["Filter"] = "M15 Bearish (Block)"

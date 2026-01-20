@@ -2,12 +2,16 @@
 # Configuration constants for PailsSentinelTrade
 
 # TRADING RISK PARAMETERS (FTMO Friendly)
-MAX_RISK_PCT = 1.5           # Riesgo máximo por operación
-MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día (FTMO)
+# TRADING RISK PARAMETERS (FTMO Friendly)
+MAX_RISK_PCT = 1.5           # Riesgo máximo en caso de SL
+MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día
+MAX_POSITION_COST = 3000     # Costo máximo de entrada por operación (Cap de exposición)
 
 # DINAMIC PROTECTION (ATR MULTIPLIERS)
-BE_ATR_MULTIPLIER = 1.5      # Activar Breakeven a 1.5 ATR
-TRAIL_ATR_MULTIPLIER = 2.0   # Trailing Stop a 2.0 ATR de distancia
+BE_ATR_MULTIPLIER = 2.0      # Activar Breakeven a 2.0 ATR
+TRAIL_ATR_MULTIPLIER = 3.0   # Trailing Stop a 3.0 ATR de distancia
+SL_ATR_MULTIPLIER = 3.0      # Multiplicador ATR para Stop Loss
+TP_ATR_MULTIPLIER = 6.0      # Multiplicador ATR para Take Profit (Ratio 1:2)
 
 # TRADING DEFAULT PARAMS
 DEFAULT_LOT = 0.01

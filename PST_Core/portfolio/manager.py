@@ -87,16 +87,68 @@ class PortfolioManager:
         return False
 
     def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info):
-        """Calcula el lotaje basado en el riesgo monetario."""
+        """Calcula el lotaje basado en el riesgo monetario y CAP de exposición."""
+        from ..config import MAX_POSITION_COST 
+        
         if stop_loss_points <= 0 or symbol_info is None:
             return symbol_info.volume_min if symbol_info else 0.01
 
         risk_money = balance * (risk_per_trade_pct / 100)
-        # Valor de un punto en la moneda del depósito
-        point_value = symbol_info.trade_tick_value / symbol_info.trade_tick_size
         
-        raw_lot = risk_money / (stop_loss_points * point_value)
+        # FIX: Usar directamente trade_tick_value (Valor de 1 punto/tick de movimiento)
+        tick_value = symbol_info.trade_tick_value
         
+        # Debug crítico para el usuario
+        logger.info(f"🧮 [DEBUG LOTS] Balance: {balance} | Risk: {risk_per_trade_pct}% (${risk_money:.2f})")
+        logger.info(f"   ℹ️ Stats: TickVal={tick_value} | SL Points={stop_loss_points}")
+
+        if tick_value == 0:
+            logger.error("❌ Error: Tick Value es 0. Usando lote mínimo.")
+            return symbol_info.volume_min
+
+        # Fórmula Correcta: Risk = Lots * Points * TickValue
+        try:
+            raw_lot = risk_money / (stop_loss_points * tick_value)
+        except ZeroDivisionError:
+             raw_lot = symbol_info.volume_min
+             
+        # --- APPLIED CAP LOGIC ---
+        # Calcular el costo de la posición: Precio * Lotes * ContractSize (aprox Precio*Lote para stocks CFDs)
+        # Nota: symbol_info.ask podría no estar disponible aquí, usamos una estimación o requerimos precio.
+        # Pero calculate_lot_size no recibe precio. Asumimos que el usuario quiere limitar EXPOSICIÓN nominal.
+        # Si es FX, exposure = 100,000 * lot. Si es Stock, exposure = Price * Lot.
+        # SIN PRECIO ACTUAL, es difícil limitar por "Coste".
+        # PERO... Risk Manager suele llamarse desde Executor que TIENE el precio.
+        # VOY A LIMITAR por MARGEN LIBRE si no, pero el usuario pidió "entre 2K y 3K".
+        # Asumiré que calculate_lot_size debe recibir 'current_price' o obtenerlo.
+        # Como no puedo cambiar la firma fácilmente sin romper todo, usaré una aproximación si puedo,
+        # O MEJOR: Limitar por Margen si ContractSize es conocido. 
+        
+        # REVISIÓN: executor.py línea 43 llama a calculate_lot_size(acc["balance"], ..., s_info).
+        # NO pasa precio.
+        # Voy a asumir que debemos limitar el raw_lot si sabemos el precio aproximado.
+        # PERO NO LO SABEMOS AQUÍ.
+        # HACK: Usar el precio Ask como referencia para la exposición nominal
+        estimated_price = symbol_info.ask if symbol_info.ask > 0 else symbol_info.last
+        contract_size = symbol_info.trade_contract_size if symbol_info.trade_contract_size > 0 else 1
+        
+        # DEBUG EXTENDIDO PARA EL USUARIO
+        logger.info(f"   🔍 [DEBUG CAP] Sym: {symbol_info.name} | Price: {estimated_price} | Contract: {contract_size} | TickVal: {tick_value}")
+        
+        if estimated_price > 0:
+             # Exposición Nominal = Lotes * Precio * Tamaño del Contrato (NOMINAL EXPOSURE)
+             # Queremos que Exposición <= MAX_POSITION_COST
+             # max_lots_by_cost = 3000 / (Price * Contract)
+             denom = estimated_price * contract_size
+             max_lots_by_cost = MAX_POSITION_COST / denom if denom > 0 else 0
+             
+             # Si el lote calculado por riesgo > lote por coste, cortamos.
+             if max_lots_by_cost > 0 and raw_lot > max_lots_by_cost:
+                 logger.info(f"   ✂️ CAP DE COSTO ACTIVADO: {raw_lot:.2f} lotes -> {max_lots_by_cost:.4f} lotes (Max Nom: ${MAX_POSITION_COST})")
+                 raw_lot = max_lots_by_cost
+        
+        logger.info(f"   ⚖️ Lot Final (Pre-Broker): {raw_lot}")
+             
         # Ajustar a límites del broker
         lot = max(symbol_info.volume_min, min(symbol_info.volume_max, raw_lot))
         lot = round(lot / symbol_info.volume_step) * symbol_info.volume_step

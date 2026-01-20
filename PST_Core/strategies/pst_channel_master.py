@@ -37,10 +37,9 @@ class PSTChannelMaster:
         _, _, p_mac = calculate_channel_boundary(df.tail(2000), window=15, projection=0, recent_pivots=15) if enable_macro else (None, None, None)
         
         # DEBUG: Print params status
-        if p_tac is None and p_mac is None: 
-            print(f"⚠️ [PSTChannelMaster] Failed to calc channels for len(df)={len(df)}")
-        else:
-            print(f"✅ [PSTChannelMaster] Channels OK. Tac={p_tac is not None}, Mac={p_mac is not None}")
+        # (Silenciado para evitar spam en consola cuando los canales automáticos están desactivados por config)
+        if (enable_tactical and p_tac is None) or (enable_macro and p_mac is None):
+            logger.debug(f"⚠️ [PSTChannelMaster] Canales Automáticos habilitados pero falló el cálculo (len={len(df)})")
         
         # FIX: Check if we have ANY levels (Auto OR Manual)
         has_manual = False
@@ -84,7 +83,8 @@ class PSTChannelMaster:
         # --- OVERRIDE CON NIVELES MANUALES (Trading Híbrido) ---
         manual_levels_list = user_levels.get('levels', []) if isinstance(user_levels, dict) else (user_levels if user_levels else [])
         chan_config = user_levels.get('config', {}) if isinstance(user_levels, dict) else {}
-        logger.info(f"🔍 DEBUG MANUAL LEVELS: {len(manual_levels_list)} levels found. Data: {manual_levels_list}")
+        if manual_levels_list:
+             logger.debug(f"🔍 DEBUG MANUAL LEVELS: {len(manual_levels_list)} levels found.")
         
         # Prepare Timestamp for Trendlines
         # 4. Determinar Timestamp Actual para Interpolación
@@ -93,7 +93,7 @@ class PSTChannelMaster:
             # CHECK EXPLICIT OVERRIDE FIRST (From Server Live Tick)
             if isinstance(user_levels, dict) and user_levels.get('current_time'):
                 current_ts = float(user_levels['current_time'])
-                logger.info(f"🕒 Using Externally Provided Time: {current_ts}")
+                logger.debug(f"🕒 Using Externally Provided Time: {current_ts}")
             
             # Fallback to Dataframe Index
             elif isinstance(df.index, pd.DatetimeIndex):
@@ -111,13 +111,13 @@ class PSTChannelMaster:
                 if isinstance(idx_val, (int, float)) and idx_val > 1000000000:
                     current_ts = float(idx_val)
                 else:
-                    logger.warning(f"⚠️ Could not determine timestamp from DF. Index={idx_val}")
+                    logger.debug(f"⚠️ Could not determine timestamp from DF. Index={idx_val}")
 
         except Exception as e:
             logger.error(f"Error converting index to timestamp: {e}")
             current_ts = 0
             
-        logger.info(f"DEBUG TIME: Last Index={df.index[-1]} TimeCol={df['time'].iloc[-1] if 'time' in df.columns else 'N/A'} Calculated TS={current_ts}")
+        #logger.debug(f"DEBUG TIME: Last Index={df.index[-1]} TimeCol={df['time'].iloc[-1] if 'time' in df.columns else 'N/A'} Calculated TS={current_ts}")
 
         def get_level_price(lvl):
             if lvl.get('price2') and lvl.get('time1') and lvl.get('time2'):
@@ -132,7 +132,7 @@ class PSTChannelMaster:
                     if t2_val != t1_val:
                         m = (p2 - p1) / (t2_val - t1_val)
                         result_price = p1 + m * (current_ts - t1_val)
-                        logger.info(f"DEBUG MATH: p1={p1} p2={p2} t1={t1_val} t2={t2_val} cur={current_ts} m={m} res={result_price}")
+                        # logger.debug(f"DEBUG MATH: p1={p1} p2={p2} t1={t1_val} t2={t2_val} cur={current_ts} m={m} res={result_price}")
                         return result_price
                 except Exception as e:
                     logger.error(f"Error calculando trendline para lvl {lvl.get('id')}: {e}")
@@ -437,10 +437,10 @@ class PSTChannelMaster:
             # (Reverted) Manual Score does not overwrite Global Score here.
         
         if len(metadata["all_levels_data"]) > 0:
-            logger.info(f"✅ Metadata populated with {len(metadata['all_levels_data'])} levels.")
+            logger.debug(f"✅ Metadata populated with {len(metadata['all_levels_data'])} levels.")
             # logger.info(f"Sample: {metadata['all_levels_data'][0]}")
         else:
-             logger.info("⚠️ Metadata all_levels_data is EMPTY after loop.")
+             logger.debug("⚠️ Metadata all_levels_data is EMPTY after loop.")
 
         # 2. Auto Levels (if enabled)
         # Check config (default to TRUE/1 if not present)

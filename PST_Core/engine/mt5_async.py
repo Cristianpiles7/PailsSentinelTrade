@@ -67,12 +67,14 @@ async def get_history_deals_async(days=1):
     return await asyncio.to_thread(mt5.history_deals_get, start_date, end_date)
 
 async def get_mtf_data_async(symbol: str):
-    """Obtiene datos Multi-Timeframe (M5, M15, H1, H4) en paralelo."""
+    """Obtiene datos Multi-Timeframe (M1, M5, M15, H1, H4) en paralelo."""
+    # M1: Scalping / Volatilidad (User Request)
     # M5: Disparo / Tendencia Corta
     # M15: Táctica / Estructura
     # H1: Tendencia Principal
     # H4: Macro / Filtro Mayor
     tasks = [
+        fetch_rates_async(symbol, 1, 100),   # M1 (Scalp Vol - 100 velas)
         fetch_rates_async(symbol, 5, 200),   # M5 (Trigger - 200 para EMAs/RSI locales)
         fetch_rates_async(symbol, 15, 200),  # M15 (Tactical)
         fetch_rates_async(symbol, 60, 500),  # H1 (Trend - 500 para mayor estabilidad)
@@ -90,9 +92,10 @@ async def get_mtf_data_async(symbol: str):
             clean_results.append(r)
             
     return {
-        "m5": clean_results[0],
-        "m15": clean_results[1],
-        "h1": clean_results[2],
-        "h4": clean_results[3]
+        "m1": clean_results[0],
+        "m5": clean_results[1],
+        "m15": clean_results[2],
+        "h1": clean_results[3],
+        "h4": clean_results[4]
     }
 

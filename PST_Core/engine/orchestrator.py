@@ -8,8 +8,8 @@ from ..strategies.pst_channel_master import PSTChannelMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..portfolio.manager import PortfolioManager
+from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER
 import pandas_ta as ta
-import pandas as pd
 import pandas as pd
 from typing import List
 import json
@@ -239,8 +239,39 @@ class SymbolTask:
                     atr_mean = atr_series.rolling(window=20).mean().iloc[-1] if len(atr_series) > 20 else atr_val
                     volatility_factor = (atr_val / atr_mean) if atr_mean > 0 else 1.0
 
+                    # --- MTF METRICS CALCULATION (User Request) ---
+                    # Helper para calcular métricas de un DF
+                    def calc_metrics(df_in):
+                        if df_in is None or len(df_in) < 20: return {"rsi": 0, "vol": 0, "adx": 0}
+                        try:
+                            _rsi = ta.rsi(df_in['close'], length=14).iloc[-1]
+                            
+                            # Vol Relativo: Vol Actual / Media 20
+                            _v = df_in['tick_volume'].iloc[-1] if 'tick_volume' in df_in else 0
+                            _v_ma = df_in['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df_in else 1
+                            if _v_ma == 0: _v_ma = 1
+                            _vol_rel = round(_v / _v_ma, 1) if 'tick_volume' in df_in else 0
+                            
+                            _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-1]
+                            
+                            return {"rsi": round(_rsi, 1), "vol": _vol_rel, "adx": round(_adx, 1)}
+                        except:
+                            return {"rsi": 0, "vol": 0, "adx": 0}
+
+                    mtr_m1 = calc_metrics(mtf_data.get('m1')) # NEW M1
+                    mtr_m5 = calc_metrics(mtf_data.get('m5'))
+                    mtr_m15 = calc_metrics(mtf_data.get('m15'))
+                    mtr_h1 = calc_metrics(mtf_data.get('h1'))
+
                     tech_data = {
-                        "rsi": rsi_val,
+                        "rsi": rsi_val, # Legacy H1
+                        "adx": adx,     # Legacy H1
+                        "mtf": { 
+                            "m1": mtr_m1, # NEW
+                            "m5": mtr_m5,
+                            "m15": mtr_m15,
+                            "h1": mtr_h1
+                        },
                         "ema_alignment": ema_alignment,
                         "dist_ema21": float((price_h1 - ema21) / ema21 * 100) if ema21 > 0 else 0,
                         "dist_ema50": float((price_h1 - ema50) / ema50 * 100) if ema50 > 0 else 0,
@@ -250,7 +281,7 @@ class SymbolTask:
                         "strat_status": make_serializable(best_metadata),
                         "score": current_score,
                         "active_strategy": strategy_name, 
-                        "signal_direction": "BUY" if signal > 0 else ("SELL" if signal < 0 else "NONE"), # <--- NEW: Dirección Explicita
+                        "signal_direction": "BUY" if signal > 0 else ("SELL" if signal < 0 else "NONE"), 
                         "market_open": is_market_open 
                     }
                     
@@ -286,7 +317,7 @@ class SymbolTask:
                                 if can_trade:
                                     if score >= 70: # Umbral de ejecución
                                         logger.info(f"⚡ [TRADE] {self.symbol} disparado por {strat.STRATEGY_NAME} (Score: {score})")
-                                        await self.executor.execute_trade(self.symbol, sig_type, sig["atr"]*1.5, sig["atr"]*3.0, strat.STRATEGY_NAME, mode)
+                                        await self.executor.execute_trade(self.symbol, sig_type, sig["atr"]*SL_ATR_MULTIPLIER, sig["atr"]*TP_ATR_MULTIPLIER, strat.STRATEGY_NAME, mode)
                                         await self.db.log_signal(self.symbol, mode, strat.STRATEGY_NAME, sig_type, score, price)
                                     else:
                                         logger.debug(f"🔍 [SIGNAL] {self.symbol} {sig_type} descartada por score bajo ({score})")
@@ -402,6 +433,20 @@ async def start_v6(symbols: List[str]):
     if not success:
         logger.error("❌ Falló la conexión con MT5")
         return
+
+    # 1. Obtener Símbolos Activos desde DB si no se pasan (o para sobreescribir)
+    import sqlite3
+    try:
+        conn = sqlite3.connect("PST_Core/data/pst_trading.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT symbol FROM symbols_config WHERE is_active = 1")
+        db_active_symbols = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        if db_active_symbols:
+            logger.info(f"📋 Cargando {len(db_active_symbols)} símbolos desde DB Configurator.")
+            symbols = db_active_symbols
+    except Exception as e:
+        logger.warning(f"⚠️ Error cargando símbolos desde DB: {e}. Usando lista por defecto.")
 
     logger.info("💎 PST ASYNC CORE ONLINE 💎")
     

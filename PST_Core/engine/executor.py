@@ -26,6 +26,7 @@ class PSTExecutor:
             return None
 
         # 1. Obtener Info del Símbolo
+        mt5.symbol_select(symbol, True)
         s_info = await sym_info_async(symbol)
         if not s_info:
             logger.error(f"❌ Imposible obtener info de {symbol} para ejecutar orden.")

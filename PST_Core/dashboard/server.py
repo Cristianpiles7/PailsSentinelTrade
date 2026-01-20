@@ -53,7 +53,7 @@ def get_status():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 1. Obtener estados de régimen actuales por símbolo
+        # 1. Obtener estados de régimen actuales por símbolo (solo activos)
         cursor.execute('''
             SELECT r1.symbol, r1.mode, r1.adx, r1.tech_data
             FROM regime_history r1
@@ -62,6 +62,8 @@ def get_status():
                 FROM regime_history
                 GROUP BY symbol
             ) r2 ON r1.id = r2.max_id
+            JOIN symbols_config s ON r1.symbol = s.symbol
+            WHERE s.is_active = 1
         ''')
         regimes_raw = [dict(row) for row in cursor.fetchall()]
         
@@ -146,9 +148,12 @@ def get_status():
                         vol_val = r['tech_data'].get('tick_volume', 0)
                         vol_ma = vol_val # Simplified for View
                         
-                        dist = price - lvl_price # Absolute distance in price units
-                        dist_pct = (price - lvl_price) / price * 100
-                        abs_dist_pct = abs(dist_pct)
+                        if price > 0:
+                            dist_pct = (price - lvl_price) / price * 100
+                            abs_dist_pct = abs(dist_pct)
+                        else:
+                            dist_pct = 0
+                            abs_dist_pct = 999 # Muy lejos
                         strat_score = 0
                         
                         # --- STRICT RULES SYNC ---
@@ -206,11 +211,9 @@ def get_status():
                     r['manual_score'] = best_score
                     r['manual_action'] = best_action
                     r['manual_desc'] = best_desc
-                    r['manual_action'] = best_action
-                    r['manual_desc'] = best_desc
                     
             except Exception as e:
-                logger.error(f"Error calcuating manual score for {r['symbol']}: {e}")
+                logger.error(f"Error calculating manual score for {r['symbol']}: {e}")
 
             regimes.append(r)
         
@@ -305,6 +308,30 @@ def bot_config():
     value = asyncio.run(db.get_config(key))
     return jsonify({"key": key, "value": value})
 
+@app.route('/api/config/symbols', methods=['GET'])
+def get_config_symbols():
+    from PST_Core.models.database import PSTDatabase
+    import asyncio
+    db = PSTDatabase()
+    symbols_data = asyncio.run(db.get_all_symbols_config())
+    return jsonify(symbols_data)
+
+@app.route('/api/config/symbols/toggle', methods=['POST'])
+def toggle_symbol_active():
+    from PST_Core.models.database import PSTDatabase
+    import asyncio
+    db = PSTDatabase()
+    data = request.json
+    symbol = data.get('symbol')
+    active = data.get('active')
+    
+    if symbol is None or active is None:
+        return jsonify({"error": "Missing symbol or active status"}), 400
+    
+    success = asyncio.run(db.set_symbol_active(symbol, active))
+    return jsonify({"success": success})
+
+# Removed redundant get_dashboard_data and stats duplicates
 @app.route('/api/stats/advanced')
 def get_advanced_stats():
     try:
@@ -312,7 +339,6 @@ def get_advanced_stats():
         cursor = conn.cursor()
         
         # 1. Estadísticas Generales
-        # Calculamos: Total Trades, Wins, Losses, Gross Profit, Gross Loss
         cursor.execute('''
             SELECT 
                 COUNT(*) as total_trades,
@@ -364,6 +390,7 @@ def get_advanced_stats():
         best_symbol = symbols_data[0] if symbols_data else None
         worst_symbol = symbols_data[-1] if symbols_data else None
 
+        conn.close()
         return jsonify({
             "success": True,
             "general": {
@@ -380,9 +407,12 @@ def get_advanced_stats():
             "worst_symbol": worst_symbol,
             "symbols": symbols_data
         })
+    except Exception as e:
+        logger.error(f"❌ Error en stats advanced: {e}")
+        return jsonify({"success": False, "error": str(e)})
         
     except Exception as e:
-        print(f"❌ Error en stats advanced: {e}")
+        logger.error(f"❌ Error en stats advanced: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/reset', methods=['POST'])
@@ -464,7 +494,7 @@ def get_chart_data(symbol):
             'm15': df_m15,
             'h1': df_h1
         }
-        print(f"DEBUG: MTF OK. M1:{len(df_m1) if df_m1 is not None else 0} M5:{len(df)} H1:{len(df_h1) if df_h1 is not None else 0}")
+        # logger.debug(f"DEBUG: MTF OK. M1:{len(df_m1) if df_m1 is not None else 0} M5:{len(df)} H1:{len(df_h1) if df_h1 is not None else 0}")
 
         # Calcular Indicadores
         df['ema_21'] = ta.ema(df['close'], length=21)
@@ -492,31 +522,40 @@ def get_chart_data(symbol):
                  if rsi_s is not None: rsi_h1 = rsi_s.iloc[-1]
                  
         except Exception as e:
-            print(f"Error calculating HUD RSIs: {e}")
+            logger.debug(f"DEBUG ERROR HUD RSIs: {e}")
         
-        print("DEBUG: Indicators OK")
+        # logger.debug("DEBUG: Indicators OK")
         
         # Calcular Trendlines (Canales)
+        # Prepare Response Objects
+        u_macro, l_macro, u_local, l_local = [], [], [], []
+        strategy_analysis = {}
+        # Pre-init variables to avoid UnboundLocalError if try block fails early
+        rsi_val = 50.0
+        rsi_h1 = 50.0
+        vol_val = 0
+        # REMOVED: df = pd.DataFrame() - caused overwrite of fetched data
+
         try:
              u_macro, l_macro, u_local, l_local = calculate_trendlines(df)
-             print(f"DEBUG: Trendlines OK. Macro: {len(u_macro)}, Local: {len(u_local)}")
+             # logger.debug(f"DEBUG: Trendlines OK. Macro: {len(u_macro)}, Local: {len(u_local)}")
         except Exception as e:
-             print(f"DEBUG ERROR TRENDLINES: {e}")
+             logger.debug(f"DEBUG ERROR TRENDLINES: {e}")
              u_macro, l_macro, u_local, l_local = [], [], [], []
 
         # Convert Time to String for Frontend
         try:
             df['time'] = df['time'].apply(lambda x: str(datetime.fromtimestamp(x)))
         except Exception as e:
-             print(f"DEBUG ERROR TIME CONV: {e}")
+             logger.debug(f"DEBUG ERROR TIME CONV: {e}")
 
         # Format Trendline Times
         for p in u_macro + l_macro + u_local + l_local:
              if isinstance(p['time'], (int, float, np.int64, np.float64)): 
                  p['time'] = str(datetime.fromtimestamp(p['time']))
 
-        # LIMPIEZA CRÍTICA: Reemplazar NaNs por None (null en JSON)
-        df = df.replace({np.nan: None})
+        # REMOVED: df = df.replace({np.nan: None}) - Breaks strategies demanding numeric types (NaN)
+        # We will handle NaN -> None during JSON serialization only
         
         # 4. Calcular Señales de Estrategia para el HUD
         strategy_analysis = {}
@@ -547,7 +586,7 @@ def get_chart_data(symbol):
             
             # Inyectar nombres de estrategias activas
             active_strats_list = [type(s).__name__.replace('PST','') for s in strat_instances] + ["ChannelMaster"]
-            logger.info(f"📊 HUD Analysis for {symbol} | Mode: {mode_str} | Strats: {active_strats_list}")
+            logger.debug(f"📊 HUD Analysis for {symbol} | Mode: {mode_str} | Strats: {active_strats_list}")
 
             # Recuperar niveles manuales del usuario para este símbolo
             conn_lvl = sqlite3.connect(DB_PATH)
@@ -565,7 +604,7 @@ def get_chart_data(symbol):
             chan_config = dict(row_conf) if row_conf else {}
             
             # DEBUG SERVER
-            print(f"DEBUG SERVER [{symbol}]: Manual Levels found: {len(user_levels)}. Config: {chan_config}")
+            # logger.debug(f"DEBUG SERVER [{symbol}]: Manual Levels found: {len(user_levels)}. Config: {chan_config}")
             
             # Get Live Tick Time for Trendline Sync
             tick = mt5.symbol_info_tick(symbol)
@@ -578,7 +617,7 @@ def get_chart_data(symbol):
             strat = PSTChannelMaster()
             signal_res = asyncio.run(strat.calculate_signal(mtf_data, regime_obj, user_levels={'levels': user_levels, 'config': chan_config, 'current_time': cur_time_live, 'current_price': cur_price_live}))
             strategy_analysis = signal_res.get('metadata', {})
-            logger.info(f"DEBUG SERVER ANALYSIS [Raw keys]: {list(strategy_analysis.keys())} - Levels: {len(strategy_analysis.get('all_levels_data', [])) if 'all_levels_data' in strategy_analysis else 'MISSING'}")
+            logger.debug(f"DEBUG SERVER ANALYSIS [Raw keys]: {list(strategy_analysis.keys())} - Levels: {len(strategy_analysis.get('all_levels_data', [])) if 'all_levels_data' in strategy_analysis else 'MISSING'}")
             strategy_analysis['score'] = signal_res.get('score', 0)
             strategy_analysis['entry'] = signal_res.get('entry', 0)
             
@@ -841,7 +880,7 @@ def get_chart_data(symbol):
                                 lvl['current_val'] = interpolated_price
                                 # print(f"DEBUG MANUAL INTERP: {symbol} P1={p1} P2={p2} T1={t1_ts} T2={t2_ts} NOW={cur_ts} => VAL={interpolated_price}")
                         except Exception as e:
-                            print(f"DEBUG MANUAL INTERP ERROR: {e}")
+                            logger.debug(f"DEBUG MANUAL INTERP ERROR: {e}")
                             pass
 
                     # Determine Relation
@@ -911,11 +950,13 @@ def get_chart_data(symbol):
                         lvl['strat_score'] = round(strat_score)
                         lvl['validation'] = ", ".join(val_msg) if val_msg else "Standard"
 
-            print(f"DEBUG: HUD Analysis OK. Score: {strategy_analysis['score']}")
+            # logger.debug(f"DEBUG: HUD Analysis OK. Score: {strategy_analysis['score']}")
         except Exception as e:
-            print(f"DEBUG ERROR HUD: {e}")
+            logger.error(f"DEBUG ERROR HUD: {e}")
 
-        chart_data = df.to_dict('records')
+        # Replace NaNs with None for valid JSON serialization
+        # Use .where(pd.notnull(df), None) or just handle in creation
+        chart_data = df.where(pd.notnull(df), None).to_dict('records')
 
         # Prepare Response
         technical_analysis = {
@@ -925,9 +966,25 @@ def get_chart_data(symbol):
             "active_strategy": strategy_analysis.get('strat_meta', {}).get('name', 'Strategy')
         }
 
-        logger.info(f"📊 Sending HUD response for {symbol}. Score: {strategy_analysis.get('score', 0)} Factors: {len(strategy_analysis.get('factors', {}))}")
+        # logger.debug(f"📊 Sending HUD response for {symbol}. Score: {strategy_analysis.get('score', 0)} Factors: {len(strategy_analysis.get('factors', {}))}")
 
-        return jsonify({
+        # Helper to clean NaNs for JSON (Recursive for entire logic)
+        import math
+        def recursive_clean(obj):
+            if isinstance(obj, dict):
+                return {k: recursive_clean(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [recursive_clean(x) for x in obj]
+            elif isinstance(obj, float) or isinstance(obj, np.floating):
+                if math.isnan(obj) or math.isinf(obj):
+                    return None
+                return obj
+            elif pd.isna(obj): # Handle pandas NA/NaT/NaN
+                return None
+            return obj
+
+        # Construction of the full response object
+        response_data = {
             "symbol": symbol,
             "tf": tf_str,
             "data": chart_data,
@@ -935,12 +992,17 @@ def get_chart_data(symbol):
             "channel_macro_lower": l_macro, 
             "channel_local_upper": u_local,
             "channel_local_lower": l_local,
-            "ema_21": df['ema_21'].tolist(),
-            "ema_50": df['ema_50'].tolist(),
+            "ema_21": df['ema_21'].tolist() if 'ema_21' in df.columns else [],
+            "ema_50": df['ema_50'].tolist() if 'ema_50' in df.columns else [],
             "analysis": strategy_analysis,
             "technical_analysis": technical_analysis,
             "trade": trade_info
-        })
+        }
+        
+        # Clean everything in one go
+        cleaned_response = recursive_clean(response_data)
+
+        return jsonify(cleaned_response)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -1051,7 +1113,7 @@ def execute_manual_trade():
             conn.commit()
             conn.close()
         except Exception as db_err:
-            print(f"⚠️ Error al registrar log manual: {db_err}")
+            logger.error(f"⚠️ Error al registrar log manual: {db_err}")
 
         return jsonify({"success": True, "ticket": result.order})
     except Exception as e:
@@ -1104,7 +1166,7 @@ def close_symbol_position():
                 conn_db.close()
                 print(f"✅ Cierre registrado en DB: {symbol} (Ticket: {p.ticket})")
             except Exception as db_err:
-                print(f"⚠️ Error al registrar cierre en DB: {db_err}")
+                logger.error(f"⚠️ Error al registrar cierre en DB: {db_err}")
                 
         return jsonify({"success": True})
     except Exception as e:
@@ -1179,7 +1241,7 @@ def import_history_from_mt5():
         return jsonify({"success": True, "count": count_imported})
         
     except Exception as e:
-        print(f"❌ Error importando historial: {e}")
+        logger.error(f"❌ Error importando historial: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/close_all', methods=['POST'])
@@ -1242,7 +1304,7 @@ def get_user_levels(symbol):
 def save_user_level():
     try:
         data = request.json
-        print(f"DEBUG SAVE LEVEL PAYLOAD: {data}")
+        # logger.debug(f"DEBUG SAVE LEVEL PAYLOAD: {data}")
         symbol = data.get('symbol')
         price = data.get('price')
         ltype = data.get('type', 'CUSTOM') # RESISTANCE, SUPPORT, CUSTOM
@@ -1280,14 +1342,14 @@ def save_user_level():
                 WHERE id=?
             """, (symbol, float(price), ltype, label, price2, time2, time1, level_id))
             new_id = level_id
-            logger.info(f"UPDATED Level ID={level_id}")
+            logger.debug(f"UPDATED Level ID={level_id}")
         else:
             cursor.execute("""
                 INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (symbol, float(price), ltype, label, price2, time2, time1))
             new_id = cursor.lastrowid
-            logger.info(f"CREATED Level ID={new_id}")
+            logger.debug(f"CREATED Level ID={new_id}")
         conn.commit()
         new_id = cursor.lastrowid
         conn.close()

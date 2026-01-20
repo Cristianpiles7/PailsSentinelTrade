@@ -293,3 +293,26 @@ class PSTDatabase:
             logger.error(f"❌ Error reseteando base de datos: {e}")
             return False
 
+    async def get_all_symbols_config(self):
+        """Obtiene toda la configuración de símbolos."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("SELECT * FROM symbols_config ORDER BY type, symbol") as cursor:
+                    rows = await cursor.fetchall()
+                    return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"❌ Error getting all symbols config: {e}")
+            return []
+
+    async def set_symbol_active(self, symbol, is_active):
+        """Establece el estado is_active de un símbolo."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                await db.execute("UPDATE symbols_config SET is_active = ? WHERE symbol = ?", (1 if is_active else 0, symbol))
+                await db.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ Error setting symbol active {symbol}: {e}")
+            return False
+
