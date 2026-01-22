@@ -110,7 +110,17 @@ class PSTRSIEquities:
                  except: pass
 
         if active_df is None or len(active_df) < 50:
-            return {"entry": 0, "atr": 0, "metadata": {}, "score": 0}
+            return {
+                "entry": 0, 
+                "atr": 0, 
+                "metadata": {
+                    "strategy": self.STRATEGY_NAME,
+                    "score": 0,
+                    "total_score": 0,
+                    "score_breakdown": {"Estado": "Sin Datos (MTF Falló)"}
+                }, 
+                "score": 0
+            }
 
         # 2. Indicadores Estándar
         # RSI
@@ -221,6 +231,7 @@ class PSTRSIEquities:
                 breakdown["Trend"] = "Overbought Ext (+10)"
         
         # --- DECISIÓN FINAL ---
+        score = min(100, max(0, score))
         entry = 0
         atr = ta.atr(active_df['high'], active_df['low'], active_df['close'], length=14).iloc[-1]
         

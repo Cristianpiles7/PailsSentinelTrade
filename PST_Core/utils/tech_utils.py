@@ -57,15 +57,22 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
 
         # 4. Preparar Tiempos Numéricos para Proyección (ROBUSTO)
         t_series = df_copy['time']
-        # Convertir a numeric (segundos) forzando errores a NaN y luego eliminando o rellenando
-        t_numeric = pd.to_numeric(t_series, errors='coerce')
         
-        # Si la conversión directa falló (ej. Datetime objects), intentar as_datetime
-        if t_numeric.isna().any():
-            t_numeric = pd.to_datetime(t_series, errors='coerce').astype(np.int64) // 10**9
-            # Filtro de seguridad para valores negativos de epoch (si pd.to_datetime falla)
-            t_numeric = t_numeric.where(t_numeric > 0, 0)
+        # Helper to get seconds from anything
+        def to_seconds(val):
+            if isinstance(val, (int, float, np.integer, np.floating)):
+                # If it's a huge number, it's probably nanoseconds (common in pandas/numpy)
+                if val > 1e12: return val / 1e9 
+                return val
+            if isinstance(val, datetime):
+                return val.timestamp()
+            if isinstance(val, (pd.Timestamp, np.datetime64)):
+                return pd.Timestamp(val).timestamp()
+            return 0
 
+        # Convert entire series to seconds
+        t_numeric = t_series.apply(to_seconds)
+        
         # Asegurar que sea float/int nativo de python para evitar ufunc issues
         last_t_num = float(t_numeric.iloc[-1])
         time_delta = float(t_numeric.diff().tail(50).median()) if len(t_numeric) > 1 else 300.0
@@ -81,7 +88,7 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         for i in range(start_idx, last_idx + 1):
             if i in df_copy.index:
                 t_val = df_copy.at[i, 'time']
-                # Si t_val es datetime, lo guardamos así, el dashboard se encarga
+                # Mantener el tipo original para coherencia en el HUD
                 upper_line.append({"time": t_val, "value": float(slope_h * i + upper_intercept)})
                 lower_line.append({"time": t_val, "value": float(slope_l * i + lower_intercept)})
 
@@ -90,12 +97,9 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
             idx_fut = last_idx + i
             t_fut = last_t_num + (time_delta * i)
             
-            # Formatear salida consistente
-            if isinstance(df_copy['time'].iloc[0], str):
-                try: t_out = str(datetime.fromtimestamp(int(t_fut)))
-                except: t_out = float(t_fut)
-            else:
-                t_out = float(t_fut) if not isinstance(df_copy['time'].iloc[0], datetime) else datetime.fromtimestamp(int(t_fut))
+            # Formatear salida consistente (Epoch Seconds)
+            # El dashboard ya sabe manejar floats como timestamps
+            t_out = float(t_fut)
                 
             upper_line.append({"time": t_out, "value": float(slope_h * idx_fut + upper_intercept)})
             lower_line.append({"time": t_out, "value": float(slope_l * idx_fut + lower_intercept)})
@@ -112,3 +116,78 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         import traceback
         traceback.print_exc()
         return [], [], None
+def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None):
+    """
+    Unified manual score calculation to ensure consistency across UI components.
+    Returns: (score, action_name, description_list)
+    """
+    if price <= 0: return 0, "NEUTRAL", []
+    
+    dist_p = price - lvl_price
+    dist_pct = (dist_p / price * 100)
+    abs_dist_pct = abs(dist_pct)
+    
+    # Constants Synced with ChannelMaster and Dashboard
+    THR_NEUTRAL = 0.25
+    THR_ACTION = 0.05
+    
+    score = 0
+    action = "WAIT"
+    desc_parts = []
+    
+    is_res = l_type == 'RESISTANCE'
+    is_sup = l_type == 'SUPPORT'
+    
+    if abs_dist_pct > THR_NEUTRAL:
+        action = "NEUTRAL"
+        score = 0
+    elif THR_ACTION < abs_dist_pct <= THR_NEUTRAL:
+        action = "WATCH"
+        # Linear Ramp: 10 to 45 (35 pts range over 0.20% width)
+        # Multiplier = 35 / 0.20 = 175.0
+        score = 10 + (THR_NEUTRAL - abs_dist_pct) * 175.0
+        desc_parts.append(f"Dist: {abs_dist_pct:.2f}%")
+    else:
+        # ZONE ACTION (< 0.05%)
+        score = 50
+        # Breakout check
+        if is_res and dist_p > 0:
+            if is_green is not False and vol_val > vol_ma:
+                action = "BREAK BUY"
+                score += 20
+                if rsi > 55: score += 10; desc_parts.append("RSI Bullish")
+                if vol_val > vol_ma: score += 15; desc_parts.append("Vol High")
+            else:
+                action = "WATCH BREAK"
+                score += 10
+        elif is_sup and dist_p < 0:
+            if is_red is not False and vol_val > vol_ma:
+                action = "BREAK SELL"
+                score += 20
+                if rsi < 45: score += 10; desc_parts.append("RSI Bearish")
+                if vol_val > vol_ma: score += 15; desc_parts.append("Vol High")
+            else:
+                action = "WATCH BREAK"
+                score += 10
+        # Bounce check
+        elif is_res: # Price is below resistance
+            if is_red is not False:
+                action = "BOUNCE SELL"
+                score += 20
+                # Distance Bonus: Max +15 at 0 distance
+                score += (THR_ACTION - abs_dist_pct) * 300.0
+                if rsi > 65: score += 15; desc_parts.append("RSI OB")
+            else:
+                action = "WATCH RES"
+                score += 5
+        elif is_sup: # Price is above support
+            if is_green is not False:
+                action = "BOUNCE BUY"
+                score += 20
+                score += (THR_ACTION - abs_dist_pct) * 300.0
+                if rsi < 35: score += 15; desc_parts.append("RSI OS")
+            else:
+                action = "WATCH SUP"
+                score += 5
+            
+    return round(score), action, desc_parts

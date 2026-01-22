@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import logging
 from ..models.classifier import RegimeMode
-from ..utils.tech_utils import calculate_channel_boundary
+from ..utils.tech_utils import calculate_channel_boundary, calculate_manual_score
 
 logger = logging.getLogger("ChannelMaster")
 
@@ -338,90 +338,20 @@ class PSTChannelMaster:
             vol_val = df['tick_volume'].iloc[-1] if 'tick_volume' in df else 0
             vol_ma = df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df else (vol_val or 1)
             
-            # --- CONFIGURABLE STRICKNESS (3-ZONE SYSTEM) ---
-            THR_NEUTRAL = 0.25  # Stricter (0.40 -> 0.25)
-            THR_ACTION = 0.05   # Much Stricter (0.08 -> 0.05)
-            
-            # Absolute distance pct for zoning
-            abs_dist_pct = abs(dist_pct)
-            
-            # ZONE 1: FAR (> THR_NEUTRAL %)
-            if abs_dist_pct > THR_NEUTRAL:
-                action_reco = "NEUTRAL"
-                strat_score = 0
-                
-            # ZONE 2: WATCH (THR_ACTION to THR_NEUTRAL)
-            elif THR_ACTION < abs_dist_pct <= THR_NEUTRAL:
-                action_reco = "WATCH"
-                # Linear Interpolation (10 to 45)
-                # Multiplier = (45-10) / (THR_NEUTRAL - THR_ACTION) = 35 / 0.20 = 175.0
-                proximity_score = 10 + (THR_NEUTRAL - abs_dist_pct) * 175.0
-                strat_score = round(proximity_score)
-                val_msg.append(f"Dist: {abs_dist_pct:.2f}%")
-                
-            # ZONE 3: ACTION (< THR_ACTION)
-            else: 
-                # BASE ACTION SCORE = 50
-                strat_score = 50
-                
-                # --- STRICT CONFIRMATION LOGIC (Refined) ---
-                # To prevent oscillation (Buy/Sell/Buy/Sell) when hovering:
-                # 1. Require distinct candle closure (Color match).
-                # 2. Require Volume confirmation for breakouts.
-                
-                is_green_candle = close > df['open'].iloc[-1]
-                is_red_candle = close < df['open'].iloc[-1]
-                
-                # BREAKOUT CHECK (Crossed Level)
-                if is_res and dist_val > 0: # Price is ABOVE Resistance
-                    # Require strong close to confirm breakout (not just a wick)
-                    if is_green_candle and vol_val > vol_ma: 
-                        action_reco = "BREAK BUY"
-                        strat_score += 20
-                        if rsi > 55: strat_score += 10; val_msg.append("RSI Bullish")
-                        val_msg.append("Vol High")
-                    else:
-                        action_reco = "WATCH BREAK"
-                        strat_score += 10
-                        val_msg.append("Wait Conf")
-                        
-                elif is_sup and dist_val < 0: # Price is BELOW Support
-                    if is_red_candle and vol_val > vol_ma:
-                        action_reco = "BREAK SELL"
-                        strat_score += 20
-                        if rsi < 45: strat_score += 10; val_msg.append("RSI Bearish")
-                        val_msg.append("Vol High")
-                    else:
-                        action_reco = "WATCH BREAK"
-                        strat_score += 10
-                        val_msg.append("Wait Conf")
-                
-                # BOUNCE CHECK (Touching Level but not crossed/sustained)
-                elif is_res: # Price is BELOW Resistance (Potential Ceiling)
-                    # Sell Bounce requires RED candle rejection
-                    if is_red_candle:
-                        action_reco = "BOUNCE SELL"
-                        strat_score += 20 # Higher base confidence if candle confirms
-                        # Proximity Bonus (Max +15)
-                        strat_score += (THR_ACTION - abs_dist_pct) * 300.0
-                        if rsi > 70: strat_score += 15; val_msg.append("RSI OB")
-                    else:
-                        action_reco = "WATCH RES" 
-                        strat_score += 5 # Low score if just hovering green
-                        val_msg.append("Wait Red")
+            is_green_candle = close > df['open'].iloc[-1] if 'open' in df.columns else False
+            is_red_candle = close < df['open'].iloc[-1] if 'open' in df.columns else False
 
-                elif is_sup: # Price is ABOVE Support (Potential Floor)
-                    # Buy Bounce requires GREEN candle rejection
-                    if is_green_candle:
-                        action_reco = "BOUNCE BUY"
-                        strat_score += 20
-                        # Proximity Bonus (Max +15)
-                        strat_score += (THR_ACTION - abs_dist_pct) * 187.5
-                        if rsi < 30: strat_score += 15; val_msg.append("RSI OS")
-                    else:
-                        action_reco = "WATCH SUP"
-                        strat_score += 5 # Low score if just hovering red
-                        val_msg.append("Wait Green")
+            # USE UNIFIED SCORING
+            strat_score, action_reco, val_msg = calculate_manual_score(
+                price=close,
+                lvl_price=lvl_price,
+                l_type=lvl['type'],
+                rsi=rsi,
+                vol_val=vol_val,
+                vol_ma=vol_ma,
+                is_green=is_green_candle,
+                is_red=is_red_candle
+            )
 
             metadata["all_levels_data"].append({
                 "type": lvl['type'],
@@ -467,8 +397,25 @@ class PSTChannelMaster:
                  "type": "SUPPORT", "source": "AUTO (Mac)", "price": round(mac_l, 5), "dist": round((mac_l - close)/close*100, 2)
              })
 
+        # --- FINAL SCORE SYNC ---
+        # If manual score is significant and higher than auto-score, inherit it.
+        # This ensures the HUD and Modal show "Channel Master" as the active strategy.
+        manual_max_score = 0
+        if metadata["all_levels_data"]:
+             manual_max_score = max([l['strat_score'] for l in metadata["all_levels_data"]], default=0)
+             
+        if manual_max_score > score:
+            score = manual_max_score
+            if not signal_type or signal_type == "None":
+                 # Find best action from manual levels
+                 best_lvl = max(metadata["all_levels_data"], key=lambda x: x['strat_score'])
+                 signal_type = f"MANUAL {best_lvl['action_reco']}"
+                 breakdown["Manual Level"] = f"{best_lvl['type']} at {best_lvl['price']}"
+                 breakdown["Action"] = best_lvl['action_reco']
+        
         # Sort by distance to price (absolute value) for better readability
         metadata["all_levels_data"].sort(key=lambda x: abs(x['dist']))
+        metadata["score"] = score # Sync internal metadata
 
         return {
             "entry": entry,

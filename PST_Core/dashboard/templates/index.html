@@ -821,17 +821,19 @@
                     const dashScore = (asset.tech_data && asset.tech_data.score) ? asset.tech_data.score : (asset.tech_data?.strat_status?.total_score || 0);
                     
                     // Determine which logic to show
-                    let scoreToDisplay = autoScore;
-                    let liveStratName = analysis.active_strategy || tech.active_strategy || "Signal Master PST";
-                    let stratName = liveStratName;
-                    let factors = analysis.factors || {}; // Default to best found by server
+                    const isManualSource = (forceType === 'MANUAL');
+                    let scoreToDisplay = isManualSource ? manualScore : autoScore;
+                    let stratName = isManualSource ? "Estrategia Maestra (Canales)" : (analysis.best_auto_strat || "PST Strategy Hub");
                     
-                    // Logic override based on click source or priority
-                    const isManualSource = (forceType === 'MANUAL') || (!forceType && manualScore > 0 && manualScore >= autoScore);
+                    if (!stratName || stratName === "None" || stratName === "null" || stratName === "undefined") {
+                        stratName = isManualSource ? "Estrategia Maestra" : "PST Strategy Hub";
+                    }
+
+                    let factors = analysis.factors || {}; 
                     
                     if (isManualSource) {
-                        scoreToDisplay = manualScore; // Fallback inicial
-                        stratName = "Niveles Manuales (PST)"; 
+                        // scoreToDisplay already set to manualScore
+                        stratName = "Estrategia Maestra (Canales)"; 
                         
                         // Strict search for Manual Levels only
                         // Sort by proximity
@@ -854,9 +856,6 @@
                             
                             // SYNC: Usar la puntuación en vivo del nivel para el círculo y el HUD del modal
                             scoreToDisplay = bestManual.strat_score || 0;
-
-                            // BACK-SYNC TO DASHBOARD: Update local state so card matches modal immediately
-                            asset.manual_score = scoreToDisplay;
                         } else {
                             factors = { "Estado": "Sin niveles manuales activos" };
                         }
@@ -871,10 +870,6 @@
                              if (analysis.score > 0) factors["Nota"] = "Análisis completo en logs";
                              else factors["Estado"] = "Sin señal clara";
                         }
-
-                        // BACK-SYNC TO DASHBOARD for Auto Strategy
-                        if (!asset.tech_data) asset.tech_data = {};
-                        asset.tech_data.score = scoreToDisplay;
                     }
 
                     // Update UI
@@ -1016,62 +1011,57 @@
                              });
                         }
 
-                        // SECTION C: GROUPED STRATEGIES LIST
-                        let inactiveStratsList = [];
-                        
-                        if (analysis.grouped_strategies && analysis.grouped_strategies.length > 0) {
-                            
-                            // Re-calculate inactive list (RESPECTING MODE)
-                            analysis.grouped_strategies.forEach(s => {
-                                const isMaestra = s.name.includes('Maestra') || s.name.includes('Canales');
-                                const shouldShow = isManualSource ? isMaestra : !isMaestra; // Toggle filter
-                                
-                                if (shouldShow && s.score <= 0) {
-                                     inactiveStratsList.push({ k: s.name, v: "0/100 (Neutral)" });
-                                }
-                            });
-
-                            html += `<div style="max-height: 350px; overflow-y: auto; padding-right: 5px;"><table style="width: 100%; border-collapse: collapse;">`;
-
+                            // SECTION C: GROUPED STRATEGIES LIST
                             let visibleKeyStrategies = 0;
-                            analysis.grouped_strategies.forEach(strat => {
-                                const isMaestra = strat.name.includes('Maestra') || strat.name.includes('Canales');
-                                const shouldShow = isManualSource ? isMaestra : !isMaestra; // Toggle filter
-                                
-                                if (shouldShow) {
-                                    if (strat.score > 0) {
-                                        visibleKeyStrategies++;
-                                        let stratColor = '#ef4444'; 
-                                        let barColor = 'rgba(239, 68, 68, 0.2)';
-                                        if (strat.score >= 70) { stratColor = '#4ade80'; barColor = '#4ade80'; }
-                                        else if (strat.score >= 40) { stratColor = '#f59e0b'; barColor = '#f59e0b'; }
+                            let strategiesHtml = "";
+                            let inactiveStratsList = [];
 
-                                        html += `<tr style="background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%); border-top: 1px solid rgba(255,255,255,0.1);"><td style="padding: 10px 5px; color: #fff; font-size: 13px; font-weight: bold; border-left: 3px solid ${stratColor}; font-family: 'Inter', sans-serif;">🚀 ${strat.name}</td><td style="padding: 10px 5px; text-align: right; color: ${stratColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${strat.score}/100 (${strat.status})</td></tr>`;
+                            if (analysis.grouped_strategies && analysis.grouped_strategies.length > 0) {
+                                analysis.grouped_strategies.forEach(strat => {
+                                    const isMaestra = strat.name.includes('Maestra') || strat.name.includes('Canales');
+                                    
+                                    // STRICT FILTERING: 
+                                    // - Manual Modal: Show ONLY Maestra
+                                    // - Auto Modal: Show ONLY everything ELSE (EMA, RSI, etc.)
+                                    const shouldShow = isManualSource ? isMaestra : !isMaestra;
+                                    
+                                    if (shouldShow) {
+                                        // Use score > 0 logic for styling, but show key strats even if 0
+                                        const displayAsActive = true; // Always show in their respective modal now
+                                        
+                                        if (displayAsActive) {
+                                            visibleKeyStrategies++;
+                                            let stratColor = '#475569'; // Default Grayish for 0 score
+                                            let barColor = 'rgba(71, 85, 105, 0.1)';
+                                            
+                                            if (strat.score >= 70) { stratColor = '#4ade80'; barColor = 'rgba(74, 222, 128, 0.2)'; }
+                                            else if (strat.score >= 40) { stratColor = '#f59e0b'; barColor = 'rgba(245, 158, 11, 0.2)'; }
+                                            else if (strat.score > 0) { stratColor = '#ef4444'; barColor = 'rgba(239, 68, 68, 0.2)'; }
 
-                                        if (strat.factors && strat.factors.length > 0) {
-                                            strat.factors.forEach(f => {
-                                                const label = f.k;
-                                                let valColor = '#94a3b8';
-                                                if (f.v.includes('(+')) valColor = '#4ade80'; 
-                                                if (f.v.includes('(-')) valColor = '#ef4444'; 
-                                                if (f.v.includes('Bull')) valColor = '#4ade80';
-                                                if (f.v.includes('Bear')) valColor = '#ef4444';
-                                                html += `<tr><td style="padding: 4px 0 4px 20px; color: #cbd5e1; font-size: 11px; display: flex; align-items: center; gap: 5px;"><span style="color: #64748b;">↳</span> ${label}</td><td style="padding: 4px 10px 4px 0; text-align: right; font-size: 11px; font-family: monospace; color: ${valColor};">${f.v}</td></tr>`;
-                                            });
+                                            strategiesHtml += `<tr style="background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%); border-top: 1px solid rgba(255,255,255,0.1);"><td style="padding: 10px 5px; color: #fff; font-size: 13px; font-weight: bold; border-left: 3px solid ${stratColor}; font-family: 'Inter', sans-serif;">🚀 ${strat.name}</td><td style="padding: 10px 5px; text-align: right; color: ${stratColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${strat.score}/100 (${strat.status})</td></tr>`;
+
+                                            if (strat.factors && strat.factors.length > 0) {
+                                                strat.factors.forEach(f => {
+                                                    const label = f.k;
+                                                    let valColor = '#94a3b8';
+                                                    if (f.v.includes('(+')) valColor = '#4ade80'; 
+                                                    if (f.v.includes('(-')) valColor = '#ef4444'; 
+                                                    if (f.v.includes('Bull')) valColor = '#4ade80';
+                                                    if (f.v.includes('Bear')) valColor = '#ef4444';
+                                                    strategiesHtml += `<tr><td style="padding: 4px 0 4px 20px; color: #cbd5e1; font-size: 11px; display: flex; align-items: center; gap: 5px;"><span style="color: #64748b;">↳</span> ${label}</td><td style="padding: 4px 10px 4px 0; text-align: right; font-size: 11px; font-family: monospace; color: ${valColor};">${f.v}</td></tr>`;
+                                                });
+                                            }
                                         } else {
-                                            html += `<tr><td colspan="2" style="padding:4px 0 4px 20px; color:#64748b; font-size:10px; font-style:italic;">Sin factores relevantes detectedos.</td></tr>`;
+                                            inactiveStratsList.push({ k: strat.name, v: "0/100 (Neutral)" });
                                         }
                                     }
-                                }
-                            });
-                            
-                            // Fallback Message ONLY for Auto mode (Manual mode usually has specific details)
-                            if (!isManualSource && visibleKeyStrategies === 0 && analysis.score > 0) {
-                                  html += `<tr style="border-top: 1px solid rgba(255,255,255,0.1);"><td colspan="2" style="padding: 15px; text-align: center; color: #94a3b8; font-size: 12px; font-style: italic;">ℹ️ La <strong>Estrategia Maestra</strong> está dirigiendo la operación (${analysis.score}/100).<br><span style="font-size: 10px; opacity: 0.7;">(Detalles ocultos en este modal. Verifica el gráfico)</span></td></tr>`;
+                                });
                             }
-
-                            html += `</table></div></td></tr>`;
-                        }
+                            
+                            if (strategiesHtml) {
+                                html += `<tr class="section-header"><td colspan="2" style="padding-top:10px; padding-bottom:5px; color: #f59e0b; font-size: 10px; font-weight: bold; text-transform: uppercase;">🧠 Estrategia Activa</td></tr>`;
+                                html += strategiesHtml;
+                            }
 
                         // SECTION D: INACTIVE STRATEGIES
                         if (inactiveStratsList.length > 0) {

@@ -7,7 +7,7 @@ import pandas_ta as ta
 import numpy as np
 from datetime import datetime
 from PST_Core.portfolio.manager import PortfolioManager
-from PST_Core.utils.tech_utils import calculate_channel_boundary
+from PST_Core.utils.tech_utils import calculate_channel_boundary, calculate_manual_score
 from ..strategies.pst_channel_master import PSTChannelMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
@@ -107,11 +107,13 @@ def get_status():
                     best_action = "NEUTRAL"
                     best_desc = ""
                     
+                    # Extract Technical context for Manual Score
+                    rsi = r['tech_data'].get('mtf', {}).get('m5', {}).get('rsi', r.get('rsi', 50))
+                    vol_rel = r['tech_data'].get('mtf', {}).get('m5', {}).get('vol', 1.0)
+                    vol_val = vol_rel
+                    vol_ma = 1.0 # vol_rel is already compared vs 1.0 (mean)
                     price = r['price']
-                    # Intentar obtener RSI/Vol del tech_data si existe, sino valores neutros
-                    rsi = r['tech_data'].get('rsi', 50) # Asumiendo que tech_data tiene rsi
-                    if 'rsi' not in r['tech_data'] and 'rsi_14' in r['tech_data']: rsi = r['tech_data']['rsi_14']
-                    
+
                     for lvl in levels:
                         # 1. PRICE INTERPOLATION (Trendlines)
                         lvl_price = lvl['price']
@@ -135,71 +137,16 @@ def get_status():
                                     m = (p2 - p1) / (t2_ts - t1_ts)
                                     lvl_price = p1 + m * (cur_ts - t1_ts)
                             except: pass
-
-                        l_type = lvl['type']
-                        is_res = l_type == 'RESISTANCE'
-                        is_sup = l_type == 'SUPPORT'
                         
-                        score = 0
-                        action = "WAIT"
-                        desc_parts = []
-                        
-                        # LOGIC COPY FROM STRATEGY (PSTChannelMaster) - Progressive Scoring
-                        vol_val = r['tech_data'].get('tick_volume', 0)
-                        vol_ma = vol_val # Simplified for View
-                        
-                        if price > 0:
-                            dist_pct = (price - lvl_price) / price * 100
-                            abs_dist_pct = abs(dist_pct)
-                        else:
-                            dist_pct = 0
-                            abs_dist_pct = 999 # Muy lejos
-                        strat_score = 0
-                        
-                        # --- STRICT RULES SYNC ---
-                        THR_NEUTRAL = 0.25
-                        THR_ACTION = 0.05
-                        
-                        # ZONE 1: FAR (> THR_NEUTRAL %)
-                        if abs_dist_pct > THR_NEUTRAL:
-                            action = "NEUTRAL"
-                            strat_score = 0
-                            
-                        # ZONE 2: WATCH (THR_ACTION - THR_NEUTRAL)
-                        elif THR_ACTION < abs_dist_pct <= THR_NEUTRAL:
-                            action = "WATCH"
-                            # Multiplier: 35 / 0.32 = 109.375
-                            proximity_score = 10 + (THR_NEUTRAL - abs_dist_pct) * 109.375
-                            strat_score = round(proximity_score)
-                            desc_parts.append(f"Dist: {abs_dist_pct:.2f}%")
-                            
-                        # ZONE 3: ACTION (< THR_ACTION)
-                        else:
-                            strat_score = 50
-                            
-                            if is_res and dist > 0: # Breakout UP
-                                action = "BREAK BUY"
-                                strat_score += 20
-                                if rsi > 55: strat_score += 10; desc_parts.append("RSI Bullish")
-                                if vol_val > 0: strat_score += 15; desc_parts.append("Vol High")
-                                
-                            elif is_sup and dist < 0: # Breakout DOWN
-                                action = "BREAK SELL"
-                                strat_score += 20
-                                if rsi < 45: strat_score += 10; desc_parts.append("RSI Bearish")
-                                if vol_val > 0: strat_score += 15; desc_parts.append("Vol High")
-                                
-                            elif is_res:
-                                action = "BOUNCE SELL"
-                                strat_score += 10
-                                strat_score += (THR_ACTION - abs_dist_pct) * 300.0
-                                if rsi > 70: strat_score += 15; desc_parts.append("RSI Sobrecompra")
-                                
-                            elif is_sup:
-                                action = "BOUNCE BUY"
-                                strat_score += 10
-                                strat_score += (THR_ACTION - abs_dist_pct) * 300.0
-                                if rsi < 30: strat_score += 15; desc_parts.append("RSI Sobrevendida")
+                        # USE UNIFIED SCORING
+                        strat_score, action, desc_parts = calculate_manual_score(
+                            price=price,
+                            lvl_price=lvl_price,
+                            l_type=lvl['type'],
+                            rsi=rsi,
+                            vol_val=vol_val,
+                            vol_ma=vol_ma
+                        )
                         
                         score = round(strat_score)
                         
@@ -467,30 +414,35 @@ def get_chart_data(symbol):
             }
 
         # 2. Obtener velas reales para el gráfico
-        # Seleccionamos el símbolo primero
-        mt5.symbol_select(symbol, True)
-        
-        num_candles = 2000 # ~7 días en M5 (288 * 7 = 2016)
-        
+        num_candles = 2000 
         rates = mt5.copy_rates_from_pos(symbol, selected_tf, 0, num_candles)
         
-        if rates is None or len(rates) == 0:
-            return jsonify({"error": "No data"}), 404
-            
-        df = pd.DataFrame(rates)
-        
-        # --- MTF FETCH FOR STRATEGY HUD ---
+        # --- MTF FETCH FOR STRATEGY HUD (CRITICAL: M5 must be REAL M5) ---
         rates_m1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 500)
+        rates_m5_real = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 1000) # Re-fetch M5 specifically
         rates_m15 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 500)
-        rates_h1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 300)
-        
-        df_m1 = pd.DataFrame(rates_m1) if rates_m1 is not None else None
-        df_m15 = pd.DataFrame(rates_m15) if rates_m15 is not None else None
-        df_h1 = pd.DataFrame(rates_h1) if rates_h1 is not None else None
-        
+        rates_h1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 500)
+ 
+        # Helper to format DataFrames with datetime index
+        def format_df(rates_in):
+            if rates_in is None or len(rates_in) == 0: return None
+            df_fmt = pd.DataFrame(rates_in)
+            df_fmt['time'] = pd.to_datetime(df_fmt['time'], unit='s')
+            df_fmt.set_index('time', inplace=True)
+            return df_fmt
+ 
+        df = format_df(rates)
+        df_m1 = format_df(rates_m1)
+        df_m5_real = format_df(rates_m5_real)
+        df_m15 = format_df(rates_m15)
+        df_h1 = format_df(rates_h1)
+ 
+        if df is None:
+            return jsonify({"error": "No data"}), 404
+ 
         mtf_data = {
             'm1': df_m1,
-            'm5': df,
+            'm5': df_m5_real if df_m5_real is not None else df, # Use Real M5 or fallback
             'm15': df_m15,
             'h1': df_h1
         }
@@ -531,9 +483,9 @@ def get_chart_data(symbol):
         u_macro, l_macro, u_local, l_local = [], [], [], []
         strategy_analysis = {}
         # Pre-init variables to avoid UnboundLocalError if try block fails early
-        rsi_val = 50.0
-        rsi_h1 = 50.0
-        vol_val = 0
+        rsi_val = rsi_m5
+        vol_val = df['tick_volume'].iloc[-1] if 'tick_volume' in df.columns else 0
+        vol_ma = df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df.columns else 1
         # REMOVED: df = pd.DataFrame() - caused overwrite of fetched data
 
         try:
@@ -543,9 +495,11 @@ def get_chart_data(symbol):
              logger.debug(f"DEBUG ERROR TRENDLINES: {e}")
              u_macro, l_macro, u_local, l_local = [], [], [], []
 
-        # Convert Time to String for Frontend
+        # Convert Time to String for Frontend (Using a copy of index to avoid breaking strategies)
+        df_display = df.copy()
         try:
-            df['time'] = df['time'].apply(lambda x: str(datetime.fromtimestamp(x)))
+            df_display.reset_index(inplace=True)
+            df_display['time'] = df_display['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
              logger.debug(f"DEBUG ERROR TIME CONV: {e}")
 
@@ -565,10 +519,10 @@ def get_chart_data(symbol):
             classifier = RegimeClassifier()
             mode_str = "TREND" # Default
             
-            # Priorizar H1 para clasificación (Igual que orchestrator)
-            df_regime = df_h1 if (df_h1 is not None and len(df_h1) > 50) else df
+            # Match orchestrator classification logic
+            df_regime = df_h1 if (df_h1 is not None and len(df_h1) >= 14) else df
             
-            if len(df_regime) > 50:
+            if len(df_regime) >= 14:
                 mode, adx = classifier.classify(df_regime)
                 mode_str = mode
             
@@ -615,7 +569,8 @@ def get_chart_data(symbol):
 
             # Ejecutar estrategia Channel Master
             strat = PSTChannelMaster()
-            signal_res = asyncio.run(strat.calculate_signal(mtf_data, regime_obj, user_levels={'levels': user_levels, 'config': chan_config, 'current_time': cur_time_live, 'current_price': cur_price_live}))
+            user_levels_input = {'levels': user_levels, 'config': chan_config, 'symbol': symbol, 'current_time': cur_time_live, 'current_price': cur_price_live}
+            signal_res = asyncio.run(strat.calculate_signal(mtf_data, regime_obj, user_levels=user_levels_input))
             strategy_analysis = signal_res.get('metadata', {})
             logger.debug(f"DEBUG SERVER ANALYSIS [Raw keys]: {list(strategy_analysis.keys())} - Levels: {len(strategy_analysis.get('all_levels_data', [])) if 'all_levels_data' in strategy_analysis else 'MISSING'}")
             strategy_analysis['score'] = signal_res.get('score', 0)
@@ -675,18 +630,20 @@ def get_chart_data(symbol):
                 "Rejection": "Rechazo (Mecha)"
             }
 
-            best_s_name = "Estrategia Maestra"
+            best_s_name = "PST Strategy Hub"
             # --- STRUCTURED DATA FOR FRONTEND (Grouped View) ---
             grouped_strategies = []
             
             # 1. Sub-Strategies
             for s in strat_instances:
                 try:
-                    s_res = asyncio.run(s.calculate_signal(mtf_data, mode_str))
+                    s_res = asyncio.run(s.calculate_signal(mtf_data, mode_str, user_levels=user_levels_input))
                     s_score = s_res.get('score', 0)
                     s_meta = s_res.get('metadata', {})
-                    raw_s_name = getattr(s, 'STRATEGY_NAME', type(s).__name__)
+                    raw_s_name = str(getattr(s, 'STRATEGY_NAME', type(s).__name__))
                     s_name = STRAT_TRANS.get(raw_s_name, raw_s_name)
+                    
+                    if s_name == "None": s_name = "PST Strategy Hub"
                     
                     if s_score > max_sub_score:
                         max_sub_score = s_score
@@ -696,12 +653,16 @@ def get_chart_data(symbol):
                     if s_score >= 70: status = "¡ACCIÓN!"
                     elif s_score >= 40: status = "Vigilar"
                     
-                    # Collecting Factors
+                    # Collecting Factors (Filtered per user request)
                     s_factors = []
                     for b_key, b_val in s_meta.get('score_breakdown', {}).items():
-                         if "(+" in str(b_val) or s_score > 0:
+                         val_str = str(b_val)
+                         # Show only if it adds/subtracts points or indicates a specific failure/block
+                         if any(x in val_str for x in ["+", "-", "Bajo", "Fallo", "Block", "IGNORED", "Wrong"]):
                              trans_key = KEY_TRANS.get(b_key, b_key)
-                             s_factors.append({"k": trans_key, "v": str(b_val)})
+                             s_factors.append({"k": trans_key, "v": val_str})
+                         elif "Asset" in b_key: # Mantener info de tipo de activo
+                             s_factors.append({"k": b_key, "v": val_str})
                     
                     grouped_strategies.append({
                         "name": s_name,
@@ -722,8 +683,10 @@ def get_chart_data(symbol):
 
             # 2. Master Strategy
             master_score = strategy_analysis.get('score', 0)
-            if master_score > 0:
-                m_status = "¡ACCIÓN!" if master_score >= 70 else "Vigilar"
+            # Inclusión forzada: Aunque el score sea 0, queremos ver la Maestra si estamos en análisis manual
+            # Pero si el score es > 0 (heredado o real), debe aparecer como activa.
+            if master_score > 0 or True: 
+                m_status = "¡ACCIÓN!" if master_score >= 70 else ("Vigilar" if master_score >= 40 else "Neutral")
                 m_breakdown = strategy_analysis.get('score_breakdown', {})
                 m_factors = []
                 for b_key, b_val in m_breakdown.items():
@@ -742,13 +705,17 @@ def get_chart_data(symbol):
                 factors["Estrategia Maestra (Canales)"] = f"{master_score}/100 ({m_status})"
                 for f in m_factors: factors[f"↳ {f['k']} (Maestra)"] = f['v']
 
-            # SYNC SCORE
-            if master_score < max_sub_score:
-                strategy_analysis['score'] = max_sub_score
-                strategy_analysis['active_strategy'] = best_s_name # Live Win
-            else:
-                strategy_analysis['score'] = master_score
-                strategy_analysis['active_strategy'] = "Estrategia Maestra (Canales)"
+            # SYNC SCORES (Independent & Capped)
+            strategy_analysis['auto_score'] = min(100, max(0, max_sub_score))
+            strategy_analysis['manual_score'] = min(100, max(0, master_score))
+            
+            # Use Fallback if best_s_name is "None"
+            final_best_auto = best_s_name if (best_s_name and str(best_s_name) != "None") else "PST Strategy Hub"
+            strategy_analysis['best_auto_strat'] = final_best_auto
+            strategy_analysis['active_strategy'] = final_best_auto if max_sub_score >= master_score else "Estrategia Maestra (Canales)"
+            
+            # Legacy score fallback
+            strategy_analysis['score'] = strategy_analysis['auto_score']
             
             # Inject grouped list into return object
             strategy_analysis['grouped_strategies'] = grouped_strategies
@@ -898,53 +865,15 @@ def get_chart_data(symbol):
                         strat_score = 0
                         val_msg = []
                         
-                        is_res = lvl['type'] == 'RESISTANCE'
-                        is_sup = lvl['type'] == 'SUPPORT'
-                        
-                        # Use percentage distance
-                        dist_p = close_val - lvl_price 
-                        dist_pct = (dist_p) / close_val * 100
-                        abs_dist_pct = abs(dist_pct)
-                        
-                        THR_NEUTRAL = 0.25
-                        THR_ACTION = 0.05
-                        
-                        # ZONE 1: FAR
-                        if abs_dist_pct > THR_NEUTRAL:
-                             strat_score = 0
-                             action_reco = "NEUTRAL"
-                        
-                        # ZONE 2: WATCH
-                        elif THR_ACTION < abs_dist_pct <= THR_NEUTRAL:
-                             action_reco = "WATCH"
-                             # Linear Ramp: 10 to 45
-                             proximity_score = 10 + (THR_NEUTRAL - abs_dist_pct) * 175.0
-                             strat_score = round(proximity_score)
-                        
-                        # ZONE 3: ACTION
-                        else:
-                             strat_score = 50
-                             # Breakout check
-                             if is_res and dist_p > 0:
-                                 action_reco = "BREAK BUY"
-                                 strat_score += 20
-                                 if rsi_val > 55: strat_score += 10; val_msg.append("RSI Bullish")
-                                 if vol_val > vol_ma: strat_score += 15; val_msg.append("Vol High")
-                             elif is_sup and dist_p < 0:
-                                 action_reco = "BREAK SELL"
-                                 strat_score += 20
-                                 if rsi_val < 45: strat_score += 10; val_msg.append("RSI Bearish")
-                                 if vol_val > vol_ma: strat_score += 15; val_msg.append("Vol High")
-                             # Bounce check (Implicitly close because < 0.08%)
-                             elif is_res and dist_p < 0:
-                                 action_reco = "BOUNCE SELL"
-                                 # Proximity Bonus (Max +15) -> 13.5 pts at 0 dist
-                                 strat_score += (THR_ACTION - abs_dist_pct) * 300.0
-                                 if rsi_val > 65: strat_score += 15; val_msg.append("RSI OB")
-                             elif is_sup and dist_p > 0:
-                                 action_reco = "BOUNCE BUY"
-                                 strat_score += (THR_ACTION - abs_dist_pct) * 300.0
-                                 if rsi_val < 35: strat_score += 15; val_msg.append("RSI OS")
+                        # USE UNIFIED SCORING
+                        strat_score, action_reco, val_msg = calculate_manual_score(
+                            price=close_val,
+                            lvl_price=lvl_price,
+                            l_type=lvl['type'],
+                            rsi=rsi_val,
+                            vol_val=vol_val,
+                            vol_ma=vol_ma
+                        )
                         
                         lvl['action_reco'] = action_reco
                         lvl['strat_score'] = round(strat_score)
@@ -956,14 +885,15 @@ def get_chart_data(symbol):
 
         # Replace NaNs with None for valid JSON serialization
         # Use .where(pd.notnull(df), None) or just handle in creation
-        chart_data = df.where(pd.notnull(df), None).to_dict('records')
+        # Use display DF (with string times) for chart
+        chart_data = df_display.where(pd.notnull(df_display), None).to_dict('records')
 
         # Prepare Response
         technical_analysis = {
             "rsi": rsi_val,
             "rsi_h1": rsi_h1,
             "vol": vol_val,
-            "active_strategy": strategy_analysis.get('strat_meta', {}).get('name', 'Strategy')
+            "active_strategy": strategy_analysis.get('active_strategy', 'PST-Master')
         }
 
         # logger.debug(f"📊 Sending HUD response for {symbol}. Score: {strategy_analysis.get('score', 0)} Factors: {len(strategy_analysis.get('factors', {}))}")
@@ -1156,11 +1086,13 @@ def close_symbol_position():
                 cursor_db = conn_db.cursor()
                 
                 # Actualizar el trade local
+                # Nota: result (OrderSendResult) no tiene 'profit'. 
+                # Se pone a 0 y el historial sincronizado de MetaTrader lo actualizará.
                 cursor_db.execute('''
                     UPDATE trades 
-                    SET price_out = ?, profit = ?, time_out = ?
+                    SET price_out = ?, profit = 0, time_out = ?
                     WHERE ticket = ? AND price_out = 0
-                ''', (result.price, result.profit, str(datetime.now()), p.ticket))
+                ''', (result.price, str(datetime.now()), p.ticket))
                 
                 conn_db.commit()
                 conn_db.close()
