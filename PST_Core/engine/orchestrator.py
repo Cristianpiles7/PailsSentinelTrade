@@ -198,42 +198,60 @@ class SymbolTask:
                             if ema21 > ema50: ema_alignment = "BULL (Soft)"
                             elif ema21 < ema50: ema_alignment = "BEAR (Soft)"
 
-                    # 4. Ejecutar Estrategias del Régimen
+                    # 4. Ejecutar Estrategias (Unificado para Reporte + Señal)
                     signal = 0
-                    strategy_name = "None"
+                    strategy_name = "PST Strategy Hub"
                     atr_val = 0.0
-                    current_score = 0  # <--- NEW: Score para dashboard
+                    current_score = 0
                     best_metadata = {}
                     
-                    if mode in self.strategies:
-                        for strat in self.strategies[mode]:
-                            try:
-                                # Validación extra
-                                if isinstance(strat, str) or type(strat).__name__ == 'str': continue
-                                if not hasattr(strat, 'calculate_signal'): continue
+                    # Definir estrategias "Élite" que siempre queremos monitorear
+                    elite_strats = [PSTChannelMaster(), PSTRSIEquities(), PSTEMAFlow()]
+                    
+                    # Mapeo de nombres para consistencia
+                    STRAT_TRANS = {
+                        "PSTChannelMaster": "Estrategia Maestra (Canales)",
+                        "PSTRSIEquities": "RSI Equities (Multi-Asset)",
+                        "PSTEMAFlow": "Flujo EMA (Tendencia)"
+                    }
 
-                                # Ejecutar
-                                s_result = await strat.calculate_signal(mtf_data, mode, user_levels=user_levels)
-                                s_signal = s_result.get("entry", 0)
-                                s_atr = s_result.get("atr", 0)
-                                s_meta = s_result.get("metadata", {})
-                                s_score = s_result.get("score", 0)
-                                
-                                # Si hay señal, priorizamos
-                                if s_signal != 0:
-                                    signal = s_signal
-                                    strategy_name = strat.STRATEGY_NAME
-                                    atr_val = s_atr
-                                    best_metadata = s_meta
-                                    current_score = s_score  # <--- Capturamos score
-                                    break 
-                                
-                                # Si no hay señal, guardamos la metadata y score de la primera estrategia válida (para visualizar)
-                                if not best_metadata and s_score > 0:
-                                    best_metadata = s_meta
-                                    current_score = s_score
-                            except Exception as e:
-                                logger.error(f"❌ [{self.symbol}] Error estrat {strat}: {e}")
+                    for strat in elite_strats:
+                        try:
+                            # 1. Calcular señal
+                            s_result = await strat.calculate_signal(mtf_data, mode, user_levels=user_levels)
+                            s_score = s_result.get("score", 0)
+                            s_meta = s_result.get("metadata", {})
+                            s_name_raw = getattr(strat, 'STRATEGY_NAME', type(strat).__name__)
+                            s_name = STRAT_TRANS.get(s_name_raw, s_name_raw)
+
+                            # 2. Actualizar mejor score para el HUD
+                            if s_score > current_score:
+                                current_score = s_score
+                                strategy_name = s_name
+                                best_metadata = s_meta
+                                atr_val = s_result.get("atr", 0)
+
+                            # 3. Evaluar Ejecución (SOLO si pertenece al régimen actual)
+                            # Esto previene "señales fantasma" de estrategias no aptas para el régimen
+                            is_strat_in_regime = False
+                            if mode in self.strategies:
+                                if any(type(strat) == type(rs) for rs in self.strategies[mode]):
+                                    is_strat_in_regime = True
+                            
+                            if is_strat_in_regime and s_result.get("entry", 0) != 0:
+                                # Capturamos la señal oficial
+                                if signal == 0: # Priorizamos la primera que dispare en el régimen
+                                    signal = s_result.get("entry", 0)
+                                    # Opcional: Podríamos re-setear strategy_name aquí para que coincida con la ejecución
+                                    # Pero dejar la de mayor score también es informativo.
+                        
+                        except Exception as e:
+                            logger.error(f"❌ [{self.symbol}] Error estrat {type(strat).__name__}: {e}")
+
+                    # Fallback de nombre si sigue siendo None o similar
+                    if not strategy_name or str(strategy_name) == "None":
+                        strategy_name = "PST Strategy Hub"
+
 
                     # Calcular factor de volatilidad para el dashboard
                     atr_mean = atr_series.rolling(window=20).mean().iloc[-1] if len(atr_series) > 20 else atr_val

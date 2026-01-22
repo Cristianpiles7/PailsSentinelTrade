@@ -272,6 +272,8 @@ class PSTEMAFlow:
             "score": score,
             "total_score": score,
             "score_breakdown": breakdown,
+            "can_entry": entry != 0,
+            "gate_failed": gate_failed,
             "ema21": round(ema21_s.iloc[-1], 2),
             "ema50": round(ema50_s.iloc[-1], 2),
             "adx": round(curr_adx, 1),
@@ -284,3 +286,4 @@ class PSTEMAFlow:
             "metadata": metadata,
             "score": score
         }
+

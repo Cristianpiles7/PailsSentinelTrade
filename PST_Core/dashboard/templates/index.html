@@ -690,14 +690,8 @@
                         <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 5px;"></div>
                         
                         <!-- NEW: Checkboxes for Channels -->
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <label style="font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 3px;">
-                                <input type="checkbox" id="chk-macro" checked onchange="toggleChannelConfig()" style="accent-color: #FACC15;"> Mac
-                            </label>
-                            <label style="font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 3px;">
-                                <input type="checkbox" id="chk-tactical" checked onchange="toggleChannelConfig()" style="accent-color: #22D3EE;"> Tac
-                            </label>
-                        </div>
+                        <!-- Canales Automáticos Eliminados (Mac/Tac) -->
+
 
                         <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 5px;"></div>
                         <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 0 5px;"></div>
@@ -710,7 +704,8 @@
                         <button class="tf-btn" onclick="loadChartData(currentSymbol, 'D1')">D1</button>
                         
                         <div style="display: flex; align-items: center; gap: 10px; margin-left: 15px; background: rgba(0,0,0,0.3); padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);">
-                            <div style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #22D3EE; display: inline-block;"></span> <span style="font-size: 9px; opacity: 0.7;">Bot (Auto)</span></div>
+                            <!-- Leyenda Auto Eliminada -->
+
                             <div style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #ef4444; display: inline-block;"></span> <span style="font-size: 9px; opacity: 0.7;">Res manual</span></div>
                             <div style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 3px; background: #22c55e; display: inline-block;"></span> <span style="font-size: 9px; opacity: 0.7;">Sup manual</span></div>
                         </div>
@@ -846,13 +841,19 @@
                             });
                             
                             const bestManual = manualLevels[0];
-                            // Extract factors from the manual level metadata explicitly
+                            
+                            // Integrar Factores Técnicos de la estrategia
                             factors = {
-                                "Acción": (bestManual.action_reco || 'N/A').replace('WATCH','VIGILAR').replace('BREAK','ROTURA').replace('BOUNCE','REBOTE'),
-                                "Tipo Nivel": (bestManual.type || 'N/A').replace('RESISTANCE','Resistencia').replace('SUPPORT','Soporte'),
-                                "Distancia": `${bestManual.dist || 0}%`,
-                                "Validación": bestManual.validation || "Standard"
+                                "RSI": analysis.rsi_mtf?.m5 || "N/A",
+                                "Volumen": analysis.score_breakdown?.Vol || "N/A",
+                                "Flow": analysis.score_breakdown?.Flow || "N/A",
+                                "Nivel Clave": analysis.score_breakdown?.Nivel || `${bestManual.type} @ ${bestManual.price}`,
+                                "Acción": analysis.score_breakdown?.Acción || bestManual.action_reco
                             };
+                            
+                            if (bestManual.validation && bestManual.validation !== "Standard") {
+                                factors["Validación"] = bestManual.validation;
+                            }
                             
                             // SYNC: Usar la puntuación en vivo del nivel para el círculo y el HUD del modal
                             scoreToDisplay = bestManual.strat_score || 0;
@@ -872,8 +873,14 @@
                         }
                     }
 
+                    // FINAL CLEANUP of stratName
+                    if (!stratName || stratName === "None" || stratName === "null" || stratName === "undefined" || stratName === "(None)") {
+                        stratName = isManualSource ? "Estrategia Maestra (Canales)" : "PST Strategy Hub";
+                    }
+
                     // Update UI
                     document.getElementById('inspector-title').innerHTML = `🧐 Análisis: ${symbol} <span style="font-size: 12px; color: #64748b; margin-left:10px;">(${stratName})</span> <span style="font-size: 9px; background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 2px 5px; border-radius: 4px; margin-left: 10px; border: 1px solid #10b981;">ANALISIS EN VIVO ⚡</span>`;
+
                     document.getElementById('inspector-score').innerText = scoreToDisplay;
                     
                     // NEW: Show Dashboard Score for comparison (Transparency)
@@ -1034,11 +1041,20 @@
                                             let stratColor = '#475569'; // Default Grayish for 0 score
                                             let barColor = 'rgba(71, 85, 105, 0.1)';
                                             
-                                            if (strat.score >= 70) { stratColor = '#4ade80'; barColor = 'rgba(74, 222, 128, 0.2)'; }
+                                            if (strat.score >= 70) { 
+                                                if (strat.status === 'Filtros Bloquean') {
+                                                    stratColor = '#f59e0b'; // Gold/Yellow for blocking
+                                                    barColor = 'rgba(245, 158, 11, 0.1)';
+                                                } else {
+                                                    stratColor = '#4ade80'; 
+                                                    barColor = 'rgba(74, 222, 128, 0.2)';
+                                                }
+                                            }
                                             else if (strat.score >= 40) { stratColor = '#f59e0b'; barColor = 'rgba(245, 158, 11, 0.2)'; }
                                             else if (strat.score > 0) { stratColor = '#ef4444'; barColor = 'rgba(239, 68, 68, 0.2)'; }
 
                                             strategiesHtml += `<tr style="background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%); border-top: 1px solid rgba(255,255,255,0.1);"><td style="padding: 10px 5px; color: #fff; font-size: 13px; font-weight: bold; border-left: 3px solid ${stratColor}; font-family: 'Inter', sans-serif;">🚀 ${strat.name}</td><td style="padding: 10px 5px; text-align: right; color: ${stratColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${strat.score}/100 (${strat.status})</td></tr>`;
+
 
                                             if (strat.factors && strat.factors.length > 0) {
                                                 strat.factors.forEach(f => {
@@ -1787,38 +1803,7 @@
         }
 
 
-        function applyChannelVisibility() {
-            const showMacro = document.getElementById('chk-macro').checked;
-            const showTactical = document.getElementById('chk-tactical').checked;
-            
-            if (upperChannelSeries) upperChannelSeries.applyOptions({ visible: showMacro });
-            if (lowerChannelSeries) lowerChannelSeries.applyOptions({ visible: showMacro });
-            if (upperLocalSeries) upperLocalSeries.applyOptions({ visible: showTactical });
-            if (lowerLocalSeries) lowerLocalSeries.applyOptions({ visible: showTactical });
-        }
-
-        async function toggleChannelConfig() {
-            if (!currentSymbol) return;
-            const config = {
-                enable_macro: document.getElementById('chk-macro').checked,
-                enable_tactical: document.getElementById('chk-tactical').checked
-            };
-            
-            // Apply visually immediately
-            applyChannelVisibility();
-            
-            // Save to Backend
-            try {
-                await fetch(`/api/channel-config/${currentSymbol}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(config)
-                });
-                console.log("Channel Config Saved:", config);
-            } catch (e) {
-                console.error("Error saving channel config:", e);
-            }
-        }
+        // Configuración de canales automáticos eliminada (Análisis 100% manual)
         
         async function loadChartData(symbol, tf) {
             const container = document.getElementById('chart-container');
@@ -1857,29 +1842,54 @@
                         height: 480,
                         layout: { background: { type: 'solid', color: '#111827' }, textColor: '#94a3b8' },
                         grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
-                        timeScale: { timeVisible: true }
+                        timeScale: { timeVisible: true, rightOffset: 20 }
                     };
                     chart = LightweightCharts.createChart(container, chartOptions);
                     
                     // --- ONE-TIME EVENT SUBSCRIPTIONS ---
+                    // --- SINGLE CONSOLIDATED CLICK HANDLER ---
+                    // HELPER PARA PROYECCIÓN FUTURA ROBUSTA (UNIFICADO)
+                    window.getProjectedTime = (x) => {
+                        try {
+                            const timeScale = chart.timeScale();
+                            if (!window.lastFormattedData || window.lastFormattedData.length === 0) return null;
+                            
+                            // 1. Intentar el tiempo nativo primero (si hay padding de futuro, esto funcionará)
+                            let nativeTime = timeScale.coordinateToTime(x);
+                            if (nativeTime) return (typeof nativeTime === 'number') ? nativeTime : Math.floor(new Date(nativeTime).getTime() / 1000);
+                            
+                            // 2. Fallback manual matemático para clics MUY lejanos
+                            const lastBar = window.lastFormattedData[window.lastFormattedData.length - (window.futurePadding || 0) - 1];
+                            const logical = timeScale.coordinateToLogical(x);
+                            if (logical === null) return null;
+                            
+                            const tfMinutes = { 'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30, 'H1': 60, 'H4': 240, 'D1': 1440 };
+                            const tfSec = (tfMinutes[currentTF] || 5) * 60;
+                            
+                            const lastBarIndex = window.lastFormattedData.length - (window.futurePadding || 0) - 1;
+                            const barsIntoFuture = logical - lastBarIndex;
+                            const projTime = lastBar.time + Math.round(barsIntoFuture * tfSec);
+                            
+                            return isNaN(projTime) ? null : projTime;
+                        } catch(e) { console.error("Error in getProjectedTime:", e); return null; }
+                    };
+
                     chart.subscribeClick(async (param) => {
-                        if (!isDrawingLevel || !param.point || !currentSymbol) return;
-                        
-                        // Robust Price Capture
-                        let price = param.price;
-                        if (!price) {
-                            try {
-                                price = candleSeries.coordinateToPrice(param.point.y);
-                            } catch(e) { console.error("Error converting coordinate:", e); }
-                        }
+                        if (!param.point || !currentSymbol) return;
 
-                        if (!price) return;
-
-                        // UI Feedback: Temporal disable drawing mode to avoid multiple clicks
-                        isDrawingLevel = false; 
-                        const type = confirm(`¿NIVEL DETECTADO: ${price.toFixed(5)}?\n\nAceptar para RESISTENCIA (Roja)\nCancelar para SOPORTE (Verde)`) ? 'RESISTANCE' : 'SUPPORT';
+                        const time = window.getProjectedTime(param.point.x);
+                        const price = candleSeries.coordinateToPrice(param.point.y);
                         
-                        if (type) {
+                        if (!time || !price) return;
+                        const isFuture = (param.time === null);
+
+                        console.log("🖱️ CLICK DETECTADO:", { time, price, isFuture, x: param.point.x });
+
+                        // 1. HORIZONTAL LEVEL DRAWING
+                        if (isDrawingLevel) {
+                            if (!price) return;
+                            isDrawingLevel = false;
+                            const type = confirm(`🎯 ¿NIVEL HORIZONTAL: ${price.toFixed(5)}?\n\nACEPTAR -> RESISTENCIA (Roja)\nCANCELAR -> SOPORTE (Verde)`) ? 'RESISTANCE' : 'SUPPORT';
                             try {
                                 const res = await fetch('/api/levels', {
                                     method: 'POST',
@@ -1888,16 +1898,16 @@
                                 });
                                 const result = await res.json();
                                 if (result.success) {
-                                    // toggleLevelMode usually handles UI state, we call it if it was disabled above
-                                    // In this case, it was already set to false, so toggleLevelMode logic might need to be careful
+                                    isDrawingLevel = true;
+                                    toggleLevelMode();
+                                    loadChartData(currentSymbol, currentTF);
                                 }
-                            } catch (e) { alert("Error guardando nivel manual"); }
+                            } catch (e) { alert("Error guardando nivel horizontal"); }
+                            return;
                         }
-                        
-                        // Force UI Refresh and Reset Mode
-                        isDrawingLevel = true; // Temporary reset to call toggle once
-                        toggleLevelMode(); // Turn off mode
-                        loadChartData(currentSymbol, 'M5'); // Refresh
+
+                        // 2. TRENDLINE (DIAGONAL) DRAWING & SELECTION
+                        if (window.clickHandler) window.clickHandler({ ...param, time, price });
                     });
 
                     candleSeries = chart.addCandlestickSeries({
@@ -1905,38 +1915,140 @@
                     });
                     
                     emaSeries = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, title: 'EMA 21' });
-                    ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'EMA 50' }); 
-                    
-                    // Inicializar Canales (Estilo Refinado: Amarillos y Sólidos)
-                    // Upper = Resistance
-                    upperChannelSeries = chart.addLineSeries({ 
-                        color: '#FACC15', // Yellow 
-                        lineWidth: 2, 
-                        lineStyle: 0, // Solid
-                        title: 'Resistance Channel' 
-                    });
-                    
-                    // Lower = Support
-                    lowerChannelSeries = chart.addLineSeries({ 
-                        color: '#FACC15', 
-                        lineWidth: 2, 
-                        lineStyle: 0, 
-                        title: 'Macro Support' 
-                    });
+                    ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'EMA 50' });
 
-                    // TACTICAL CHANNELS (Cyan / Solid)
-                    upperLocalSeries = chart.addLineSeries({
-                        color: '#22D3EE',
-                        lineWidth: 2,
-                        lineStyle: 0, // Solid
-                        title: 'Tactical Resistance'
-                    });
-                    lowerLocalSeries = chart.addLineSeries({
-                        color: '#22D3EE',
-                        lineWidth: 2,
-                        lineStyle: 0, // Solid
-                        title: 'Tactical Support'
-                    });
+                    window.clickHandler = (param) => {
+                            if (!param.point || !candleSeries) return;
+                            
+                            // Importante: Usamos el tiempo y precio proyectados que vienen en el objeto param
+                            const { time, price } = param; 
+
+                        if (!time || !price) {
+                            console.warn("⚠️ Click ignorado: Coordenadas incompletas", {time, price});
+                            return;
+                        }
+
+                        // A. MODO DIBUJO / EDICIÓN (Captura)
+                        if (window.drawState.active) {
+                            console.log("🎨 DRAW/EDIT ACTION:", { step: window.drawState.step, target: window.drawState.editTarget, time, price });
+                            
+                            // Caso Especial: EDICIÓN DE PUNTO ÚNICO
+                            if (window.drawState.editTarget) {
+                                let p1Time, p1Price, p2Time, p2Price;
+                                if (window.drawState.editTarget === 'p1') {
+                                    p1Time = time; p1Price = price;
+                                    p2Time = window.drawState.fixedP2.time; p2Price = window.drawState.fixedP2.price;
+                                } else {
+                                    p2Time = time; p2Price = price;
+                                    p1Time = window.drawState.fixedP1.time; p1Price = window.drawState.fixedP1.price;
+                                }
+
+                                const time1Str = (p1Time && !isNaN(p1Time)) ? new Date(p1Time * 1000).toISOString() : null;
+                                const time2Str = (p2Time && !isNaN(p2Time)) ? new Date(p2Time * 1000).toISOString() : null;
+
+                                if (!time1Str || !time2Str) { console.error("❌ Invalid dates for saving"); return; }
+
+                                const payload = {
+                                    id: window.editingLevelId,
+                                    symbol: currentSymbol, price: p1Price, price2: p2Price,
+                                    type: window.drawState.type, label: "Manual Trendline (Edited)",
+                                    time1: time1Str,
+                                    time2: time2Str
+                                };
+
+                                console.log("📤 AUTO-SAVING EDITED POINT:", payload);
+
+                                fetch('/api/levels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+                                .then(res => res.json()).then(data => {
+                                    if (data.success) { 
+                                        window.editingLevelId = null; 
+                                        loadChartData(currentSymbol, currentTF); 
+                                    }
+                                    window.drawState = { active: false, step: 0 };
+                                    document.getElementById('chart-container').style.cursor = 'default';
+                                    if (window.handleSeries) { try { chart.removeSeries(window.handleSeries); } catch(e){} window.handleSeries = null; }
+                                });
+                                return;
+                            }
+
+                            // Caso Normal: DIBUJO NUEVO (2 Pasos)
+                            if (window.drawState.step === 1) {
+                                window.drawState.p1 = { time, price };
+                                window.drawState.step = 2;
+                                if (window.handleSeries) try { chart.removeSeries(window.handleSeries); } catch(e){}
+                                window.handleSeries = chart.addLineSeries({ color: 'rgba(255,255,0,0.3)', lineWidth: 1 });
+                                if (time && price) {
+                                    window.handleSeries.setData([{ time: time, value: price }]);
+                                    window.handleSeries.setMarkers([{ time: time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 10, text: 'P1 (Inicio)' }]);
+                                }
+                                return;
+                            } else if (window.drawState.step === 2) {
+                                const p1 = window.drawState.p1;
+                                const t1Str = (p1.time) ? new Date(p1.time * 1000).toISOString() : null;
+                                const t2Str = (time) ? new Date(time * 1000).toISOString() : null;
+
+                                if (!t1Str || !t2Str) { alert("Error en coordenadas de tiempo"); return; }
+
+                                const payload = {
+                                    symbol: currentSymbol, price: p1.price, price2: price,
+                                    type: window.drawState.type, label: "Manual Trendline",
+                                    time1: t1Str, time2: t2Str
+                                };
+                                if (window.editingLevelId) payload.id = window.editingLevelId;
+
+                                console.log("📤 GUARDANDO NUEVA LÍNEA:", payload);
+
+                                fetch('/api/levels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+                                .then(res => res.json()).then(data => {
+                                    if (data.success) { 
+                                        console.log("✅ LÍNEA GUARDADA");
+                                        window.editingLevelId = null; 
+                                        loadChartData(currentSymbol, currentTF); 
+                                    } else {
+                                        console.error("❌ ERROR AL GUARDAR:", data.error);
+                                        alert("❌ Error: " + data.error);
+                                    }
+                                    window.drawState = { active: false, step: 0 };
+                                    document.getElementById('chart-container').style.cursor = 'default';
+                                    if (window.handleSeries) { try { chart.removeSeries(window.handleSeries); } catch(e){} window.handleSeries = null; }
+                                });
+                                return;
+                            }
+                        }
+
+                        // B. SELECCIÓN
+                        const mouseX = param.point.x;
+                        const mouseY = param.point.y;
+                        let bestMatch = null;
+                        let minDistance = 25;
+
+                        if (window.manualTrendlineSeries) {
+                            window.manualTrendlineSeries.forEach(s => {
+                                const d = s._levelData; if (!d) return;
+                                const x1 = chart.timeScale().timeToCoordinate(d.t1);
+                                const x2 = chart.timeScale().timeToCoordinate(d.t2);
+                                const y1 = candleSeries.priceToCoordinate(d.p1);
+                                const y2 = candleSeries.priceToCoordinate(d.p2);
+                                if (x1 === null || x2 === null) return;
+                                const dist = (px, py, x1, y1, x2, y2) => {
+                                    const l2 = (x2-x1)**2 + (y2-y1)**2;
+                                    if (l2===0) return Math.sqrt((px-x1)**2 + (py-y1)**2);
+                                    let t = Math.max(0, Math.min(1, ((px-x1)*(x2-x1) + (py-y1)*(y2-y1))/l2));
+                                    return Math.sqrt((px-(x1+t*(x2-x1)))**2 + (py-(y1+t*(y2-y1)))**2);
+                                };
+                                const d_val = dist(mouseX, mouseY, x1, y1, x2, y2);
+                                if (d_val < minDistance) { minDistance = d_val; bestMatch = s; }
+                            });
+                        }
+
+                        if (bestMatch) {
+                            window.editParams.selected = bestMatch;
+                            window.renderHandles(bestMatch);
+                        } else if (!window.drawState.active) {
+                            window.editParams.selected = null;
+                            if (window.handleSeries) { try { chart.removeSeries(window.handleSeries); } catch(e){} window.handleSeries = null; }
+                        }
+                    };
                 }
                 
                 // Update Title... (Omitted for brevity, assume same)
@@ -1975,29 +2087,61 @@
                     time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
                 }));
 
-                candleSeries.setData(formattedData);
+                // Save for Editing & Time Projection
+                const baseData = result.data.map(d => ({
+                    time: Math.floor(new Date(d.time).getTime() / 1000),
+                    open: d.open, high: d.high, low: d.low, close: d.close
+                }));
+
+                // INJECT FUTURE PADDING (Permitir dibujo en espacio vacío)
+                window.futurePadding = 200;
+                const lastRealBar = baseData[baseData.length - 1];
+                const tfMinutes = { 'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30, 'H1': 60, 'H4': 240, 'D1': 1440 };
+                const tfSec = (tfMinutes[tf] || 5) * 60;
+                
+                let paddedData = [...baseData];
+                for (let i = 1; i <= window.futurePadding; i++) {
+                    paddedData.push({
+                        time: lastRealBar.time + (i * tfSec)
+                    });
+                }
+                
+                window.lastFormattedData = paddedData;
+                window.lastStatusData = result;
+
+                candleSeries.setData(window.lastFormattedData);
                 emaSeries.setData(emaData);
                 ema50Series.setData(ema50Data);
                 
                 // Set Data Canales
-                if(upperChannelSeries) upperChannelSeries.setData(macroUpper);
-                if(lowerChannelSeries) lowerChannelSeries.setData(macroLower);
-                // Set Data Canales
-                if(upperChannelSeries) upperChannelSeries.setData(macroUpper);
-                if(lowerChannelSeries) lowerChannelSeries.setData(macroLower);
-                if(upperLocalSeries) upperLocalSeries.setData(localUpper);
-                if(lowerLocalSeries) lowerLocalSeries.setData(localLower); // Fixed typo from upperLocalSeries
+                // Actualización de datos de Canales Automáticos eliminada
                 
+                // --- APLICAR ZOOM PREDETERMINADO (Basado en TF para mostrar ~24h) ---
+                const tfCounts = { 'M1': 1440, 'M5': 288, 'M15': 96, 'M30': 48, 'H1': 24, 'H4': 42, 'D1': 30 };
+                const visibleCount = tfCounts[tf] || 100;
+
+                requestAnimationFrame(() => {
+                    const totalCandles = formattedData.length;
+                    if (totalCandles > 0) {
+                        try {
+                            // En lugar de setVisibleRange (que anula el offset), usamos scrollToRealTime
+                            // chart.timeScale().scrollToRealTime();
+                            
+                            // Ajuste: Para que se vea el histórico deseado Y el hueco a la derecha:
+                            // Ponemos el rango pero desplazado
+                            const range = {
+                                from: formattedData[Math.max(0, totalCandles - visibleCount)].time,
+                                to: formattedData[totalCandles - 1].time + (20 * tfSec) // Añadir el tiempo del offset al rango visual
+                            };
+                            chart.timeScale().setVisibleRange(range);
+                        } catch(e) { console.error("Error setting visible range:", e); }
+                    }
+                });
+
                 // --- LOAD & APPLY CHANNEL CONFIG FOR VISIBILITY ---
-                fetch(`/api/channel-config/${symbol}`)
-                    .then(res => res.json())
-                    .then(cfg => {
-                        document.getElementById('chk-macro').checked = cfg.enable_macro !== undefined ? cfg.enable_macro : true;
-                        document.getElementById('chk-tactical').checked = cfg.enable_tactical !== undefined ? cfg.enable_tactical : true;
-                        
-                        // Apply Visibility
-                        applyChannelVisibility();
-                    });
+
+
+                // Análisis manual activo
 
                 // --- UPDATE HUD (Horizontal Bottom Bar) ---
                 const hud = document.getElementById('chart-hud');
@@ -2029,12 +2173,18 @@
                             const bg = l.source === "MANUAL" ? (isRes ? "rgba(239,68,68,0.1)" : "rgba(16,185,129,0.1)") : "rgba(255,255,255,0.02)";
                             
                             // Strategy Badge
+                            // Strategy Badge (MOSTRAR SIEMPRE)
                             let stratBadge = "";
-                            if (l.action_reco && l.action_reco !== "WAIT") {
-                                const isBuy = l.action_reco.includes("BUY");
-                                const bColor = isBuy ? "#4ade80" : "#f87171";
-                                stratBadge = `<span style="font-size: 9px; background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; border: 1px solid ${bColor}; color: ${bColor}; margin-left: auto;">${l.action_reco} (${l.strat_score})</span>`;
-                            }
+                            const reco = l.action_reco || "NEUTRAL";
+                            const isAction = reco !== "WAIT" && reco !== "NEUTRAL";
+                            
+                            let bColor = "#94a3b8"; // Gray for Neutral
+                            if (reco.includes("BUY") || reco.includes("REBOTE") && !isRes) bColor = "#4ade80";
+                            if (reco.includes("SELL") || reco.includes("ROTURA") || (isRes && reco.includes("REBOTE"))) bColor = "#f87171";
+                            if (reco === "VIGILAR") bColor = "#f59e0b"; // Orange/Yellow
+                            
+                            stratBadge = `<span style="font-size: 9px; background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; border: 1px solid ${bColor}; color: ${bColor};">${reco} (${l.strat_score || 0})</span>`;
+
 
                             // Delete Button Only for Manual Levels
                             const deleteBtn = l.source === 'MANUAL' 
@@ -2045,13 +2195,24 @@
                                 : '';
 
                             return `
-                                <div onmouseover="highlightLevel(${l.id})" onmouseout="unhighlightLevel(${l.id})" title="${l.validation || ''}" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: ${bg}; border: 1px solid ${borderColor}; padding: 2px 6px; border-radius: 4px; border-left: 3px solid ${color}; width: 100%;">
-                                    <span style="color: ${color}; font-weight: bold; font-size: 11px; white-space: nowrap;">${icon} ${l.source === 'MANUAL' ? 'MAN' : l.source}</span>
-                                    <span style="color: #cbd5e1; font-family: monospace; font-size: 11px;">${l.price.toFixed(2)}</span>
-                                    ${stratBadge}
-                                    ${deleteBtn}
+                                <div onmouseover="highlightLevel(${l.id})" onmouseout="unhighlightLevel(${l.id})" title="${l.validation || ''}" 
+                                     style="cursor: pointer; display: flex; align-items: center; justify-content: space-between; background: ${bg}; border: 1px solid ${borderColor}; padding: 4px 8px; border-radius: 4px; border-left: 3px solid ${color}; width: 100%; min-height: 28px;">
+                                    
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span style="color: ${color}; font-weight: bold; font-size: 11px; white-space: nowrap;">${icon} ${l.source === 'MANUAL' ? 'MAN' : l.source}</span>
+                                        <span style="color: #cbd5e1; font-family: monospace; font-size: 11px; font-weight: bold;">${l.price.toFixed(2)}</span>
+                                        <span style="font-size: 9px; color: ${color}; opacity: 0.8; font-family: monospace;">(${l.dist >= 0 ? '+' : ''}${l.dist.toFixed(2)}%)</span>
+                                    </div>
+
+                                    <div style="display: flex; align-items: center; gap: 6px;">
+                                        ${stratBadge}
+                                        <div style="display: flex; align-items: center; opacity: 0.8;">
+                                            ${deleteBtn}
+                                        </div>
+                                    </div>
                                 </div>
                             `;
+
                         }).join('');
                     } else {
                         itemsContainer.innerHTML = '<div style="color: #475569; font-style: italic;">Sin niveles activos.</div>';
@@ -2132,12 +2293,15 @@
                         manualLevelLines = [];
                         
                         // Limpiar Trendlines
-                        if (window.manualTrendlineSeries) {
-                            window.manualTrendlineSeries.forEach(s => {
-                                try { chart.removeSeries(s); } catch (e) { console.error("Error removing series:", e); }
-                            });
+                        // Protegemos las Trendlines y el Handle si hay una operación activa
+                        if (!window.drawState || !window.drawState.active) {
+                            if (window.manualTrendlineSeries) {
+                                window.manualTrendlineSeries.forEach(s => {
+                                    try { chart.removeSeries(s); } catch (e) {}
+                                });
+                            }
+                            window.manualTrendlineSeries = [];
                         }
-                        window.manualTrendlineSeries = [];
 
                         levels.forEach(lvl => {
                             let color = lvl.type === 'RESISTANCE' ? '#ef4444' : '#22c55e'; 
@@ -2195,7 +2359,20 @@
 
 
                         // --- MANUAL DRAWING LOGIC (Trendlines) ---
-                        window.drawState = { active: false, step: 0, p1: null, type: null };
+                        if (!window.drawState) window.drawState = { active: false, step: 0, p1: null, type: null };
+
+                        // RESTORE MISSING FUNCTION
+                        window.renderHandles = (series) => {
+                            if (!series || !chart) return;
+                            const d = series._levelData || {};
+                            if (!d.t1 || !d.t2) return;
+                            if (window.handleSeries) { try { chart.removeSeries(window.handleSeries); } catch(e){} }
+                            window.handleSeries = chart.addLineSeries({ color: 'rgba(0,0,0,0)', lineWidth: 0, lastValueVisible: false, priceLineVisible: false });
+                            window.handleSeries.setMarkers([
+                                { time: d.t1, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 5, text: 'P1' },
+                                { time: d.t2, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 5, text: 'P2' }
+                            ]);
+                        };
 
                         window.startDrawTrendline = (type) => {
                             window.drawState = { active: true, step: 1, p1: null, type: type };
@@ -2206,264 +2383,68 @@
                         // --- INTERACTIVE EDITING LOGIC ---
                         if (!window.editParams) window.editParams = { selected: null, draggingPoint: null };
                         
-                        // Clean up handles if any
-                        if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
+                        // Solo limpiamos handles si no estamos editando o dibujando algo nuevo
+                        if (!window.drawState || !window.drawState.active) {
+                            if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
+                        }
                         
-                        // UNSUBSCRIBE PREVIOUS LISTENER TO PREVENT DUPLICATION
-                         try {
-                            if (window.clickHandler) {
-                                chart.unsubscribeClick(window.clickHandler);
-                            }
-                        } catch(e) {}
+                        // Gestión de eventos finalizada
 
-                        // DEFINE HANDLER
-                        window.clickHandler = (param) => {
-                            if (!param.point) {
-                                window.editParams.selected = null;
-                                if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
-                                return;
-                            }
+                        // DRAG & DROP HANDLERS (PERSISTENTES)
+                        if (!window.dragInitialized) {
+                            const container = document.getElementById('chart-container');
+                            let cursorTime, cursorPrice;
                             
-                            // *** DRAWING MODE HANDLER ***
-                            if (window.drawState.active && param.time) {
-                                const price = candleSeries.coordinateToPrice(param.point.y);
-                                const time = param.time;
-
-                                // UX REFINEMENT: SINGLE CLICK EDIT
-                                if (window.drawState.editTarget) {
-                                     let p1, p2;
-                                     if (window.drawState.editTarget === 'p1') {
-                                          p1 = { time: time, price: price };
-                                          p2 = window.drawState.fixedP2;
-                                     } else {
-                                          p1 = window.drawState.fixedP1;
-                                          p2 = { time: time, price: price };
-                                     }
-                                     
-                                     // Common Save Logic
-                                     const payload = {
-                                         symbol: currentSymbol,
-                                         price: p1.price, price2: p2.price,
-                                         type: window.drawState.type,
-                                         label: "Manual Trendline",
-                                         time1: new Date(p1.time * 1000).toISOString(),
-                                         time2: new Date(p2.time * 1000).toISOString()
-                                     };
-                                     if (window.editingLevelId) payload.id = window.editingLevelId;
-
-                                     fetch('/api/levels', { method: 'POST', headers: {'Content-Type':'application/json'}, body:JSON.stringify(payload)})
-                                        .then(res=>res.json()).then(data => {
-                                             if(data.success) { alert("✅ Nivel Actualizado"); window.editingLevelId=null; loadChartData(currentSymbol, currentTF); }
-                                             else { alert("❌ Error: "+data.error); }
-                                             window.drawState = { active: false, step: 0 };
-                                             document.getElementById('chart-container').style.cursor = 'default';
-                                             if(window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries=null; }
-                                        });
-                                     return;
+                            chart.subscribeCrosshairMove(p => { 
+                                if (p.point) {
+                                    cursorTime = window.getProjectedTime(p.point.x);
+                                    cursorPrice = candleSeries.coordinateToPrice(p.point.y);
                                 }
                                 
-                                if (window.drawState.step === 1) {
-                                    // P1 Captured
-                                    window.drawState.p1 = { time, price };
-                                    window.drawState.step = 2;
-                                    console.log("P1 Set:", time, price);
+                                if (window.editParams.draggingPoint && cursorTime && cursorPrice !== null) {
+                                    const s = window.editParams.selected; const d = s._levelData;
+                                    if (window.editParams.draggingPoint === 1) { d.t1 = cursorTime; d.p1 = cursorPrice; }
+                                    else { d.t2 = cursorTime; d.p2 = cursorPrice; }
                                     
-                                    // Temporary visual marker
-                                    if (window.handleSeries) chart.removeSeries(window.handleSeries);
-                                    window.handleSeries = chart.addLineSeries({ color: '#fff', lineWidth: 0 });
-                                    window.handleSeries.setMarkers([{ time: time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 4, text: 'P1' }]);
-                                    
-                                } else if (window.drawState.step === 2) {
-                                    // P2 Captured -> SAVE
-                                    const p1 = window.drawState.p1;
-                                    console.log("P2 Set:", time, price);
-                                    
-                                    const payload = {
-                                        symbol: currentSymbol,
-                                        price: p1.price, // Start Price
-                                        price2: price,   // End Price
-                                        type: window.drawState.type,
-                                        label: "Manual Trendline",
-                                        time1: new Date(p1.time * 1000).toISOString(),
-                                        time2: new Date(time * 1000).toISOString()
-                                    };
-
-                                    // Check if Editing
-                                    if (window.editingLevelId) {
-                                        payload.id = window.editingLevelId;
-                                        console.log("✏️ Updating Level ID:", window.editingLevelId);
+                                    if (d.t1 && d.t2 && d.p1 !== undefined && d.p2 !== undefined) {
+                                        s.setData([{time: d.t1, value: d.p1}, {time: d.t2, value: d.p2}].sort((a,b)=>a.time-b.time));
+                                        window.renderHandles(s);
                                     }
-                                    
-                                    fetch('/api/levels', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify(payload)
-                                    }).then(res => res.json()).then(data => {
-                                        if (data.success) {
-                                            alert("✅ Línea guardada correctamente");
-                                            window.editingLevelId = null; // Reset Edit Mode
-                                            loadChartData(currentSymbol, currentTF); // Reload to show
-                                        } else {
-                                            alert("❌ Error guardando línea: " + data.error);
-                                        }
-                                        // Reset State
-                                        window.drawState = { active: false, step: 0, p1: null, type: null };
-                                        document.getElementById('chart-container').style.cursor = 'default';
-                                        if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
-                                    });
                                 }
-                                return; // Stop propagation to select logic
-                            }
+                            });
 
-                            // Selection Logic (Pixel Based)
-                            const mouseX = param.point.x;
-                            const mouseY = param.point.y;
-                            let bestMatch = null;
-                            let minDistance = 20; // 20px tolerance
-                            
-                            window.manualTrendlineSeries.forEach(s => {
-                                const d = s._levelData;
-                                if (!d) return;
-                                // Convert to Screen Coords
+                            container.addEventListener('mousedown', (e) => {
+                                if (!window.editParams.selected) return;
+                                const rect = container.getBoundingClientRect();
+                                const mx = e.clientX - rect.left; const my = e.clientY - rect.top;
+                                const d = window.editParams.selected._levelData;
                                 const x1 = chart.timeScale().timeToCoordinate(d.t1);
                                 const x2 = chart.timeScale().timeToCoordinate(d.t2);
                                 const y1 = candleSeries.priceToCoordinate(d.p1);
                                 const y2 = candleSeries.priceToCoordinate(d.p2);
-                                
-                                if (x1 === null || x2 === null || y1 === null || y2 === null) return;
-                                
-                                // Distance Point to Segment
-                                function distToSegment(px, py, x1, y1, x2, y2) {
-                                    const A = px - x1;
-                                    const B = py - y1;
-                                    const C = x2 - x1;
-                                    const D = y2 - y1;
-                                    const dot = A * C + B * D;
-                                    const len_sq = C * C + D * D;
-                                    let param = -1;
-                                    if (len_sq !== 0) param = dot / len_sq;
-                                    
-                                    let xx, yy;
-                                    if (param < 0) { xx = x1; yy = y1; }
-                                    else if (param > 1) { xx = x2; yy = y2; }
-                                    else { xx = x1 + param * C; yy = y1 + param * D; }
-                                    
-                                    const dx = px - xx;
-                                    const dy = py - yy;
-                                    return Math.sqrt(dx * dx + dy * dy);
-                                }
-                                
-                                const dist = distToSegment(mouseX, mouseY, x1, y1, x2, y2);
-                                if (dist < minDistance) {
-                                    minDistance = dist;
-                                    bestMatch = s;
-                                }
+                                if (Math.sqrt((mx-x1)**2 + (my-y1)**2) < 30) { window.editParams.draggingPoint = 1; }
+                                else if (Math.sqrt((mx-x2)**2 + (my-y2)**2) < 30) { window.editParams.draggingPoint = 2; }
+                                if (window.editParams.draggingPoint) chart.applyOptions({ handleScroll: false, handleScale: false });
                             });
 
-                            if (bestMatch) {
-                                window.editParams.selected = bestMatch;
-                                renderHandles(bestMatch);
-                            } else {
-                                window.editParams.selected = null;
-                                if (window.handleSeries) { chart.removeSeries(window.handleSeries); window.handleSeries = null; }
-                            }
-                        };
-                        
-                        // SUBSCRIBE
-                        chart.subscribeClick(window.clickHandler);
-
-
-                        // Drag Logic with Pixel Distance
-                        const chartContainer = document.getElementById('chart-container');
-                        chartContainer.addEventListener('mousedown', (e) => {
-                             if (!window.editParams.selected) return;
-                             const rect = chartContainer.getBoundingClientRect();
-                             // Mouse coords relative to container
-                             const mx = e.clientX - rect.left;
-                             const my = e.clientY - rect.top;
-                             
-                             const d = window.editParams.selected._levelData;
-                             const x1 = chart.timeScale().timeToCoordinate(d.t1);
-                             const x2 = chart.timeScale().timeToCoordinate(d.t2);
-                             const y1 = candleSeries.priceToCoordinate(d.p1);
-                             const y2 = candleSeries.priceToCoordinate(d.p2);
-                             
-                             // Check distance to endpoints (20px)
-                             const dist1 = Math.sqrt((mx - x1)**2 + (my - y1)**2);
-                             const dist2 = Math.sqrt((mx - x2)**2 + (my - y2)**2);
-                             
-                             console.log("Drag Check (Pixels):", {mx, my, x1, y1, x2, y2, dist1, dist2});
-                             
-                             if (dist1 < 30 || dist2 < 30) {
-                                 window.editParams.draggingPoint = dist1 < dist2 ? 1 : 2;
-                                 console.log("Dragging Started:", window.editParams.draggingPoint);
-                                 chart.applyOptions({ handleScroll: false, handleScale: false });
-                             }
-                        });
-                        
-                        // We need to track logical position constantly
-                        let cursorTime = 0;
-                        let cursorPrice = 0;
-                        
-                        chart.subscribeCrosshairMove((param) => {
-                            if (!param.point || !param.time) return;
-                            cursorTime = param.time;
-                            cursorPrice = candleSeries.coordinateToPrice(param.point.y);
-                            
-                            if (window.editParams.draggingPoint) {
-                                // Update handle position visually
-                                // Ideally we update the trendline in real-time
-                                const series = window.editParams.selected;
-                                const d = series._levelData;
-                                
-                                if (window.editParams.draggingPoint === 1) {
-                                    d.t1 = cursorTime; d.p1 = cursorPrice;
-                                } else {
-                                    d.t2 = cursorTime; d.p2 = cursorPrice;
+                            container.addEventListener('mouseup', async () => {
+                                if (window.editParams.draggingPoint) {
+                                    const d = window.editParams.selected._levelData;
+                                    fetch('/api/levels', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({
+                                        id: d.id, symbol: d.symbol, price: d.p1, price2: d.p2, type: d.type, label: d.label,
+                                        time1: new Date(d.t1*1000).toISOString(), time2: new Date(d.t2*1000).toISOString()
+                                    })});
+                                    window.editParams.draggingPoint = null;
+                                    chart.applyOptions({ handleScroll: true, handleScale: true });
                                 }
-                                
-                                // Re-render Line
-                                const data = [
-                                    { time: Math.min(d.t1, d.t2), value: d.t1 < d.t2 ? d.p1 : d.p2 },
-                                    { time: Math.max(d.t1, d.t2), value: d.t1 < d.t2 ? d.p2 : d.p1 }
-                                ].sort((a,b) => a.time - b.time);
-                                series.setData(data); // Live update
-                                renderHandles(series); 
-                            }
-                        });
+                            });
+                            window.dragInitialized = true;
+                        }
                         
-                        chartContainer.addEventListener('mousedown', (e) => {
-                             // Duplicate Handler removed (was double added in previous snippet placeholder)
-                             // Logic moved to single handler above
-                        });
-                        
-                        chartContainer.addEventListener('mouseup', async (e) => {
-                            if (window.editParams.draggingPoint) {
-                                // Finish Drag
-                                const d = window.editParams.selected._levelData;
-                                console.log("Updating Level:", d);
-                                
-                                // API Update
-                                try {
-                                    await fetch('/api/levels', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ 
-                                            symbol: d.symbol, 
-                                            price: d.p1, 
-                                            type: d.type, 
-                                            label: d.label,
-                                            price2: d.p2,
-                                            time1: new Date(d.t1 * 1000).toISOString(), // Convert back to ISO
-                                            time2: new Date(d.t2 * 1000).toISOString()
-                                        })
-                                    });
-                                } catch(e) { console.error("Update failed", e); }
-                                
-                                window.editParams.draggingPoint = null;
-                                chart.applyOptions({ handleScroll: true, handleScale: true });
-                            }
-                        });
+                        // Actualización de estado de dibujo completada
+
+
+                // Gestión de eventos finalizada
 
             } catch (err) {
                 console.error("Chart Error:", err);
@@ -2609,24 +2590,7 @@
             } catch (e) { alert("Error al fijar canales: " + e.message); }
         };
 
-        window.toggleChannelConfig = function() {
-            if (!currentSymbol) return;
-            const enableMacro = document.getElementById('chk-macro').checked ? 1 : 0;
-            const enableTactical = document.getElementById('chk-tactical').checked ? 1 : 0;
-
-            fetch('/api/channel-config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    symbol: currentSymbol,
-                    enable_macro: enableMacro,
-                    enable_tactical: enableTactical
-                })
-            }).then(res => res.json()).then(data => {
-                console.log("Channel config updated:", data);
-                loadChartData(currentSymbol, currentTF);
-            }).catch(err => console.error(err));
-        };
+        // Canal Config Toggle Eliminado (Interfaz manual)
 
         function closeModal() {
             document.getElementById('chart-modal').style.display = 'none';
@@ -2725,8 +2689,9 @@
                 window.drawState = { active: true, step: 1, editTarget: 'p1', fixedP2: {time: p2Time, price: p2Price}, type: level.type };
                 
                 // Visual feedback for P2 (Fixed)
-                window.handleSeries = chart.addLineSeries({ color: '#fff', lineWidth: 0 });
-                window.handleSeries.setMarkers([{ time: p2Time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 4, text: 'P2 (Fijo)' }]);
+                window.handleSeries = chart.addLineSeries({ color: 'rgba(255,255,0,0.2)', lineWidth: 1 });
+                window.handleSeries.setData([{ time: p2Time, value: p2Price }]);
+                window.handleSeries.setMarkers([{ time: p2Time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 6, text: 'P2 (Fijo)' }]);
                 
                 alert("Haz CLICK para establecer la nueva posición de P1 (Inicio).");
             } else {
@@ -2734,8 +2699,9 @@
                 window.drawState = { active: true, step: 1, editTarget: 'p2', fixedP1: {time: p1Time, price: p1Price}, type: level.type };
                 
                 // Visual feedback for P1 (Fixed)
-                window.handleSeries = chart.addLineSeries({ color: '#fff', lineWidth: 0 });
-                window.handleSeries.setMarkers([{ time: p1Time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 4, text: 'P1 (Fijo)' }]);
+                window.handleSeries = chart.addLineSeries({ color: 'rgba(255,255,0,0.2)', lineWidth: 1 });
+                window.handleSeries.setData([{ time: p1Time, value: p1Price }]);
+                window.handleSeries.setMarkers([{ time: p1Time, position: 'inBar', color: '#fbbf24', shape: 'circle', size: 6, text: 'P1 (Fijo)' }]);
                 
                 alert("Haz CLICK para establecer la nueva posición de P2 (Fin).");
             }

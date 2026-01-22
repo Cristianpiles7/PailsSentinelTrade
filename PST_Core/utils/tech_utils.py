@@ -107,6 +107,8 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         params = {
             "slope_h": slope_h, "intercept_h": upper_intercept,
             "slope_l": slope_l, "intercept_l": lower_intercept,
+            "slope_m": (slope_h + slope_l) / 2, # Pendiente media
+            "intercept_m": (upper_intercept + lower_intercept) / 2, # Intercepto medio
             "last_idx": last_idx
         }
         return upper_line, lower_line, params
@@ -116,10 +118,11 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         import traceback
         traceback.print_exc()
         return [], [], None
-def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None):
+def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None, trend_slope=0):
     """
-    Unified manual score calculation to ensure consistency across UI components.
-    Returns: (score, action_name, description_list)
+    Motor de puntuacion UNIFICADO. 
+    Asegura que la proximidad de puntos SIEMPRE de puntuacion base.
+    trend_slope: Pendiente del canal. Si > 0, tendencia alcista.
     """
     if price <= 0: return 0, "NEUTRAL", []
     
@@ -127,9 +130,9 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
     dist_pct = (dist_p / price * 100)
     abs_dist_pct = abs(dist_pct)
     
-    # Constants Synced with ChannelMaster and Dashboard
-    THR_NEUTRAL = 0.25
-    THR_ACTION = 0.05
+    # Thresholds consistentes
+    THR_NEUTRAL = 0.30  # Empezamos a vigilar desde 0.30%
+    THR_ACTION = 0.05   # Zona de accion critica
     
     score = 0
     action = "WAIT"
@@ -138,56 +141,54 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
     is_res = l_type == 'RESISTANCE'
     is_sup = l_type == 'SUPPORT'
     
-    if abs_dist_pct > THR_NEUTRAL:
-        action = "NEUTRAL"
-        score = 0
-    elif THR_ACTION < abs_dist_pct <= THR_NEUTRAL:
+    # 1. PUNTUACIÓN BASE POR PROXIMIDAD (Rampa de 0 a 50)
+    if abs_dist_pct <= THR_NEUTRAL:
+        # Rampa lineal de 10 a 50
+        # 0.30% -> 10 pts
+        # 0.05% -> 50 pts
+        progress = (THR_NEUTRAL - abs_dist_pct) / (THR_NEUTRAL - THR_ACTION)
+        score = 10 + (progress * 40)
+        score = max(10, min(50, score))
         action = "WATCH"
-        # Linear Ramp: 10 to 45 (35 pts range over 0.20% width)
-        # Multiplier = 35 / 0.20 = 175.0
-        score = 10 + (THR_NEUTRAL - abs_dist_pct) * 175.0
         desc_parts.append(f"Dist: {abs_dist_pct:.2f}%")
-    else:
-        # ZONE ACTION (< 0.05%)
-        score = 50
-        # Breakout check
-        if is_res and dist_p > 0:
-            if is_green is not False and vol_val > vol_ma:
-                action = "BREAK BUY"
-                score += 20
-                if rsi > 55: score += 10; desc_parts.append("RSI Bullish")
-                if vol_val > vol_ma: score += 15; desc_parts.append("Vol High")
-            else:
-                action = "WATCH BREAK"
-                score += 10
-        elif is_sup and dist_p < 0:
-            if is_red is not False and vol_val > vol_ma:
-                action = "BREAK SELL"
-                score += 20
-                if rsi < 45: score += 10; desc_parts.append("RSI Bearish")
-                if vol_val > vol_ma: score += 15; desc_parts.append("Vol High")
-            else:
-                action = "WATCH BREAK"
-                score += 10
-        # Bounce check
-        elif is_res: # Price is below resistance
-            if is_red is not False:
-                action = "BOUNCE SELL"
-                score += 20
-                # Distance Bonus: Max +15 at 0 distance
-                score += (THR_ACTION - abs_dist_pct) * 300.0
-                if rsi > 65: score += 15; desc_parts.append("RSI OB")
-            else:
-                action = "WATCH RES"
-                score += 5
-        elif is_sup: # Price is above support
-            if is_green is not False:
-                action = "BOUNCE BUY"
-                score += 20
-                score += (THR_ACTION - abs_dist_pct) * 300.0
-                if rsi < 35: score += 15; desc_parts.append("RSI OS")
-            else:
-                action = "WATCH SUP"
-                score += 5
+
+        # 2. BONOS DE ACCIÓN CRÍTICA (< 0.05%)
+        if abs_dist_pct <= THR_ACTION:
+            action = "ACTION"
             
-    return round(score), action, desc_parts
+            # --- LÓGICA DE RECHAZO (BOUNCE) ---
+            # Es la mas comun: El precio toca y vuelve
+            if (is_res and dist_p < 0) or (is_sup and dist_p > 0):
+                action = "BOUNCE"
+                
+                # BONUS POR FLOW (A favor de la tendencia)
+                if is_sup and trend_slope > 0: score += 15; desc_parts.append("Flow Alcista")
+                if is_res and trend_slope < 0: score += 15; desc_parts.append("Flow Bajista")
+                
+                # Bono por color de vela (CONFIRMACIÓN)
+                if is_res and is_red is True: 
+                    score += 20; desc_parts.append("Rechazo Rojo")
+                if is_sup and is_green is True: 
+                    score += 20; desc_parts.append("Rechazo Verde")
+                
+                # Bono por RSI
+                if is_res and rsi > 65: score += 15; desc_parts.append("RSI Sobrecompra")
+                if is_sup and rsi < 35: score += 15; desc_parts.append("RSI Sobreventa")
+
+            # --- LÓGICA DE RUPTURA (BREAKOUT) ---
+            elif (is_res and dist_p > 0) or (is_sup and dist_p < 0):
+                action = "BREAKOUT"
+                # Bono por color y volumen para ruptura
+                if is_res and is_green is True and vol_val > vol_ma: 
+                    score += 25; desc_parts.append("Ruptura Alcista")
+                if is_sup and is_red is True and vol_val > vol_ma: 
+                    score += 25; desc_parts.append("Ruptura Bajista")
+
+            # Bono general por volumen alto
+            if vol_val > vol_ma * 1.2:
+                score += 10; desc_parts.append("Fuerza Vol")
+
+    # Retorno definitivo (Fuera del IF para manejar el estado NEUTRAL)
+    return round(min(100, score)), action.replace("BOUNCE", "REBOTE").replace("BREAKOUT", "ROTURA").replace("WATCH", "VIGILAR"), desc_parts
+
+

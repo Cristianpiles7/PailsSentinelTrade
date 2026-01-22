@@ -246,6 +246,7 @@ class PSTRSIEquities:
             "score": score,
             "total_score": score,
             "score_breakdown": breakdown,
+            "can_entry": entry != 0,
             "rsi": round(rsi, 2),
             "vol_ratio": round(vol/vol_ma, 2) if vol_ma > 0 else 0,
             "timeframe": tf_label
@@ -257,3 +258,4 @@ class PSTRSIEquities:
             "metadata": metadata,
             "score": score
         }
+

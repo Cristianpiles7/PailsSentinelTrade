@@ -640,22 +640,33 @@ def get_chart_data(symbol):
                     s_res = asyncio.run(s.calculate_signal(mtf_data, mode_str, user_levels=user_levels_input))
                     s_score = s_res.get('score', 0)
                     s_meta = s_res.get('metadata', {})
+                    
                     raw_s_name = str(getattr(s, 'STRATEGY_NAME', type(s).__name__))
                     s_name = STRAT_TRANS.get(raw_s_name, raw_s_name)
+
                     
-                    if s_name == "None": s_name = "PST Strategy Hub"
+                    if not s_name or str(s_name) == "None" or str(s_name) == "" or s_name is None: 
+                        s_name = "PST Strategy Hub"
+
+
                     
                     if s_score > max_sub_score:
                         max_sub_score = s_score
                         best_s_name = s_name
                     
+                    # Entry Status logic
+                    can_entry = s_meta.get('can_entry', True)
+                    
                     status = "Neutral"
-                    if s_score >= 70: status = "¡ACCIÓN!"
-                    elif s_score >= 40: status = "Vigilar"
+                    if s_score >= 70: 
+                        status = "¡ACCIÓN!" if can_entry else "Filtros Bloquean"
+                    elif s_score >= 40: 
+                        status = "Vigilar"
                     
                     # Collecting Factors (Filtered per user request)
                     s_factors = []
                     for b_key, b_val in s_meta.get('score_breakdown', {}).items():
+
                          val_str = str(b_val)
                          # Show only if it adds/subtracts points or indicates a specific failure/block
                          if any(x in val_str for x in ["+", "-", "Bajo", "Fallo", "Block", "IGNORED", "Wrong"]):
@@ -710,12 +721,24 @@ def get_chart_data(symbol):
             strategy_analysis['manual_score'] = min(100, max(0, master_score))
             
             # Use Fallback if best_s_name is "None"
-            final_best_auto = best_s_name if (best_s_name and str(best_s_name) != "None") else "PST Strategy Hub"
+            best_s_name_str = str(best_s_name)
+            final_best_auto = best_s_name if (best_s_name and best_s_name_str != "None" and best_s_name_str != "") else "PST Strategy Hub"
             strategy_analysis['best_auto_strat'] = final_best_auto
-            strategy_analysis['active_strategy'] = final_best_auto if max_sub_score >= master_score else "Estrategia Maestra (Canales)"
             
-            # Legacy score fallback
-            strategy_analysis['score'] = strategy_analysis['auto_score']
+            # active_strategy fallback: PRIORIDAD AL MEJOR SCORE
+            if max_sub_score >= master_score:
+                strategy_analysis['active_strategy'] = final_best_auto
+                strategy_analysis['score'] = strategy_analysis['auto_score']
+            else:
+                strategy_analysis['active_strategy'] = "Estrategia Maestra (Canales)"
+                strategy_analysis['score'] = strategy_analysis['manual_score']
+
+
+            
+            
+            # Legacy score fallback (REMOVED: already set in priority block)
+            pass
+
             
             # Inject grouped list into return object
             strategy_analysis['grouped_strategies'] = grouped_strategies

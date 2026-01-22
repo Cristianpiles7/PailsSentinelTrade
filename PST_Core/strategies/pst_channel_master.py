@@ -26,9 +26,10 @@ class PSTChannelMaster:
         # Se espera que el 'user_levels' contenga una lista "special" o algo similar, pero 
         # mejor usamos el argumento extra que añadiremos al método
         config = user_levels.get('config', {}) if isinstance(user_levels, dict) else {}
-        # CAMBIO: Por defecto FALSE para que solo funcione con niveles manuales o activación explícita
+        # CAMBIO: FALSE por defecto. El usuario prefiere análisis manual.
         enable_tactical = config.get('enable_tactical', False)
         enable_macro = config.get('enable_macro', False)
+
 
         # 1. Calcular Canales (TÁCTICO y MACRO)
         # 2000 velas para Macro, 1200 para Táctico
@@ -76,7 +77,14 @@ class PSTChannelMaster:
         chan_upper = slope_h * last_idx + intercept_h
         chan_lower = slope_l * last_idx + intercept_l
         
+        # --- INDICADORES DE VELA Y VOLUMEN (Alcance Global para la función) ---
+        vol_val = df['tick_volume'].iloc[-1] if 'tick_volume' in df.columns else 0
+        vol_ma = df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df.columns else (vol_val or 1)
+        is_green_candle = close > df['open'].iloc[-1] if 'open' in df.columns else False
+        is_red_candle = close < df['open'].iloc[-1] if 'open' in df.columns else False
+
         # Track source of bounds
+
         source_upper = "AUTO"
         source_lower = "AUTO"
         
@@ -175,87 +183,43 @@ class PSTChannelMaster:
         signal_type = "None"
         breakdown = {}
 
-        # --- LÓGICA DE RUPTURA (BREAKOUT) ---
-        # STRICT: Base Score 50. Requires filters to reach 80.
-        vol_val = df['tick_volume'].iloc[-1] if 'tick_volume' in df else 0
-        vol_ma = df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df else (vol_val or 1)
-        
-        is_green_candle = close > df['open'].iloc[-1]
-        is_red_candle = close < df['open'].iloc[-1]
 
-        if close > chan_upper and prev_close <= chan_upper:
-            # Ruptura Alcista
-            if is_green_candle and vol_val > vol_ma: # Confirmación de vela y volumen
-                 score = 50 # Base
-                 breakdown["Type"] = "Breakout UP"
-                 
-                 # Modifiers
-                 if adx > 25: score += 15; breakdown["ADX"] = "High (+15)"
-                 if rsi > 55: score += 15; breakdown["RSI"] = "Bullish (+15)"
-                 
-                 if score >= 80:
-                     entry = 1
-                     signal_type = "BULL_BREAKOUT"
-            else:
-                 score = 20
-                 breakdown["Status"] = "Weak Breakout (No Vol/Color)"
+        # Tendencia del canal (pendiente media)
+        trend_slope = params['slope_m'] if params and 'slope_m' in params else 0
         
-        elif close < chan_lower and prev_close >= chan_lower:
-            # Ruptura Bajista
-            if is_red_candle and vol_val > vol_ma:
-                 score = 50 # Base
-                 breakdown["Type"] = "Breakout DOWN"
-                 
-                 # Modifiers
-                 if adx > 25: score += 15; breakdown["ADX"] = "High (+15)"
-                 if rsi < 45: score += 15; breakdown["RSI"] = "Bearish (+15)"
-                 
-                 if score >= 80:
-                     entry = -1
-                     signal_type = "BEAR_BREAKOUT"
-            else:
-                 score = 20
-                 breakdown["Status"] = "Weak Breakout (No Vol/Color)"
+        # --- LÓGICA UNIFICADA (Channel Master + Manual Levels) ---
+        # 1. Evaluar Canales Automáticos (usando el motor unificado)
+        score_res, act_res, desc_res = calculate_manual_score(
+            price=close, lvl_price=chan_upper, l_type='RESISTANCE', 
+            rsi=rsi, vol_val=vol_val, vol_ma=vol_ma, is_green=is_green_candle, is_red=is_red_candle,
+            trend_slope=trend_slope
+        )
+        
+        score_sup, act_sup, desc_sup = calculate_manual_score(
+            price=close, lvl_price=chan_lower, l_type='SUPPORT', 
+            rsi=rsi, vol_val=vol_val, vol_ma=vol_ma, is_green=is_green_candle, is_red=is_red_candle,
+            trend_slope=trend_slope
+        )
 
-        # --- LÓGICA DE REBOTE (REJECTION) ---
-        if entry == 0:
-            # Distancia a los bordes
-            dist_upper = (chan_upper - high) / atr if atr > 0 else 999
-            dist_lower = (low - chan_lower) / atr if atr > 0 else 999
-            
-            # Rebote en Techo (Venta)
-            if high >= chan_upper * 0.999: # Tocado zona alta
-                if is_red_candle and close < prev_close: # Confirmed Rejection
-                    score = 50 # Base
-                    breakdown["Type"] = "Techo Rechazado"
-                    
-                    if rsi > 65: score += 20; breakdown["RSI"] = "Overbought (+20)"
-                    elif rsi > 55: score += 10; breakdown["RSI"] = "High (+10)"
-                    
-                    if vol_val > vol_ma: score += 15; breakdown["Vol"] = "High (+15)"
-                    
-                    if score >= 80:
-                        entry = -1
-                        signal_type = "UPPER_REJECTION"
-                else:
-                    breakdown["Status"] = "Hovering Res (Wait Red)"
-                    
-            # Rebote en Suelo (Compra)
-            elif low <= chan_lower * 1.001: # Tocado zona baja
-                if is_green_candle and close > prev_close: # Confirmed Rejection
-                    score = 50 # Base
-                    breakdown["Type"] = "Suelo Rechazado"
-                    
-                    if rsi < 35: score += 20; breakdown["RSI"] = "Oversold (+20)"
-                    elif rsi < 45: score += 10; breakdown["RSI"] = "Low (+10)"
-                    
-                    if vol_val > vol_ma: score += 15; breakdown["Vol"] = "High (+15)"
-                    
-                    if score >= 80:
-                        entry = 1
-                        signal_type = "LOWER_REJECTION"
-                else:
-                    breakdown["Status"] = "Hovering Sup (Wait Green)"
+        # Determinar si el canal automático dispara señal
+        if score_res >= 80:
+            score = score_res
+            signal_type = f"UPPER {act_res}"
+            entry = -1
+            breakdown["Type"] = act_res
+            for d in desc_res: breakdown[d] = "OK"
+        elif score_sup >= 80:
+            score = score_sup
+            signal_type = f"LOWER {act_sup}"
+            entry = 1
+            breakdown["Type"] = act_sup
+            for d in desc_sup: breakdown[d] = "OK"
+        else:
+            # Si no hay señal clara, el score global es el máximo de ambos canales
+            score = max(score_res, score_sup)
+            best_act = act_res if score_res >= score_sup else act_sup
+            breakdown["Status"] = f"{best_act} (Score: {score})"
+
 
         # Helper to get points (Using Slice Context)
         def get_channel_points(params, df_slice):
@@ -327,22 +291,18 @@ class PSTChannelMaster:
             dist_pct = (lvl_price - close) / close * 100
             dist_val = close - lvl_price # + means Price > Level
             
-            # --- EVALUATE LOGIC (Progressive Scoring) ---
-            action_reco = "WAIT"
-            score_boost = 0
-            val_msg = []
-            strat_score = 0
-            
-            is_res = lvl['type'] == 'RESISTANCE'
-            is_sup = lvl['type'] == 'SUPPORT'
-            vol_val = df['tick_volume'].iloc[-1] if 'tick_volume' in df else 0
-            vol_ma = df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df else (vol_val or 1)
-            
-            is_green_candle = close > df['open'].iloc[-1] if 'open' in df.columns else False
-            is_red_candle = close < df['open'].iloc[-1] if 'open' in df.columns else False
+            # --- EVALUAR LOGIC (Progressive Scoring) ---
+            # Bonus extra si el precio está a favor del flujo de la EMA 21 real
+            current_val_msgs = []
+            ema_21 = df['ema_21'].iloc[-1] if 'ema_21' in df.columns else close
+            ema_bonus = 0
+            if lvl['type'] == 'SUPPORT' and close > ema_21: 
+                ema_bonus = 10; current_val_msgs.append("Encima EMA 21")
+            if lvl['type'] == 'RESISTANCE' and close < ema_21: 
+                ema_bonus = 10; current_val_msgs.append("Debajo EMA 21")
 
             # USE UNIFIED SCORING
-            strat_score, action_reco, val_msg = calculate_manual_score(
+            strat_score, action_reco, val_msg_base = calculate_manual_score(
                 price=close,
                 lvl_price=lvl_price,
                 l_type=lvl['type'],
@@ -350,8 +310,11 @@ class PSTChannelMaster:
                 vol_val=vol_val,
                 vol_ma=vol_ma,
                 is_green=is_green_candle,
-                is_red=is_red_candle
+                is_red=is_red_candle,
+                trend_slope=trend_slope
             )
+            strat_score += ema_bonus
+            combined_msg = val_msg_base + current_val_msgs
 
             metadata["all_levels_data"].append({
                 "type": lvl['type'],
@@ -361,7 +324,7 @@ class PSTChannelMaster:
                 "id": lvl['id'],
                 "action_reco": action_reco,
                 "strat_score": round(strat_score),
-                "validation": ", ".join(val_msg) if val_msg else "Standard"
+                "validation": ", ".join(combined_msg) if combined_msg else "Standard"
             })
             
             # (Reverted) Manual Score does not overwrite Global Score here.
@@ -406,12 +369,15 @@ class PSTChannelMaster:
              
         if manual_max_score > score:
             score = manual_max_score
-            if not signal_type or signal_type == "None":
+            if not signal_type or signal_type == "None" or "MANUAL" in signal_type:
                  # Find best action from manual levels
                  best_lvl = max(metadata["all_levels_data"], key=lambda x: x['strat_score'])
                  signal_type = f"MANUAL {best_lvl['action_reco']}"
-                 breakdown["Manual Level"] = f"{best_lvl['type']} at {best_lvl['price']}"
-                 breakdown["Action"] = best_lvl['action_reco']
+                 breakdown["Flow"] = "Alcista" if trend_slope > 0 else "Bajista"
+                 breakdown["RSI"] = round(rsi, 1)
+                 breakdown["Vol"] = f"{round(vol_val/vol_ma, 2)}x"
+                 breakdown["Nivel"] = f"{best_lvl['type']} @ {best_lvl['price']}"
+                 breakdown["Acción"] = best_lvl['action_reco']
         
         # Sort by distance to price (absolute value) for better readability
         metadata["all_levels_data"].sort(key=lambda x: abs(x['dist']))
