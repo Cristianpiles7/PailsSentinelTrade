@@ -79,7 +79,6 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         last_idx = int(df_copy.index[-1])
         
         # 5. Generar Puntos
-        # El canal empieza en el primer pivote usado
         start_idx = int(min(highs.index[0], lows.index[0]))
         upper_line = []
         lower_line = []
@@ -88,7 +87,6 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         for i in range(start_idx, last_idx + 1):
             if i in df_copy.index:
                 t_val = df_copy.at[i, 'time']
-                # Mantener el tipo original para coherencia en el HUD
                 upper_line.append({"time": t_val, "value": float(slope_h * i + upper_intercept)})
                 lower_line.append({"time": t_val, "value": float(slope_l * i + lower_intercept)})
 
@@ -96,33 +94,27 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         for i in range(1, projection + 1):
             idx_fut = last_idx + i
             t_fut = last_t_num + (time_delta * i)
-            
-            # Formatear salida consistente (Epoch Seconds)
-            # El dashboard ya sabe manejar floats como timestamps
             t_out = float(t_fut)
-                
             upper_line.append({"time": t_out, "value": float(slope_h * idx_fut + upper_intercept)})
             lower_line.append({"time": t_out, "value": float(slope_l * idx_fut + lower_intercept)})
 
         params = {
             "slope_h": slope_h, "intercept_h": upper_intercept,
             "slope_l": slope_l, "intercept_l": lower_intercept,
-            "slope_m": (slope_h + slope_l) / 2, # Pendiente media
-            "intercept_m": (upper_intercept + lower_intercept) / 2, # Intercepto medio
+            "slope_m": (slope_h + slope_l) / 2, 
+            "intercept_m": (upper_intercept + lower_intercept) / 2, 
             "last_idx": last_idx
         }
         return upper_line, lower_line, params
 
     except Exception as e:
         print(f"Error in calculate_channel_boundary: {e}")
-        import traceback
-        traceback.print_exc()
         return [], [], None
+
 def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None, trend_slope=0):
     """
-    Motor de puntuacion UNIFICADO. 
-    Asegura que la proximidad de puntos SIEMPRE de puntuacion base.
-    trend_slope: Pendiente del canal. Si > 0, tendencia alcista.
+    Motor de puntuacion ULTRA-LÓGICO y ESTRICTO.
+    Retorna: (total_score, action_name, factor_details_list)
     """
     if price <= 0: return 0, "NEUTRAL", []
     
@@ -130,65 +122,71 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
     dist_pct = (dist_p / price * 100)
     abs_dist_pct = abs(dist_pct)
     
-    # Thresholds consistentes
-    THR_NEUTRAL = 0.30  # Empezamos a vigilar desde 0.30%
-    THR_ACTION = 0.05   # Zona de accion critica
+    # Thresholds para visibilidad en HUD
+    THR_NEUTRAL = 2.50   
     
     score = 0
     action = "WAIT"
-    desc_parts = []
+    factors = [] # List of {"k": label, "v": value, "score": pts}
     
     is_res = l_type == 'RESISTANCE'
     is_sup = l_type == 'SUPPORT'
     
-    # 1. PUNTUACIÓN BASE POR PROXIMIDAD (Rampa de 0 a 50)
-    if abs_dist_pct <= THR_NEUTRAL:
-        # Rampa lineal de 10 a 50
-        # 0.30% -> 10 pts
-        # 0.05% -> 50 pts
-        progress = (THR_NEUTRAL - abs_dist_pct) / (THR_NEUTRAL - THR_ACTION)
-        score = 10 + (progress * 40)
-        score = max(10, min(50, score))
-        action = "WATCH"
-        desc_parts.append(f"Dist: {abs_dist_pct:.2f}%")
+    # --- DETERMINAR ESTADO ---
+    is_breakout = (is_res and dist_p > 0) or (is_sup and dist_p < 0)
+    is_approaching = not is_breakout
 
-        # 2. BONOS DE ACCIÓN CRÍTICA (< 0.05%)
-        if abs_dist_pct <= THR_ACTION:
-            action = "ACTION"
+    # 1. LÓGICA DE APROXIMACIÓN (REBOTE)
+    if is_approaching and abs_dist_pct <= THR_NEUTRAL:
+        action = "VIGILAR"
+        
+        # --- FILTRO MOMENTUM: Si nos acercamos a resistencia pero la vela es roja, NO es relevante ---
+        if is_res and is_red: return 0, "CAÍDA", [{"k": "Momentum", "v": "🛑 Opuesto (Vela Roja)", "score": 0}]
+        if is_sup and is_green: return 0, "REBOTE", [{"k": "Momentum", "v": "🛑 Opuesto (Vela Verde)", "score": 0}]
+
+        progress = (THR_NEUTRAL - abs_dist_pct) / THR_NEUTRAL
+        base_score = 10 + (progress * 50)
+        score += base_score
+        factors.append({"k": "Proximidad", "v": f"{abs_dist_pct:.2f}%", "score": round(base_score)})
+        
+        # RSI Context
+        rsi_ok = (is_res and rsi > 60) or (is_sup and rsi < 40)
+        if rsi_ok:
+            score += 20
+            factors.append({"k": "RSI Context", "v": f"OK ({rsi:.1f})", "score": 20})
+        else:
+            factors.append({"k": "RSI Context", "v": f"Neutral ({rsi:.1f})", "score": 0})
+
+    # 2. LÓGICA DE RUPTURA (BREAKOUT)
+    elif is_breakout and abs_dist_pct <= THR_NEUTRAL:
+        action = "ROTURA"
+        
+        # --- MOMENTUM KILL ABSOLUTO: Si la vela es del color contrario, el score es 0 ---
+        if (is_res and is_red): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Roja (Bajista)", "score": 0}]
+        if (is_sup and is_green): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Verde (Alcista)", "score": 0}]
+
+        score += 30 # Base
+        factors.append({"k": "Base Ruptura", "v": f"Confirmada ({abs_dist_pct:.2f}%)", "score": 30})
+        
+        # FILTROS ESTRICTOS
+        if vol_val > vol_ma:
+            score += 35
+            factors.append({"k": "Volumen", "v": "Confirmado (Vol > MA)", "score": 35})
+        else:
+            factors.append({"k": "Volumen", "v": "Bajo (No Confirmado)", "score": 0})
+        
+        rsi_bias_ok = (is_res and rsi > 50) or (is_sup and rsi < 50)
+        if rsi_bias_ok:
+            score += 15
+            factors.append({"k": "Impulso RSI", "v": f"A favor ({rsi:.1f})", "score": 15})
+        else:
+            factors.append({"k": "Impulso RSI", "v": f"Neutro ({rsi:.1f})", "score": 0})
             
-            # --- LÓGICA DE RECHAZO (BOUNCE) ---
-            # Es la mas comun: El precio toca y vuelve
-            if (is_res and dist_p < 0) or (is_sup and dist_p > 0):
-                action = "BOUNCE"
-                
-                # BONUS POR FLOW (A favor de la tendencia)
-                if is_sup and trend_slope > 0: score += 15; desc_parts.append("Flow Alcista")
-                if is_res and trend_slope < 0: score += 15; desc_parts.append("Flow Bajista")
-                
-                # Bono por color de vela (CONFIRMACIÓN)
-                if is_res and is_red is True: 
-                    score += 20; desc_parts.append("Rechazo Rojo")
-                if is_sup and is_green is True: 
-                    score += 20; desc_parts.append("Rechazo Verde")
-                
-                # Bono por RSI
-                if is_res and rsi > 65: score += 15; desc_parts.append("RSI Sobrecompra")
-                if is_sup and rsi < 35: score += 15; desc_parts.append("RSI Sobreventa")
+        momentum_ok = (is_res and is_green) or (is_sup and is_red)
+        if momentum_ok:
+            score += 15
+            factors.append({"k": "Vela", "v": "Fuerza Confirmada", "score": 15})
+        else:
+            factors.append({"k": "Vela", "v": "Indecisión", "score": 0})
 
-            # --- LÓGICA DE RUPTURA (BREAKOUT) ---
-            elif (is_res and dist_p > 0) or (is_sup and dist_p < 0):
-                action = "BREAKOUT"
-                # Bono por color y volumen para ruptura
-                if is_res and is_green is True and vol_val > vol_ma: 
-                    score += 25; desc_parts.append("Ruptura Alcista")
-                if is_sup and is_red is True and vol_val > vol_ma: 
-                    score += 25; desc_parts.append("Ruptura Bajista")
-
-            # Bono general por volumen alto
-            if vol_val > vol_ma * 1.2:
-                score += 10; desc_parts.append("Fuerza Vol")
-
-    # Retorno definitivo (Fuera del IF para manejar el estado NEUTRAL)
-    return round(min(100, score)), action.replace("BOUNCE", "REBOTE").replace("BREAKOUT", "ROTURA").replace("WATCH", "VIGILAR"), desc_parts
-
-
+    return round(min(100, score)), action, factors

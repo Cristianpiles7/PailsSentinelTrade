@@ -37,8 +37,8 @@ class SymbolTask:
         # SIMPLIFICACIÓN ESTRATÉGICA: Master + RSI Equities + EMA Flow
         self.strategies = {
             RegimeMode.TREND: [PSTChannelMaster(), PSTEMAFlow()],
-            RegimeMode.RANGE: [PSTChannelMaster(), PSTRSIEquities()],
-            RegimeMode.VOLATILE: [PSTChannelMaster(), PSTRSIEquities(), PSTEMAFlow()]
+            RegimeMode.RANGE: [PSTChannelMaster()], # PSTRSIEquities() Desactivada
+            RegimeMode.VOLATILE: [PSTChannelMaster(), PSTEMAFlow()] # PSTRSIEquities() Desactivada
         }
 
     async def run(self):
@@ -206,7 +206,7 @@ class SymbolTask:
                     best_metadata = {}
                     
                     # Definir estrategias "Élite" que siempre queremos monitorear
-                    elite_strats = [PSTChannelMaster(), PSTRSIEquities(), PSTEMAFlow()]
+                    elite_strats = [PSTChannelMaster(), PSTEMAFlow()] # PSTRSIEquities() Desactivada
                     
                     # Mapeo de nombres para consistencia
                     STRAT_TRANS = {

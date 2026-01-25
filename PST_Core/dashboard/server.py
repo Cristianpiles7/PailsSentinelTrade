@@ -53,17 +53,25 @@ def get_status():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 1. Obtener estados de régimen actuales por símbolo (solo activos)
+        # 1. Obtener estados de régimen actuales por símbolo (todos los activos, con o sin historial)
         cursor.execute('''
-            SELECT r1.symbol, r1.mode, r1.adx, r1.tech_data
-            FROM regime_history r1
-            INNER JOIN (
-                SELECT symbol, MAX(id) as max_id
-                FROM regime_history
-                GROUP BY symbol
-            ) r2 ON r1.id = r2.max_id
-            JOIN symbols_config s ON r1.symbol = s.symbol
+            SELECT 
+                s.symbol, 
+                COALESCE(r.mode, 'INITIALIZING') as mode, 
+                COALESCE(r.adx, 0) as adx, 
+                COALESCE(r.tech_data, '{}') as tech_data
+            FROM symbols_config s
+            LEFT JOIN (
+                SELECT r1.*
+                FROM regime_history r1
+                INNER JOIN (
+                    SELECT symbol, MAX(id) as max_id
+                    FROM regime_history
+                    GROUP BY symbol
+                ) r2 ON r1.id = r2.max_id
+            ) r ON s.symbol = r.symbol
             WHERE s.is_active = 1
+            ORDER BY s.type DESC, s.symbol ASC
         ''')
         regimes_raw = [dict(row) for row in cursor.fetchall()]
         
@@ -76,12 +84,8 @@ def get_status():
             # Usar Bid si Last es 0 (común en brokers de CFDs)
             r['price'] = tick.bid if tick and tick.bid > 0 else (tick.last if tick else 0.0)
             
-            # Detectar si el mercado está abierto
-            s_info = mt5.symbol_info(r['symbol'])
-            r['market_open'] = (s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL) if s_info else False
-            
             # CRITICAL FIX: Parsear tech_data si existe
-            if r.get('tech_data'):
+            if r.get('tech_data') and r['tech_data'] != '{}':
                 try:
                     import json
                     r['tech_data'] = json.loads(r['tech_data'])
@@ -89,78 +93,33 @@ def get_status():
                     r['tech_data'] = {}
             else:
                 r['tech_data'] = {}
-            
-            # --- ESTRATEGIA MANUAL SCORE INJECTION ---
-            r['manual_score'] = 0
-            r['manual_action'] = "NEUTRAL"
-            r['manual_desc'] = ""
-            r['manual_strat_name'] = "Estrategia Manual (Soporte/Resistencia)"
-            r['manual_strat_desc'] = "Analiza roturas y rebotes en niveles clave definidos manualmente. Valida las señales con lecturas de RSI y Volumen."
-            
-            try:
-                # 1. Fetch Active Manual Levels
-                cursor.execute("SELECT * FROM user_levels WHERE symbol = ? AND is_active = 1", (r['symbol'],))
-                levels = [dict(row) for row in cursor.fetchall()]
-                
-                if levels:
-                    best_score = 0
-                    best_action = "NEUTRAL"
-                    best_desc = ""
-                    
-                    # Extract Technical context for Manual Score
-                    rsi = r['tech_data'].get('mtf', {}).get('m5', {}).get('rsi', r.get('rsi', 50))
-                    vol_rel = r['tech_data'].get('mtf', {}).get('m5', {}).get('vol', 1.0)
-                    vol_val = vol_rel
-                    vol_ma = 1.0 # vol_rel is already compared vs 1.0 (mean)
-                    price = r['price']
 
-                    for lvl in levels:
-                        # 1. PRICE INTERPOLATION (Trendlines)
-                        lvl_price = lvl['price']
-                        if lvl.get('price2') and lvl.get('time1') and lvl.get('time2'):
-                            try:
-                                from dateutil import parser
-                                t1_dt = parser.parse(lvl['time1'])
-                                t2_dt = parser.parse(lvl['time2'])
-                                t1_ts = t1_dt.timestamp()
-                                t2_ts = t2_dt.timestamp()
-                                
-                                # SYNC WITH STRATEGY & MARKET TIME
-                                # Use the timestamp of the last TICK/QUOTE for this symbol.
-                                tick_info = mt5.symbol_info_tick(r['symbol'])
-                                cur_ts = float(tick_info.time if tick_info else datetime.now().timestamp())
-                                
-                                p1 = lvl['price']
-                                p2 = lvl['price2']
-                                
-                                if abs(t2_ts - t1_ts) > 0:
-                                    m = (p2 - p1) / (t2_ts - t1_ts)
-                                    lvl_price = p1 + m * (cur_ts - t1_ts)
-                            except: pass
-                        
-                        # USE UNIFIED SCORING
-                        strat_score, action, desc_parts = calculate_manual_score(
-                            price=price,
-                            lvl_price=lvl_price,
-                            l_type=lvl['type'],
-                            rsi=rsi,
-                            vol_val=vol_val,
-                            vol_ma=vol_ma
-                        )
-                        
-                        score = round(strat_score)
-                        
-                        if score > best_score:
-                            best_score = score
-                            best_action = action
-                            best_desc = ", ".join(desc_parts)
-                    
-                    r['manual_score'] = best_score
-                    r['manual_action'] = best_action
-                    r['manual_desc'] = best_desc
-                    
-            except Exception as e:
-                logger.error(f"Error calculating manual score for {r['symbol']}: {e}")
+            # Detección Dinámica de Mercado Abierto (Liveness Check)
+            # Sugerencia del usuario: Si el precio no se mueve, asumimos que está cerrado/inactivo.
+            s_info = mt5.symbol_info(r['symbol'])
+            is_open = (s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL) if s_info else False
+            
+            if is_open and tick:
+                from datetime import datetime
+                now = datetime.now()
+                seconds_since_tick = now.timestamp() - tick.time
+                
+                # Umbral: 120s para general (2 min), 300s para Cripto
+                limit = 300 if ("BTC" in r['symbol'] or "ETH" in r['symbol']) else 120
+                if seconds_since_tick > limit:
+                    is_open = False
+            
+            r['market_open'] = is_open
+            r['tech_data']['market_open'] = is_open
+            
+            # --- ESTRATEGIA SCORE INJECTION (From tech_data) ---
+            # El score principal ya viene calculado por el orquestador en tech_data['score']
+            # y la estrategia activa en tech_data['active_strategy'].
+            r['manual_score'] = r['tech_data'].get('score', 0)
+            r['manual_action'] = r['tech_data'].get('signal_direction', 'WAIT')
+            r['manual_desc'] = r['tech_data'].get('strat_status', {}).get('Status', 'N/A')
+            r['manual_strat_name'] = r['tech_data'].get('active_strategy', 'PST Strategy Hub')
+            r['manual_strat_desc'] = "Análisis unificado de estrategias élite (Canales, EMA Flow, RSI)."
 
             regimes.append(r)
         
@@ -427,6 +386,7 @@ def get_chart_data(symbol):
         def format_df(rates_in):
             if rates_in is None or len(rates_in) == 0: return None
             df_fmt = pd.DataFrame(rates_in)
+            df_fmt['time_raw'] = df_fmt['time'] # KEEP ORIGINAL BROKER SECONDS
             df_fmt['time'] = pd.to_datetime(df_fmt['time'], unit='s')
             df_fmt.set_index('time', inplace=True)
             return df_fmt
@@ -499,6 +459,8 @@ def get_chart_data(symbol):
         df_display = df.copy()
         try:
             df_display.reset_index(inplace=True)
+            # Add Numeric TS for frontend projection (Native Broker Seconds)
+            df_display['time_ts'] = df_display['time_raw']
             df_display['time'] = df_display['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
              logger.debug(f"DEBUG ERROR TIME CONV: {e}")
@@ -534,7 +496,7 @@ def get_chart_data(symbol):
             # Lista de estrategias por regime (Sync con orchestrator)
             # Enable ALL strategies for display (User Request: Show all even if 0)
             strat_instances = [
-                PSTRSIEquities(),
+                # PSTRSIEquities(),
                 PSTEMAFlow()
             ]
             
@@ -562,8 +524,11 @@ def get_chart_data(symbol):
             
             # Get Live Tick Time for Trendline Sync
             tick = mt5.symbol_info_tick(symbol)
-            cur_time_live = tick.time if tick else datetime.now().timestamp()
-            cur_price_live = tick.bid if tick else df['close'].iloc[-1]
+            
+            # Para el Dashboard, priorizamos consistencia visual con el gráfico
+            last_bar = df.iloc[-1]
+            cur_price_live = float(last_bar['close'])
+            cur_time_live = float(df['time_raw'].iloc[-1]) # Usar el timestamp real del broker
             
             conn_lvl.close()
 
@@ -578,9 +543,9 @@ def get_chart_data(symbol):
             
             # --- AUTO STRAT META INJECTION ---
             strategy_analysis['strat_meta'] = {
-                "name": "Channel Master + RSI EQ",
-                "desc": "Estrategia híbrida que combina canales de regresión dinámica con niveles y RSI Multi-Timeframe.",
-                "logic": "Análisis de tendencias en Canales de Regresión + RSI en M1/M5 para entradas precisas."
+                "name": "Channel Master + EMA Flow",
+                "desc": "Estrategia híbrida optimizada que combina el flujo de la tendencia (EMA 21/50) con niveles de soporte y resistencia dinámicos.",
+                "logic": "Detección de tendencia via EMA + Validación de niveles reales via Channel Master."
             }
             # INJECTION OF MTF RSI FOR HUD
             strategy_analysis['rsi_mtf'] = {
@@ -663,17 +628,27 @@ def get_chart_data(symbol):
                     elif s_score >= 40: 
                         status = "Vigilar"
                     
-                    # Collecting Factors (Filtered per user request)
+                    # Collecting Factors (Improved: Support Detailed structure if available)
                     s_factors = []
-                    for b_key, b_val in s_meta.get('score_breakdown', {}).items():
-
-                         val_str = str(b_val)
-                         # Show only if it adds/subtracts points or indicates a specific failure/block
-                         if any(x in val_str for x in ["+", "-", "Bajo", "Fallo", "Block", "IGNORED", "Wrong"]):
-                             trans_key = KEY_TRANS.get(b_key, b_key)
-                             s_factors.append({"k": trans_key, "v": val_str})
-                         elif "Asset" in b_key: # Mantener info de tipo de activo
-                             s_factors.append({"k": b_key, "v": val_str})
+                    s_detailed = s_meta.get('factors_detailed', [])
+                    
+                    if s_detailed:
+                        # Use new detailed path
+                        for f in s_detailed:
+                            trans_key = KEY_TRANS.get(f['k'], f['k'])
+                            pts = f.get('score', 0)
+                            pts_str = f" (+{pts})" if pts > 0 else (f" ({pts})" if pts < 0 else " (+0)")
+                            s_factors.append({"k": trans_key, "v": f"{f['v']}{pts_str}"})
+                    else:
+                        # Legacy fallback
+                        for b_key, b_val in s_meta.get('score_breakdown', {}).items():
+                             val_str = str(b_val)
+                             # Show only if it adds/subtracts points or indicates a specific failure/block
+                             if any(x in val_str for x in ["+", "-", "Bajo", "Fallo", "Block", "IGNORED", "Wrong"]):
+                                 trans_key = KEY_TRANS.get(b_key, b_key)
+                                 s_factors.append({"k": trans_key, "v": val_str})
+                             elif "Asset" in b_key: 
+                                 s_factors.append({"k": b_key, "v": val_str})
                     
                     grouped_strategies.append({
                         "name": s_name,
@@ -700,9 +675,18 @@ def get_chart_data(symbol):
                 m_status = "¡ACCIÓN!" if master_score >= 70 else ("Vigilar" if master_score >= 40 else "Neutral")
                 m_breakdown = strategy_analysis.get('score_breakdown', {})
                 m_factors = []
-                for b_key, b_val in m_breakdown.items():
-                    trans_key = KEY_TRANS.get(b_key, b_key)
-                    m_factors.append({"k": trans_key, "v": str(b_val)})
+                detailed = strategy_analysis.get('factors_detailed', [])
+                if detailed:
+                    for f in detailed:
+                        trans_key = KEY_TRANS.get(f['k'], f['k'])
+                        pts = f.get('score', 0)
+                        pts_str = f" (+{pts})" if pts > 0 else (f" ({pts})" if pts < 0 else " (+0)")
+                        m_factors.append({"k": trans_key, "v": f"{f['v']}{pts_str}"})
+                else:
+                    # Fallback legacy loop
+                    for b_key, b_val in m_breakdown.items():
+                        trans_key = KEY_TRANS.get(b_key, b_key)
+                        m_factors.append({"k": trans_key, "v": str(b_val)})
                 
                 # Add to grouped
                 grouped_strategies.append({
@@ -1277,7 +1261,7 @@ def save_user_level():
         
         # Verificar si las columnas existen y añadirlas si no (migración en caliente para SQLite sync)
         try:
-            cursor.execute("SELECT user_levels.time1 FROM user_levels LIMIT 1")
+            cursor.execute("SELECT user_levels.time1_ts FROM user_levels LIMIT 1")
         except:
             try: cursor.execute("ALTER TABLE user_levels ADD COLUMN price2 REAL")
             except: pass
@@ -1285,24 +1269,30 @@ def save_user_level():
             except: pass
             try: cursor.execute("ALTER TABLE user_levels ADD COLUMN time1 TEXT")
             except: pass
+            try: cursor.execute("ALTER TABLE user_levels ADD COLUMN time1_ts REAL")
+            except: pass
+            try: cursor.execute("ALTER TABLE user_levels ADD COLUMN time2_ts REAL")
+            except: pass
             conn.commit()
 
         # Check if ID exists for Update
         level_id = data.get('id')
+        time1_ts = data.get('time1_ts')
+        time2_ts = data.get('time2_ts')
         
         if level_id:
             cursor.execute("""
                 UPDATE user_levels 
-                SET symbol=?, price=?, type=?, label=?, price2=?, time2=?, time1=?
+                SET symbol=?, price=?, type=?, label=?, price2=?, time2=?, time1=?, time1_ts=?, time2_ts=?
                 WHERE id=?
-            """, (symbol, float(price), ltype, label, price2, time2, time1, level_id))
+            """, (symbol, float(price), ltype, label, price2, time2, time1, time1_ts, time2_ts, level_id))
             new_id = level_id
             logger.debug(f"UPDATED Level ID={level_id}")
         else:
             cursor.execute("""
-                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (symbol, float(price), ltype, label, price2, time2, time1))
+                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1, time1_ts, time2_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (symbol, float(price), ltype, label, price2, time2, time1, time1_ts, time2_ts))
             new_id = cursor.lastrowid
             logger.debug(f"CREATED Level ID={new_id}")
         conn.commit()

@@ -106,6 +106,8 @@ class PSTDatabase:
                 await db.execute("ALTER TABLE user_levels ADD COLUMN price2 REAL")
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time2 TEXT")
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time1 TEXT")
+                await db.execute("ALTER TABLE user_levels ADD COLUMN time1_ts REAL")
+                await db.execute("ALTER TABLE user_levels ADD COLUMN time2_ts REAL")
             except: pass # Ya existen
             
             # Tabla de Configuración de Canales (Nuevo)
@@ -139,13 +141,17 @@ class PSTDatabase:
             logger.error(f"❌ Error get_user_levels: {e}")
             return []
 
-    async def save_user_level(self, symbol, price, ltype, label=None, price2=None, time2=None, time1=None):
+    async def save_user_level(self, symbol, price, ltype, label=None, price2=None, time2=None, time1=None, time1_ts=None, time2_ts=None):
         """Guarda o actualiza un nivel manual (Line u Horizontal)."""
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            if label and label.startswith('FIXED_'):
+                 # Check if update instead of insert
+                 await db.execute("DELETE FROM user_levels WHERE symbol = ? AND label = ?", (symbol, label))
+
             await db.execute("""
-                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (symbol, float(price), ltype, label, price2, time2, time1))
+                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1, time1_ts, time2_ts) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (symbol, float(price), ltype, label, price2, time2, time1, time1_ts, time2_ts))
             await db.commit()
 
     async def delete_user_level(self, level_id):

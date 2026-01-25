@@ -826,15 +826,22 @@
 
                     let factors = analysis.factors || {}; 
                     
+                    // --- ENRIQUECIMIENTO TÉCNICO UNIFICADO ---
+                    // Siempre intentamos sacar datos técnicos si la estrategia Maestra (o cualquier otra) los provee en score_breakdown
+                    const hasTechBreakdown = analysis.score_breakdown && (analysis.score_breakdown.RSI || analysis.score_breakdown.Vol || analysis.score_breakdown.Flow);
+                    if (hasTechBreakdown) {
+                        factors["RSI"] = analysis.score_breakdown.RSI || analysis.rsi_mtf?.m5 || "N/A";
+                        factors["Volumen"] = analysis.score_breakdown.Vol || "N/A";
+                        factors["Flow"] = analysis.score_breakdown.Flow || "N/A";
+                    }
+
                     if (isManualSource) {
                         // scoreToDisplay already set to manualScore
                         stratName = "Estrategia Maestra (Canales)"; 
                         
-                        // Strict search for Manual Levels only
-                        // Sort by proximity
+                        // Search for the level we are inspecting
                         const manualLevels = levels_data.filter(l => l.source === 'MANUAL');
                         if (manualLevels.length > 0) {
-                            // Sort logic: Prioritize active ones (score>0), then distance
                             manualLevels.sort((a,b) => {
                                 if ((a.strat_score||0) !== (b.strat_score||0)) return (b.strat_score||0) - (a.strat_score||0);
                                 return Math.abs(a.dist||99) - Math.abs(b.dist||99);
@@ -842,31 +849,29 @@
                             
                             const bestManual = manualLevels[0];
                             
-                            // Integrar Factores Técnicos de la estrategia
-                            factors = {
-                                "RSI": analysis.rsi_mtf?.m5 || "N/A",
-                                "Volumen": analysis.score_breakdown?.Vol || "N/A",
-                                "Flow": analysis.score_breakdown?.Flow || "N/A",
-                                "Nivel Clave": analysis.score_breakdown?.Nivel || `${bestManual.type} @ ${bestManual.price}`,
-                                "Acción": analysis.score_breakdown?.Acción || bestManual.action_reco
-                            };
+                            // Añadir detalles específicos del nivel al objeto factors
+                            factors["Nivel Clave"] = analysis.score_breakdown?.Nivel || `${bestManual.type} @ ${bestManual.price}`;
+                            factors["Acción"] = analysis.score_breakdown?.Acción || bestManual.action_reco;
                             
                             if (bestManual.validation && bestManual.validation !== "Standard") {
                                 factors["Validación"] = bestManual.validation;
                             }
                             
-                            // SYNC: Usar la puntuación en vivo del nivel para el círculo y el HUD del modal
                             scoreToDisplay = bestManual.strat_score || 0;
                         } else {
                             factors = { "Estado": "Sin niveles manuales activos" };
                         }
                     } else {
                         // Auto Strategy Logic
-                        // Use active strategy from latest chart response or fallback to status
                         if (tech.active_strategy && tech.active_strategy !== 'None') stratName = tech.active_strategy;
                         else if (asset.tech_data && asset.tech_data.active_strategy) stratName = asset.tech_data.active_strategy;
                         
-                        // If factors empty, try to derive basic info
+                        // Si es la Maestra la activa, asegurar que mostramos sus factores principales en el resumen
+                        if (stratName.includes("Maestra") || stratName.includes("Canales")) {
+                             if (analysis.score_breakdown?.Acción) factors["Acción"] = analysis.score_breakdown.Acción;
+                             if (analysis.score_breakdown?.Nivel) factors["Nivel Clave"] = analysis.score_breakdown.Nivel;
+                        }
+
                         if (Object.keys(factors).length === 0) {
                              if (analysis.score > 0) factors["Nota"] = "Análisis completo en logs";
                              else factors["Estado"] = "Sin señal clara";
@@ -1030,7 +1035,7 @@
                                     // STRICT FILTERING: 
                                     // - Manual Modal: Show ONLY Maestra
                                     // - Auto Modal: Show ONLY everything ELSE (EMA, RSI, etc.)
-                                    const shouldShow = isManualSource ? isMaestra : !isMaestra;
+                                    const shouldShow = isManualSource ? isMaestra : true;
                                     
                                     if (shouldShow) {
                                         // Use score > 0 logic for styling, but show key strats even if 0
@@ -1140,6 +1145,28 @@
                 console.error("Error resetting data:", e);
                 alert("Error al resetear datos");
             }
+        }
+
+        // --- HELPERS GLOBALES ---
+        function getPricePrecision(symbol) {
+            if (!symbol) return 2;
+            
+            // Lista explícita de Criptos para evitar confusión con Forex
+            const isCrypto = /BTC|ETH|SOL|XRP|LNK|ADA|DOT|LTC|XLM|UNI/.test(symbol);
+            const isCommodityOrIndex = /XAU|XAG|GOLD|SILVER|US500|EU50/.test(symbol);
+            
+            // Si es Cripto, Oro o Índice -> 2 decimales
+            if (isCrypto || isCommodityOrIndex) return 2;
+
+            // Si es un par de 6 letras (Forex) -> 5 decimales
+            const isForex = /^[A-Z]{6}(\.?[a-z]*)?$/.test(symbol) || (symbol.includes('EUR') || symbol.includes('USD') || symbol.includes('GBP') || symbol.includes('JPY'));
+            
+            return isForex ? 5 : 2;
+        }
+
+        function formatPrice(price, symbol) {
+            if (price === undefined || price === null || price <= 0) return '---';
+            return price.toFixed(getPricePrecision(symbol));
         }
 
         function updateModeUI() {
@@ -1350,7 +1377,7 @@
                             ${currentView === 'PRICE' ? `
                                 <!-- PRICE SECTION -->
                                 <div class="price" style="height: 40px; display: flex; align-items: center; justify-content: center; font-size: 1.8em; margin-bottom: 5px;">
-                                    ${r.price > 0 ? r.price.toFixed(2) : '---'}
+                                    ${formatPrice(r.price, r.symbol)}
                                 </div>
                                 
                                 <!-- MULTI-TIMEFRAME METRICS GRID (New Layout) -->
@@ -1393,47 +1420,34 @@
                                     `;
                                 })()}
 
-                                <!-- STRATEGY SCORE (MAIN VIEW) -->
-                                <!-- STRATEGY SCORE (MAIN VIEW) -->
-                                <!-- STRATEGY SCORE (MAIN VIEW) -->
+                                <!-- UNIFIED STRATEGY SCORE -->
                                 <div style="margin-bottom: 10px;">
                                     <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 3px; color: #94a3b8; align-items: center;">
                                         <div style="display: flex; align-items: center; gap: 5px;">
-                                            <span>Strategy Score</span>
+                                            <span style="font-weight: bold; color: #fff;">${r.manual_strat_name || 'Strategy Score'}</span>
                                             <div class="tooltip" onclick="event.stopPropagation()">
                                                 <span style="opacity: 0.7; font-size: 12px;">ℹ️</span>
                                                 <div class="tooltiptext">
-                                                    <div class="tooltip-header">${r.manual_strat_name || 'Estrategia Desconocida'}</div>
-                                                    <div style="margin-bottom: 8px; font-size: 10px; color: #cbd5e1;">${r.manual_strat_desc || 'Sin descripción disponible.'}</div>
+                                                    <div class="tooltip-header">${r.manual_strat_name || 'Estrategia'}</div>
+                                                    <div style="margin-bottom: 8px; font-size: 10px; color: #cbd5e1;">${r.manual_strat_desc || 'Analizando mercado...'}</div>
                                                     
                                                     <div class="tooltip-header">Diagnóstico</div>
-                                                    <div class="tooltip-row"><span>Razón:</span> <span style="color: #cbd5e1; text-align: right;">${r.manual_desc || 'N/A'}</span></div>
-                                                    <div class="tooltip-row"><span>Acción:</span> <span style="font-weight: bold; color: ${r.manual_action && r.manual_action.includes('BUY')?'#4ade80':'#f87171'}">${r.manual_action || 'WAIT'}</span></div>
+                                                    <div class="tooltip-row"><span>Estado:</span> <span style="color: #cbd5e1; text-align: right;">${r.manual_desc || 'N/A'}</span></div>
+                                                    <div class="tooltip-row"><span>Acción:</span> <span style="font-weight: bold; color: ${r.manual_action && (r.manual_action.includes('BUY') || r.manual_action.includes('UPPER'))?'#4ade80':'#f87171'}">${r.manual_action || 'WAIT'}</span></div>
                                                     <div class="tooltip-row"><span>Score:</span> <span style="font-weight: bold;">${r.manual_score || 0}/100</span></div>
                                                 </div>
                                             </div>
                                         </div>
 
-                                        <!-- INJECTED COMPACT CONTROLS -->
-                                        <button onclick="showStrategyInspector('${r.symbol}', 'MANUAL')" style="padding: 2px 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #cbd5e1; border-radius: 4px; font-size: 9px; cursor: pointer; margin: 0 4px;">📏 ANALIZAR</button>
+                                        <button onclick="showStrategyInspector('${r.symbol}', 'AUTO')" style="padding: 2px 6px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; border-radius: 4px; font-size: 9px; cursor: pointer; font-weight: bold;">📏 ANALIZAR</button>
                                         
-                                        ${r.manual_action && r.manual_action !== 'NEUTRAL' ? `
-                                            <span style="font-size: 9px; font-weight: bold; color: ${r.manual_action.includes('BUY') ? '#4ade80' : '#f87171'}; border: 1px solid ${r.manual_action.includes('BUY') ? 'rgba(74, 222, 128, 0.3)' : 'rgba(248, 113, 113, 0.3)'}; padding: 1px 4px; border-radius: 4px; margin-right: 4px;">
-                                                ${r.manual_action}
-                                            </span>
-                                        ` : ''}
-
-                                        <span style="color: ${r.manual_score >= 70 ? '#22c55e' : r.manual_score >= 50 ? '#eab308' : '#64748b'}">${r.manual_score || 0}/100</span>
+                                        <span style="color: ${r.manual_score >= 70 ? '#22c55e' : r.manual_score >= 40 ? '#eab308' : '#64748b'}; font-weight: bold;">${r.manual_score || 0}/100</span>
                                     </div>
-                                    <div style="height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden; position: relative;">
-                                        <div style="width: ${r.manual_score || 0}%; background: ${r.manual_score >= 70 ? '#22c55e' : '#eab308'}; height: 100%;"></div>
+                                    <div style="height: 8px; background: rgba(0,0,0,0.3); border-radius: 4px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.05);">
+                                        <div style="width: ${r.manual_score || 0}%; background: ${r.manual_score >= 70 ? 'linear-gradient(90deg, #22c55e, #4ade80)' : (r.manual_score >= 40 ? 'linear-gradient(90deg, #eab308, #fbbf24)' : 'linear-gradient(90deg, #ef4444, #f87171)')}; height: 100%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);"></div>
                                     </div>
                                 </div>
 
-                                <!-- AUTO / LEGACY ANALYSIS (BUTTON) -->
-                                <div style="margin-bottom: 10px;">
-                                    ${strat_html}
-                                </div>
 
                                 <!-- FOOTER & ACTIONS (Spacer to push clear to bottom) -->
                                 <div style="margin-top: auto;">
@@ -1953,7 +1967,9 @@
                                     symbol: currentSymbol, price: p1Price, price2: p2Price,
                                     type: window.drawState.type, label: "Manual Trendline (Edited)",
                                     time1: time1Str,
-                                    time2: time2Str
+                                    time2: time2Str,
+                                    time1_ts: p1Time,
+                                    time2_ts: p2Time
                                 };
 
                                 console.log("📤 AUTO-SAVING EDITED POINT:", payload);
@@ -1992,7 +2008,8 @@
                                 const payload = {
                                     symbol: currentSymbol, price: p1.price, price2: price,
                                     type: window.drawState.type, label: "Manual Trendline",
-                                    time1: t1Str, time2: t2Str
+                                    time1: t1Str, time2: t2Str,
+                                    time1_ts: p1.time, time2_ts: time
                                 };
                                 if (window.editingLevelId) payload.id = window.editingLevelId;
 
@@ -2061,35 +2078,35 @@
                 currentTF = tf;
                 
                 const formattedData = result.data.map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000),
+                    time: d.time_ts,
                     open: d.open, high: d.high, low: d.low, close: d.close
                 }));
 
                 const emaData = result.data.filter(d => d.ema_21 !== null).map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.ema_21
+                    time: d.time_ts, value: d.ema_21
                 }));
                 
                 const ema50Data = result.data.filter(d => d.ema_50 !== null).map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.ema_50
+                    time: d.time_ts, value: d.ema_50
                 }));
                 
                 // Formatear datos de canales
                 const macroUpper = (result.channel_macro_upper || []).map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                    time: d.time_ts, value: d.value
                 }));
                 const macroLower = (result.channel_macro_lower || []).map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                    time: d.time_ts, value: d.value
                 }));
                 const localUpper = (result.channel_local_upper || []).map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                    time: d.time_ts, value: d.value
                 }));
                 const localLower = (result.channel_local_lower || []).map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000), value: d.value
+                    time: d.time_ts, value: d.value
                 }));
 
                 // Save for Editing & Time Projection
                 const baseData = result.data.map(d => ({
-                    time: Math.floor(new Date(d.time).getTime() / 1000),
+                    time: d.time_ts,
                     open: d.open, high: d.high, low: d.low, close: d.close
                 }));
 
@@ -2102,7 +2119,8 @@
                 let paddedData = [...baseData];
                 for (let i = 1; i <= window.futurePadding; i++) {
                     paddedData.push({
-                        time: lastRealBar.time + (i * tfSec)
+                        time: lastRealBar.time + (i * tfSec),
+                        time_ts: lastRealBar.time + (i * tfSec) // Ensure future bars also have TS
                     });
                 }
                 
@@ -2200,7 +2218,7 @@
                                     
                                     <div style="display: flex; align-items: center; gap: 8px;">
                                         <span style="color: ${color}; font-weight: bold; font-size: 11px; white-space: nowrap;">${icon} ${l.source === 'MANUAL' ? 'MAN' : l.source}</span>
-                                        <span style="color: #cbd5e1; font-family: monospace; font-size: 11px; font-weight: bold;">${l.price.toFixed(2)}</span>
+                                        <span style="color: #cbd5e1; font-family: monospace; font-size: 11px; font-weight: bold;">${formatPrice(l.price, currentSymbol)}</span>
                                         <span style="font-size: 9px; color: ${color}; opacity: 0.8; font-family: monospace;">(${l.dist >= 0 ? '+' : ''}${l.dist.toFixed(2)}%)</span>
                                     </div>
 
@@ -2324,8 +2342,9 @@
                                     // If strict timestamp, might need adjustment.
                                     // But Lightweight Charts needs UNIX timestamp (seconds).
                                     // We'll trust "new Date()" for now as previous code did.
-                                    let t1 = Math.floor(new Date(lvl.time1).getTime() / 1000);
-                                    let t2 = Math.floor(new Date(lvl.time2).getTime() / 1000);
+                                    // Prefer numeric timestamps to avoid TZ issues
+                                    let t1 = lvl.time1_ts || Math.floor(new Date(lvl.time1).getTime() / 1000);
+                                    let t2 = lvl.time2_ts || Math.floor(new Date(lvl.time2).getTime() / 1000);
                                     
                                     // Safety check if t1 == t2
                                     if (t1 === t2) t2 += 60; // Just to draw something
@@ -2432,7 +2451,8 @@
                                     const d = window.editParams.selected._levelData;
                                     fetch('/api/levels', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({
                                         id: d.id, symbol: d.symbol, price: d.p1, price2: d.p2, type: d.type, label: d.label,
-                                        time1: new Date(d.t1*1000).toISOString(), time2: new Date(d.t2*1000).toISOString()
+                                        time1: new Date(d.t1*1000).toISOString(), time2: new Date(d.t2*1000).toISOString(),
+                                        time1_ts: d.t1, time2_ts: d.t2
                                     })});
                                     window.editParams.draggingPoint = null;
                                     chart.applyOptions({ handleScroll: true, handleScale: true });
@@ -2670,12 +2690,14 @@
             
             if (!foundSeries) {
                 // Fallback to Metadata
-                if (level.price2 && level.time1) {
-                    p1Price = level.price; p1Time = parseTime(level.time1);
-                    p2Price = level.price2; p2Time = parseTime(level.time2);
+                if (level.price2 && (level.time1_ts || level.time1)) {
+                    p1Price = level.price; p1Time = level.time1_ts || Math.floor(new Date(level.time1).getTime() / 1000);
+                    p2Price = level.price2; p2Time = level.time2_ts || Math.floor(new Date(level.time2).getTime() / 1000);
                 } else {
-                    p1Price = level.price; p1Time = parseTime(window.lastStatusData.data[window.lastStatusData.data.length-20].time);
-                    p2Price = level.price; p2Time = parseTime(window.lastStatusData.data[window.lastStatusData.data.length-1].time);
+                    p1Price = level.price; 
+                    p1Time = window.lastStatusData.data[Math.max(0, window.lastStatusData.data.length - 20)].time_ts;
+                    p2Price = level.price; 
+                    p2Time = window.lastStatusData.data[window.lastStatusData.data.length - 1].time_ts;
                 }
             }
 

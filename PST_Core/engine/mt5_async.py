@@ -37,6 +37,7 @@ async def fetch_rates_async(symbol: str, timeframe: int, count: int) -> Optional
     if rates is None or len(rates) == 0:
         return None
     df = pd.DataFrame(rates)
+    df['time_raw'] = df['time']
     df['time'] = pd.to_datetime(df['time'], unit='s')
     df.set_index('time', inplace=True)
     return df
