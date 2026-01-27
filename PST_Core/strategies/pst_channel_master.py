@@ -129,6 +129,7 @@ class PSTChannelMaster:
                 chan_lower = min(sup_candidates, key=lambda x: abs(x - close))
                 source_lower = "MANUAL"
         
+        adx = ta.adx(df['high'], df['low'], df['close'], length=14)['ADX_14'].iloc[-1]
         rsi = ta.rsi(df['close'], length=14).iloc[-1]
         atr = ta.atr(df['high'], df['low'], df['close'], length=14).iloc[-1]
         trend_slope = params['slope_m'] if params and 'slope_m' in params else 0
@@ -136,13 +137,13 @@ class PSTChannelMaster:
         score_res, act_res, desc_res = calculate_manual_score(
             price=close, lvl_price=chan_upper, l_type='RESISTANCE', 
             rsi=rsi, vol_val=vol_val, vol_ma=vol_ma, is_green=is_green_candle, is_red=is_red_candle,
-            trend_slope=trend_slope
+            trend_slope=trend_slope, adx=adx
         )
         
         score_sup, act_sup, desc_sup = calculate_manual_score(
             price=close, lvl_price=chan_lower, l_type='SUPPORT', 
             rsi=rsi, vol_val=vol_val, vol_ma=vol_ma, is_green=is_green_candle, is_red=is_red_candle,
-            trend_slope=trend_slope
+            trend_slope=trend_slope, adx=adx
         )
 
         score = 0
@@ -223,7 +224,7 @@ class PSTChannelMaster:
             strat_score, action_reco, val_msg_base = calculate_manual_score(
                 price=close, lvl_price=lvl_price, l_type=lvl['type'],
                 rsi=rsi, vol_val=vol_val, vol_ma=vol_ma, is_green=is_green_candle, is_red=is_red_candle,
-                trend_slope=trend_slope
+                trend_slope=trend_slope, adx=adx
             )
             
             s_score = round(strat_score)

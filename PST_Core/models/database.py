@@ -290,9 +290,14 @@ class PSTDatabase:
                 await db.execute("DELETE FROM signal_logs")
                 await db.execute("DELETE FROM regime_history")
                 await db.execute("DELETE FROM trade_context")
+                await db.execute("DELETE FROM user_levels")      # NUEVO: Limpiar dibujos manuales
+                await db.execute("DELETE FROM channel_config")   # NUEVO: Limpiar configuración de canales
                 # Reajustar autoincrementales
-                await db.execute("DELETE FROM sqlite_sequence WHERE name IN ('trades', 'signal_logs', 'regime_history', 'trade_context')")
+                await db.execute("DELETE FROM sqlite_sequence WHERE name IN ('trades', 'signal_logs', 'regime_history', 'trade_context', 'user_levels')")
                 await db.commit()
+                
+                # NUEVO: Comprimir base de datos para liberar espacio físico
+                await db.execute("VACUUM")
             logger.info("♻️ Base de Datos reseteada (Logs limpiados)")
             return True
         except Exception as e:

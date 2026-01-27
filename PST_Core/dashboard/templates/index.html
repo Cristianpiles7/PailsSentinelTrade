@@ -32,12 +32,12 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 20px;
+            padding: 8px 15px;
             background: var(--card-bg);
             backdrop-filter: blur(10px);
             border-radius: 12px;
             border: 1px solid rgba(255,255,255,0.1);
-            margin-bottom: 20px;
+            margin-bottom: 15px;
         }
 
         .title-group h1 {
@@ -51,19 +51,35 @@
 
         .dashboard-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 20px;
-            padding: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            padding: 10px;
             margin-bottom: 80px; 
+        }
+
+        @media (max-width: 480px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            body {
+                padding: 10px;
+            }
         }
 
         /* Grid Layout */
         #symbols-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 50px; /* Increased to 50px to fix overlap */
-            padding-bottom: 60px;
-            /* align-items: stretch; (Default) ensures equal height cards in row */
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px; 
+            padding-bottom: 80px;
+        }
+
+        @media (max-width: 480px) {
+            #symbols-grid {
+                grid-template-columns: 1fr;
+                gap: 25px;
+                padding: 10px;
+            }
         }
 
         .grid {
@@ -329,22 +345,119 @@
         @media (max-width: 768px) {
             .header {
                 flex-direction: column;
-                align-items: flex-start;
-                gap: 20px;
+                align-items: center;
+                gap: 10px;
+                text-align: center;
             }
             #account-status {
-                flex-wrap: wrap;
-                gap: 15px;
-                text-align: left !important;
-                justify-content: flex-start;
+                justify-content: center;
             }
             .modal-content {
-                width: 95%;
+                width: 95vw;
                 padding: 15px;
-                height: 80vh;
+                height: 90vh;
+                margin: 5vh auto;
             }
             #chart-container {
-                height: 350px;
+                height: 300px;
+            }
+            .price {
+                font-size: 24px;
+            }
+            /* Table responsiveness */
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                margin-bottom: 10px;
+            }
+            table {
+                min-width: 500px;
+            }
+            .mtf-wrapper {
+                justify-content: center !important;
+                gap: 8px !important;
+                padding: 4px !important;
+            }
+            .mtf-block {
+                min-width: 42% !important;
+                border: 1px solid rgba(255,255,255,0.05);
+                padding: 2px !important;
+                border-radius: 6px;
+            }
+            /* Header cleanup */
+            #account-status {
+                gap: 10px !important;
+                width: 100%;
+                justify-content: center;
+            }
+            #account-status > div {
+                gap: 8px !important;
+                padding: 5px !important;
+                width: 100%;
+                justify-content: space-around;
+            }
+            .stats-item {
+                flex: 1;
+                min-width: 80px;
+            }
+            /* Inspector Premium Redesign */
+            .inspector-header-container {
+                flex-direction: column !important;
+                gap: 20px !important;
+                background: linear-gradient(180deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0) 100%);
+                padding: 15px;
+                border-radius: 16px;
+                border: 1px solid rgba(255,255,255,0.05);
+            }
+            .score-circle-wrapper {
+                width: 75px !important;
+                height: 75px !important;
+                filter: drop-shadow(0 0 15px rgba(59, 130, 246, 0.3));
+            }
+            .premium-card {
+                background: rgba(255, 255, 255, 0.03);
+                backdrop-filter: blur(8px);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                padding: 8px 12px;
+                border-radius: 12px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                min-width: 85px;
+                flex: 1;
+                transition: transform 0.2s;
+            }
+            .premium-card:hover {
+                background: rgba(255, 255, 255, 0.06);
+                transform: translateY(-2px);
+            }
+            .insight-row {
+                background: rgba(255,255,255,0.02);
+                border-radius: 10px;
+                margin-bottom: 6px;
+                padding: 10px 14px;
+                border-left: 3px solid #3b82f6;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .insight-label {
+                font-size: 11px;
+                color: #94a3b8;
+                font-weight: 600;
+            }
+            .insight-value {
+                font-size: 12px;
+                font-weight: 700;
+                font-family: 'Roboto Mono', monospace;
+            }
+            #inspector-title {
+                font-size: 18px !important;
+                background: linear-gradient(90deg, #fff 0%, #94a3b8 100%);
+                -webkit-background-clip: text;
+                background-clip: text;
+                -webkit-text-fill-color: transparent;
+                line-height: 1.3;
             }
         }
         /* Botones de Trading */
@@ -519,24 +632,26 @@
             </div>
         </div>
 
-        <div style="display: flex; align-items: center; gap: 20px;">
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;">
             <!-- Stats Financieras -->
-            <div style="display: flex; gap: 20px;">
+            <div class="stats-container" style="display: flex; gap: 20px;">
                 <div class="stats-item">
                     <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">Balance</div>
-                    <div id="balance-val" style="font-size: 16px; font-weight: 600; color: #fff;">$0.00</div>
+                    <div id="balance-val" style="font-size: 14px; font-weight: 600; color: #fff;">$0.00</div>
                 </div>
                 <div class="stats-item">
                     <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">Equity</div>
-                    <div id="equity-val" style="font-size: 16px; font-weight: 600; color: #fff;">$0.00</div>
+                    <div id="equity-val" style="font-size: 14px; font-weight: 600; color: #fff;">$0.00</div>
                 </div>
                 <div class="stats-item">
                     <div style="font-size: 9px; color: #64748b; font-weight: 800; text-transform: uppercase;">P&L Total</div>
-                    <div id="pnl-val" style="font-size: 16px; font-weight: 600;">$0.00</div>
+                    <div id="pnl-val" style="font-size: 14px; font-weight: 600;">$0.00</div>
                 </div>
             </div>
-            <button class="btn-emergency" onclick="openStats()" style="padding: 6px 12px; font-size: 10px;">📊 ESTADÍSTICAS</button>
-            <button class="btn-emergency" onclick="closeAllPositions()" style="padding: 6px 12px; font-size: 10px;">CERRAR TODO</button>
+            <div style="display: flex; gap: 5px;">
+                <button class="btn-emergency" onclick="openStats()" style="padding: 6px 8px; font-size: 9px;">📊 STATS</button>
+                <button class="btn-emergency" onclick="closeAllPositions()" style="padding: 6px 8px; font-size: 9px;">FECHAR TUDO</button>
+            </div>
         </div>
     </div>
 
@@ -544,25 +659,25 @@
         <!-- Tarjetas de símbolos cargadas por JS -->
     </div>
 
-    <div class="signals-box" style="display: none;">
-        <h3 style="margin-top: 0;">Historial de Operaciones Cierres <small style="color: #64748b; font-size: 11px;">(Últimas 15 ejecutadas)</small></h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>CIERRE</th>
-                    <th>SÍMBOLO</th>
-                    <th>TIPO</th>
-                    <th>LOTE</th>
-                    <th>ENTRADA</th>
-                    <th>SALIDA</th>
-                    <th>P&L</th>
-                </tr>
-            </thead>
-            <tbody id="signals-table">
-                <!-- Operaciones cargadas por JS -->
-            </tbody>
-        </table>
-    </div>
+            <div class="signals-box">
+                <h3 style="margin-top:0; font-size: 16px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;">Últimas Señales</h3>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>HORA</th>
+                                <th>SÍMBOLO</th>
+                                <th>TIPO</th>
+                                <th>PRECIO</th>
+                                <th>ESTRATEGIA</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signals-table">
+                            <!-- Populated via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
     <!-- MODAL DE ESTADÍSTICAS AVANZADAS -->
     <div id="stats-modal" class="modal">
@@ -643,10 +758,10 @@
             </div>
             <div class="modal-body" style="padding: 20px;">
                 <!-- HEADER: SCORE + METRICS -->
-                <div style="display: flex; justify-content: center; align-items: center; gap: 30px; margin-bottom: 20px;">
+                <div class="inspector-header-container" style="display: flex; justify-content: center; align-items: center; gap: 30px; margin-bottom: 20px;">
                     <!-- Left: Score Circle -->
                     <div style="text-align: center;">
-                        <div style="position: relative; width: 90px; height: 90px; margin: 0 auto;">
+                        <div class="score-circle-wrapper" style="position: relative; width: 90px; height: 90px; margin: 0 auto;">
                             <svg viewBox="0 0 36 36" class="circular-chart orange">
                                 <path class="circle-bg" stroke="#334155" stroke-width="3" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                                 <path id="score-circle-path" class="circle" stroke="#3b82f6" stroke-dasharray="0, 100" stroke-width="3" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
@@ -662,13 +777,12 @@
                     </div>
                 </div>
 
-                <!-- Breakdown Table -->
+                <!-- Breakdown Container (Stable Reference) -->
                 <h3 style="font-size: 13px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; color: #cbd5e1;">Desglose de Factores</h3>
-                <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
-                    <tbody id="inspector-table-body">
-                        <!-- Populated via JS -->
-                    </tbody>
-                </table>
+                <div id="inspector-insights-container">
+                    <!-- Targeted via JS -->
+                    <div style="text-align: center; color: #64748b; padding: 20px; font-size: 11px;">Cargando análisis...</div>
+                </div>
             </div>
         </div>
     </div>
@@ -790,6 +904,27 @@
         </div>
     </div>
 
+            <div class="signals-box">
+                <h3 style="margin-top:0; font-size: 16px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;">Historial de Trades</h3>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>FECHA</th>
+                                <th>SÍMBOLO</th>
+                                <th>TIPO</th>
+                                <th>ENTRADA</th>
+                                <th>SALIDA</th>
+                                <th>BENEFICIO</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-table-body">
+                            <!-- Populated via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+    
     <script>
         function closeInspector() {
             document.getElementById('strategy-inspector-modal').style.display = 'none';
@@ -884,7 +1019,15 @@
                     }
 
                     // Update UI
-                    document.getElementById('inspector-title').innerHTML = `🧐 Análisis: ${symbol} <span style="font-size: 12px; color: #64748b; margin-left:10px;">(${stratName})</span> <span style="font-size: 9px; background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 2px 5px; border-radius: 4px; margin-left: 10px; border: 1px solid #10b981;">ANALISIS EN VIVO ⚡</span>`;
+                    document.getElementById('inspector-title').innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <div>🧐 Análisis: ${symbol}</div>
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <span style="font-size: 10px; color: #94a3b8;">${stratName}</span>
+                                <span style="font-size: 8px; background: rgba(16, 185, 129, 0.1); color: #10b981; padding: 1px 4px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.2); white-space: nowrap;">LIVE ⚡</span>
+                            </div>
+                        </div>
+                    `;
 
                     document.getElementById('inspector-score').innerText = scoreToDisplay;
                     
@@ -981,33 +1124,39 @@
                             const intervals = [{k:'M1', v: rsis.m1}, {k:'M5', v: rsis.m5}, {k:'H1', v: rsis.h1}];
                             
                             intervals.forEach(intv => {
-                                let badgeColor = 'rgba(255,255,255,0.05)';
                                 let textColor = '#cbd5e1';
                                 let icon = '⏱️';
+                                let glow = 'rgba(255,255,255,0.05)';
                                 
                                 const rsiVal = parseFloat(intv.v);
-                                if (rsiVal < 30) { badgeColor = 'rgba(16, 185, 129, 0.2)'; textColor = '#34d399'; icon = '🟢'; }
-                                else if (rsiVal > 70) { badgeColor = 'rgba(239, 68, 68, 0.2)'; textColor = '#f87171'; icon = '🔴'; }
+                                if (rsiVal < 30) { textColor = '#34d399'; icon = '🟢'; glow = 'rgba(16, 185, 129, 0.2)'; }
+                                else if (rsiVal > 70) { textColor = '#f87171'; icon = '🔴'; glow = 'rgba(239, 68, 68, 0.2)'; }
                                 
                                 const badge = document.createElement('div');
-                                badge.style.cssText = `background: ${badgeColor}; padding: 6px 10px; border-radius: 6px; font-size: 11px; display: flex; gap: 6px; align-items: center; border: 1px solid rgba(255,255,255,0.05); min-width: 80px;`;
-                                badge.innerHTML = `<span style="font-size: 10px;">${icon}</span><div style="display: flex; flex-direction: column; line-height: 1;"><span style="color: #64748b; font-size: 8px; font-weight: bold; text-transform: uppercase;">RSI ${intv.k}</span><span style="color: ${textColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${intv.v}</span></div>`;
+                                badge.className = 'premium-card';
+                                badge.style.boxShadow = `0 4px 12px ${glow}`;
+                                badge.innerHTML = `
+                                    <span style="font-size: 8px; color: #64748b; font-weight: 800; text-transform: uppercase;">RSI ${intv.k}</span>
+                                    <div style="font-size: 16px; font-weight: 800; color: ${textColor}; margin: 2px 0;">${intv.v}</div>
+                                    <span style="font-size: 10px;">${icon}</span>
+                                `;
                                 metricsContainer.appendChild(badge);
                             });
                         }
 
                         if (pureMetrics.length > 0) {
                             pureMetrics.forEach(m => {
-                                let badgeColor = 'rgba(255,255,255,0.05)';
-                                let textColor = '#cbd5e1';
                                 let icon = '📊';
-                                
                                 if (m.k.includes('RSI') && !hasMtfRsi) icon = '📉';
                                 if (m.k.includes('Regimen')) icon = '🧭';
                                 
                                 const badge = document.createElement('div');
-                                badge.style.cssText = `background: ${badgeColor}; padding: 6px 10px; border-radius: 6px; font-size: 11px; display: flex; gap: 6px; align-items: center; border: 1px solid rgba(255,255,255,0.05);`;
-                                badge.innerHTML = `<span style="font-size: 10px;">${icon}</span><div style="display: flex; flex-direction: column; line-height: 1;"><span style="color: #64748b; font-size: 8px; font-weight: bold; text-transform: uppercase;">${m.k}</span><span style="color: ${textColor}; font-weight: bold;">${m.v}</span></div>`;
+                                badge.className = 'premium-card';
+                                badge.innerHTML = `
+                                    <span style="font-size: 8px; color: #64748b; font-weight: 800; text-transform: uppercase;">${m.k}</span>
+                                    <div style="font-size: 14px; font-weight: 800; color: #fff; margin: 2px 0;">${m.v}</div>
+                                    <span style="font-size: 10px;">${icon}</span>
+                                `;
                                 metricsContainer.appendChild(badge);
                             });
                         }
@@ -1058,8 +1207,12 @@
                                             else if (strat.score >= 40) { stratColor = '#f59e0b'; barColor = 'rgba(245, 158, 11, 0.2)'; }
                                             else if (strat.score > 0) { stratColor = '#ef4444'; barColor = 'rgba(239, 68, 68, 0.2)'; }
 
-                                            strategiesHtml += `<tr style="background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%); border-top: 1px solid rgba(255,255,255,0.1);"><td style="padding: 10px 5px; color: #fff; font-size: 13px; font-weight: bold; border-left: 3px solid ${stratColor}; font-family: 'Inter', sans-serif;">🚀 ${strat.name}</td><td style="padding: 10px 5px; text-align: right; color: ${stratColor}; font-weight: bold; font-family: monospace; font-size: 12px;">${strat.score}/100 (${strat.status})</td></tr>`;
-
+                                            strategiesHtml += `
+                                                <div class="insight-row" style="border-left-color: ${stratColor}; background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%); margin-top: 8px;">
+                                                    <span class="insight-label" style="color: #fff; font-size: 12px;">🚀 ${strat.name}</span>
+                                                    <span class="insight-value" style="color: ${stratColor};">${strat.score}/100</span>
+                                                </div>
+                                            `;
 
                                             if (strat.factors && strat.factors.length > 0) {
                                                 strat.factors.forEach(f => {
@@ -1069,7 +1222,13 @@
                                                     if (f.v.includes('(-')) valColor = '#ef4444'; 
                                                     if (f.v.includes('Bull')) valColor = '#4ade80';
                                                     if (f.v.includes('Bear')) valColor = '#ef4444';
-                                                    strategiesHtml += `<tr><td style="padding: 4px 0 4px 20px; color: #cbd5e1; font-size: 11px; display: flex; align-items: center; gap: 5px;"><span style="color: #64748b;">↳</span> ${label}</td><td style="padding: 4px 10px 4px 0; text-align: right; font-size: 11px; font-family: monospace; color: ${valColor};">${f.v}</td></tr>`;
+                                                    
+                                                    strategiesHtml += `
+                                                        <div style="padding: 4px 14px; display: flex; justify-content: space-between; font-size: 11px; border-bottom: 1px solid rgba(255,255,255,0.02);">
+                                                            <span style="color: #cbd5e1;"><span style="color: #475569;">↳</span> ${label}</span>
+                                                            <span style="color: ${valColor}; font-family: monospace;">${f.v}</span>
+                                                        </div>
+                                                    `;
                                                 });
                                             }
                                         } else {
@@ -1079,23 +1238,34 @@
                                 });
                             }
                             
-                            if (strategiesHtml) {
-                                html += `<tr class="section-header"><td colspan="2" style="padding-top:10px; padding-bottom:5px; color: #f59e0b; font-size: 10px; font-weight: bold; text-transform: uppercase;">🧠 Estrategia Activa</td></tr>`;
-                                html += strategiesHtml;
-                            }
+                             if (strategiesHtml) {
+                                  html += `<div style="padding: 15px 0 5px 0; color: #f59e0b; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">🧠 Estrategia Activa</div>`;
+                                  html += strategiesHtml;
+                             }
 
                         // SECTION D: INACTIVE STRATEGIES
                         if (inactiveStratsList.length > 0) {
-                             html += `<tr class="section-header"><td colspan="2" style="padding-top:15px; padding-bottom:5px; color: #475569; font-size: 10px; font-weight: bold; text-transform: uppercase;">💤 Inactivas (Score 0)</td></tr>`;
+                             html += `<div style="padding: 15px 0 5px 0; color: #475569; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">💤 Inactivas (Score 0)</div>`;
                              inactiveStratsList.forEach(strat => {
-                                  html += `<tr><td style="padding: 5px 0; color: #475569; font-size: 11px;">${strat.k}</td><td style="padding: 5px 0; text-align: right; color: #475569; font-size: 11px;">${strat.v}</td></tr>`;
+                                  html += `
+                                    <div class="insight-row" style="border-left-color: #475569; opacity: 0.6;">
+                                        <span class="insight-label" style="color: #475569;">${strat.k}</span>
+                                        <span class="insight-value" style="color: #475569;">${strat.v}</span>
+                                    </div>
+                                  `;
                              });
                         }
                         
-                        tbody.innerHTML = html;
-                        const footerNote = document.createElement('tr');
-                        footerNote.innerHTML = `<td colspan="2" style="padding-top: 20px; text-align: center; color: #475569; font-size: 10px; font-style: italic; border-top: 1px solid rgba(255,255,255,0.05);">⚠️ NOTA: Este análisis se recalcula en tiempo real. La puntuación puede variar respecto al momento del disparo debido a la volatilidad actual del mercado.</td>`;
-                        tbody.appendChild(footerNote);
+                        // Replace the entire table body content with our new div-based html
+                        // We target the parent of inspector-table-body to replace the table itself if needed
+                        // TARGET THE STABLE CONTAINER
+                        const insightsContainer = document.getElementById('inspector-insights-container');
+                        insightsContainer.innerHTML = html;
+                        
+                        const footerNote = document.createElement('div');
+                        footerNote.style.cssText = "padding-top: 20px; text-align: center; color: #475569; font-size: 9px; font-style: italic; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 10px;";
+                        footerNote.innerHTML = `⚠️ NOTA: Este análisis se recalcula en tiempo real. La puntuación puede variar respecto al momento del disparo debido a la volatilidad actual del mercado.`;
+                        insightsContainer.appendChild(footerNote);
                     }
                     
                     // FORCE RE-RENDER DASHBOARD CARD IF POSSIBLE
@@ -1376,7 +1546,7 @@
                             
                             ${currentView === 'PRICE' ? `
                                 <!-- PRICE SECTION -->
-                                <div class="price" style="height: 40px; display: flex; align-items: center; justify-content: center; font-size: 1.8em; margin-bottom: 5px;">
+                                <div class="price" style="height: 35px; display: flex; align-items: center; justify-content: center; font-size: 1.5em; margin-bottom: 8px;">
                                     ${formatPrice(r.price, r.symbol)}
                                 </div>
                                 
@@ -1390,32 +1560,15 @@
                                     const txt = (val, suffix='') => val ? val + suffix : '--';
                                     
                                     return `
-                                    <div style="font-size: 11px; margin-bottom: 5px; background: rgba(0,0,0,0.25); padding: 4px; border-radius: 8px;">
-                                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; row-gap: 2px; column-gap: 6px; text-align: center;">
-                                             <!-- HEADERS -->
-                                             <div style="font-weight: bold; color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 2px; font-size: 9px;">M1</div>
-                                             <div style="font-weight: bold; color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 2px; font-size: 9px;">M5</div>
-                                             <div style="font-weight: bold; color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 2px; font-size: 9px;">M15</div>
-                                             <div style="font-weight: bold; color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 2px; font-size: 9px;">H1</div>
-                                             
-                                             <!-- RSI ROW -->
-                                             <div style="color: ${getRsiColor(mtf.m1?.rsi)}">RSI ${txt(mtf.m1?.rsi)}</div>
-                                             <div style="color: ${getRsiColor(mtf.m5?.rsi)}">RSI ${txt(mtf.m5?.rsi)}</div>
-                                             <div style="color: ${getRsiColor(mtf.m15?.rsi)}">RSI ${txt(mtf.m15?.rsi)}</div>
-                                             <div style="color: ${getRsiColor(mtf.h1?.rsi)}">RSI ${txt(mtf.h1?.rsi)}</div>
-
-                                             <!-- ADX ROW -->
-                                             <div style="color: #64748b">ADX ${txt(mtf.m1?.adx)}</div>
-                                             <div style="color: #64748b">ADX ${txt(mtf.m5?.adx)}</div>
-                                             <div style="color: #64748b">ADX ${txt(mtf.m15?.adx)}</div>
-                                             <div style="color: #64748b">ADX ${txt(mtf.h1?.adx)}</div>
-                                             
-                                             <!-- VOL ROW -->
-                                             <div style="color: ${getVolColor(mtf.m1?.vol)}">Vol ${txt(mtf.m1?.vol, 'x')}</div>
-                                             <div style="color: ${getVolColor(mtf.m5?.vol)}">Vol ${txt(mtf.m5?.vol, 'x')}</div>
-                                             <div style="color: ${getVolColor(mtf.m15?.vol)}">Vol ${txt(mtf.m15?.vol, 'x')}</div>
-                                             <div style="color: ${getVolColor(mtf.h1?.vol)}">Vol ${txt(mtf.h1?.vol, 'x')}</div>
-                                        </div>
+                                    <div class="mtf-wrapper" style="font-size: 10px; margin-bottom: 8px; background: rgba(0,0,0,0.25); padding: 6px; border-radius: 8px; display: flex; justify-content: space-between; gap: 4px; flex-wrap: wrap;">
+                                         ${['m1','m5','m15','h1'].map(tf => `
+                                            <div class="mtf-block" style="flex: 1; min-width: 60px; display: flex; flex-direction: column; align-items: center; gap: 1px;">
+                                                <div style="font-weight: bold; color: #94a3b8; border-bottom: 1px solid rgba(255,255,255,0.08); width: 100%; text-align: center; margin-bottom: 3px; font-size: 8px;">${tf.toUpperCase()}</div>
+                                                <div style="color: ${getRsiColor(mtf[tf]?.rsi)}">RSI ${txt(mtf[tf]?.rsi)}</div>
+                                                <div style="color: #64748b">ADX ${txt(mtf[tf]?.adx)}</div>
+                                                <div style="color: ${getVolColor(mtf[tf]?.vol)}">Vol ${txt(mtf[tf]?.vol, 'x')}</div>
+                                            </div>
+                                         `).join('')}
                                     </div>
                                     `;
                                 })()}
@@ -1439,7 +1592,7 @@
                                             </div>
                                         </div>
 
-                                        <button onclick="showStrategyInspector('${r.symbol}', 'AUTO')" style="padding: 2px 6px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; border-radius: 4px; font-size: 9px; cursor: pointer; font-weight: bold;">📏 ANALIZAR</button>
+                                        <button onclick="showStrategyInspector('${r.symbol}', '${(r.winning_strategy && r.winning_strategy.includes('Maestra')) ? 'MANUAL' : 'AUTO'}')" style="padding: 2px 6px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; border-radius: 4px; font-size: 9px; cursor: pointer; font-weight: bold;">📏 ANALIZAR</button>
                                         
                                         <span style="color: ${r.manual_score >= 70 ? '#22c55e' : r.manual_score >= 40 ? '#eab308' : '#64748b'}; font-weight: bold;">${r.manual_score || 0}/100</span>
                                     </div>

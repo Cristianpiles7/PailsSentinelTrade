@@ -111,7 +111,7 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         print(f"Error in calculate_channel_boundary: {e}")
         return [], [], None
 
-def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None, trend_slope=0):
+def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None, trend_slope=0, adx=0):
     """
     Motor de puntuacion ULTRA-LÓGICO y ESTRICTO.
     Retorna: (total_score, action_name, factor_details_list)
@@ -152,10 +152,20 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         # RSI Context
         rsi_ok = (is_res and rsi > 60) or (is_sup and rsi < 40)
         if rsi_ok:
-            score += 20
-            factors.append({"k": "RSI Context", "v": f"OK ({rsi:.1f})", "score": 20})
+            score += 15
+            factors.append({"k": "RSI Context", "v": f"OK ({rsi:.1f})", "score": 15})
         else:
             factors.append({"k": "RSI Context", "v": f"Neutral ({rsi:.1f})", "score": 0})
+            
+        # ADX Context (Rebotes)
+        if adx >= 30:
+            penalty = 15
+            score -= penalty
+            factors.append({"k": "Riesgo ADX", "v": f"Fuerte ({adx:.1f})", "score": -penalty})
+        elif adx < 20 and adx > 0:
+            bonus = 10
+            score += bonus
+            factors.append({"k": "Filtro ADX", "v": f"Rango ({adx:.1f})", "score": bonus})
 
     # 2. LÓGICA DE RUPTURA (BREAKOUT)
     elif is_breakout and abs_dist_pct <= THR_NEUTRAL:
@@ -165,22 +175,32 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         if (is_res and is_red): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Roja (Bajista)", "score": 0}]
         if (is_sup and is_green): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Verde (Alcista)", "score": 0}]
 
-        score += 30 # Base
-        factors.append({"k": "Base Ruptura", "v": f"Confirmada ({abs_dist_pct:.2f}%)", "score": 30})
+        score += 25 # Base
+        factors.append({"k": "Base Ruptura", "v": f"Confirmada ({abs_dist_pct:.2f}%)", "score": 25})
         
         # FILTROS ESTRICTOS
         if vol_val > vol_ma:
-            score += 35
-            factors.append({"k": "Volumen", "v": "Confirmado (Vol > MA)", "score": 35})
+            score += 25
+            factors.append({"k": "Volumen", "v": "Confirmado (Vol > MA)", "score": 25})
         else:
             factors.append({"k": "Volumen", "v": "Bajo (No Confirmado)", "score": 0})
         
-        rsi_bias_ok = (is_res and rsi > 50) or (is_sup and rsi < 50)
+        rsi_bias_ok = (is_res and rsi > 55) or (is_sup and rsi < 45)
         if rsi_bias_ok:
             score += 15
             factors.append({"k": "Impulso RSI", "v": f"A favor ({rsi:.1f})", "score": 15})
         else:
             factors.append({"k": "Impulso RSI", "v": f"Neutro ({rsi:.1f})", "score": 0})
+            
+        # ADX Strength (Crucial para rupturas)
+        if adx >= 25:
+            bonus = 20
+            score += bonus
+            factors.append({"k": "Fuerza ADX", "v": f"Alta ({adx:.1f})", "score": bonus})
+        elif adx < 18 and adx > 0:
+            penalty = 15
+            score -= penalty
+            factors.append({"k": "ADX Débil", "v": f"Lateral ({adx:.1f})", "score": -penalty})
             
         momentum_ok = (is_res and is_green) or (is_sup and is_red)
         if momentum_ok:
@@ -188,5 +208,7 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
             factors.append({"k": "Vela", "v": "Fuerza Confirmada", "score": 15})
         else:
             factors.append({"k": "Vela", "v": "Indecisión", "score": 0})
+
+    return round(min(100, max(0, score))), action, factors
 
     return round(min(100, score)), action, factors

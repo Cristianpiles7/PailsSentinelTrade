@@ -227,7 +227,7 @@ class PSTEMAFlow:
         if mtr_h1 and mtr_h1['vol_rel'] >= 1.1: vol_pts += 10; factors_detailed.append({"k": "H1 Volumen", "v": f"Interés ({mtr_h1['vol_rel']:.1f}x)", "score": 10})
 
         net_score += vol_pts # SUMAR PUNTOS POSITIVOS
-        vol_gate = vol_pts >= 30
+        vol_gate = vol_pts >= 10 # FLEXIBILIZADO: Con que H1 o M15 tengan volumen (10-20 pts), abrimos la puerta.
         if not vol_gate:
             penalty = 40
             net_score -= penalty
