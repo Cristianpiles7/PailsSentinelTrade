@@ -4,6 +4,8 @@ import numpy as np
 import logging
 from ..models.classifier import RegimeMode
 
+from ..utils.tech_utils import get_asset_class
+
 logger = logging.getLogger("PST-EMA-Flow")
 
 class PSTEMAFlow:
@@ -20,7 +22,30 @@ class PSTEMAFlow:
             df_m15 = data_input.get('m15')
         else:
             df = data_input
+        
+        # --- ASSET PROFILE LOADER ---
+        symbol = "UNKNOWN"
+        if isinstance(data_input, dict) and 'symbol' in data_input:
+             symbol = data_input['symbol']
+        # If not in dict, try to infer or default
+        asset_class = get_asset_class(symbol)
 
+        # DEFAULT PROFILE (Forex/General)
+        P_ADX_THR = 30
+        P_ATR_MARGIN = 0.15
+        P_VOL_MULT = 1.5
+        P_H1_PENALTY = 15
+        
+        # OVERRIDES
+        if asset_class == "INDEX":
+            P_ADX_THR = 35       # Indices need more strength to avoid noise
+            P_VOL_MULT = 2.0     # Volume must be clearer
+            P_H1_PENALTY = 20    # Respect H1 trend more
+        elif asset_class == "METAL":
+            P_ATR_MARGIN = 0.20  # Gold wicks are deadly, require 20% breakout
+        elif asset_class == "CRYPTO":
+            pass # Use defaults (Scalping friendly)
+            
         if df is None or len(df) < 55:
             return {
                 "entry": 0, 
@@ -33,6 +58,37 @@ class PSTEMAFlow:
                 }, 
                 "score": 0
             }
+
+        # --- 0. RISK MANAGER: COOLDOWN & SCHEDULE ---
+        current_hour = pd.Timestamp.now().hour
+        
+        # A. Schedule Check (Smart Sessions)
+        is_schedule_ok = True
+        schedule_msg = "Abierto"
+        
+        if asset_class == "INDEX":
+             # US Indices: Schedule Restriction Removed by User Request
+             # Relying on strategy logic (Momentum/Strong Candle) instead of hard time block.
+             pass
+        elif asset_class == "FOREX" or asset_class == "CRYPTO":
+             pass # 24/7
+             
+        if not is_schedule_ok:
+             return {
+                "entry": 0, "atr": 0, 
+                "metadata": {"strategy": self.STRATEGY_NAME, "score": 0, "total_score": 0, 
+                             "score_breakdown": {"Horario": schedule_msg}, "factors_detailed": []}, 
+                "score": 0
+             }
+
+        # B. Cooldown Check (Anti-Racha)
+        # Necesitamos el último trade. Como no tenemos acceso directo a DB aqui facilmente sin hacerlo async complejo,
+        # asumiremos que el Orchestrator pasa 'last_trade_result' o similar.
+        # Si no, por simplicidad, lo implementamos en 'orchestrator.py' o aqui si pasamos el dato.
+        # DADO QUE NO TENEMOS ACCESO A DB AQUI:
+        # La solución robusta es retornar un flag y que el Orchestrator decida, O pasar el last_trade en data_input.
+        # Por ahora, implementaremos el filtro horario que es crítico.
+        # El Cooldown se debe implementar en el Orchestrator (nivel superior).
 
         # --- M15 CONTEXT CHECK (High Timeframe Filter) ---
         htf_filter = 0 # 0: Neutral, 1: Bull, -1: Bear
@@ -51,6 +107,13 @@ class PSTEMAFlow:
         # Volume
         vol_s = df['tick_volume'] if 'tick_volume' in df else pd.Series([0]*len(df))
         vol_ma_s = ta.sma(vol_s, length=20)
+        
+        # 2b. ATR Pre-calc (for dynamic breakout threshold)
+        atr_series = ta.atr(df['high'], df['low'], df['close'], length=14)
+        current_atr = atr_series.iloc[-1] if atr_series is not None else 0
+        atr_series = ta.atr(df['high'], df['low'], df['close'], length=14)
+        current_atr = atr_series.iloc[-1] if atr_series is not None else 0
+        min_break_dist = current_atr * P_ATR_MARGIN # DYNAMIC THRESHOLD
 
         # 3. DUAL-WINDOW SCORING ENGINE (M5 + M15 Cascading Triggers)
         bull_base = 0
@@ -108,64 +171,67 @@ class PSTEMAFlow:
                 
                 avg_body = tf_df['close'].diff().abs().iloc[idx-5:idx].mean() if len(tf_df) > 10 else 0
                 is_strong_candle = body_ratio > 0.6 and body_size > avg_body
+                
+                # --- NEW TRUTH TABLE LOGIC MAP (User Approved) ---
+                
+                # Context Definitions
+                is_bull_trend = c_ema21 > c_ema50
+                is_bear_trend = c_ema21 < c_ema50
+                
+                # Stability Filter (Origin Check)
+                # Confirm we came from the "correct" side 5 bars ago for re-entries
+                origin_5_ema21 = tf_ema21.iloc[idx-5]
+                origin_5_close = tf_df['close'].iloc[idx-5]
+                
+                # Estabilidad para BUY (Queremos venir de abajo de la azul)
+                is_stable_buy = origin_5_close < origin_5_ema21 
+                # Estabilidad para SELL (Queremos venir de arriba de la azul)
+                is_stable_sell = origin_5_close > origin_5_ema21
 
-                # Bull Break / Crossovers
+                # 1. EMA50 Break (TYPE A - Reversal)
+                # NO Momentum Filter required (V-Turns allowed)
                 if (p_close < tf_ema50.iloc[prev_idx] and c_close > c_ema50) and is_strong_candle:
-                    if action_pts > bull_base:
-                        bull_base = action_pts
-                        base_event = {"k": f"Ruptura EMA50 {tf_name}", "v": "Impulso", "score": round(bull_base)}
-                    if i < last_event_idx: last_event_idx = i
-                
-                # EMA 21 Break 
-                if (p_close < tf_ema21.iloc[prev_idx] and c_close > c_ema21):
-                    pts = action_pts - 10
-                    if pts > bull_base:
-                        bull_base = pts
-                        base_event = {"k": f"Ruptura EMA21 {tf_name}", "v": "Tactico", "score": round(bull_base)}
-                    if i < last_event_idx: last_event_idx = i
-                
-                # Bull Bounce
-                touched_21 = tf_df['low'].iloc[idx] <= c_ema21
-                is_green = c_close > c_open
-                trend_up = c_ema21 > c_ema50
-                if trend_up and touched_21 and c_close > c_ema21:
-                    lower_wick = min(c_open, c_close) - c_low
-                    lower_wick_ratio = lower_wick / full_range
-                    if (lower_wick_ratio > 0.3 or body_ratio > 0.5) and is_green:
-                        pts = action_pts + (20 if lower_wick_ratio > 0.6 else 0)
-                        if pts > bull_base:
-                            bull_base = pts
-                            base_event = {"k": f"Bounce EMA21 {tf_name}", "v": "Rechazo", "score": round(bull_base)}
-                        if i < last_event_idx: last_event_idx = i
+                     if action_pts > bull_base:
+                         bull_base = action_pts
+                         base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Reversal (Type A)", "score": round(bull_base)}
+                     if i < last_event_idx: last_event_idx = i
 
-                # Bear Break / Loss
-                if (p_close > tf_ema50.iloc[prev_idx] and c_close < c_ema50) and is_strong_candle:
-                    if action_pts > bear_base:
-                        bear_base = action_pts
-                        base_event = {"k": f"Fallo EMA50 {tf_name}", "v": "Impulso", "score": round(bear_base)}
-                    if i < last_event_idx: last_event_idx = i
+                elif (p_close > tf_ema50.iloc[prev_idx] and c_close < c_ema50) and is_strong_candle:
+                     if action_pts > bear_base:
+                         bear_base = action_pts
+                         base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Reversal (Type A)", "score": round(bear_base)}
+                     if i < last_event_idx: last_event_idx = i
 
-                # EMA 21 Loss 
-                if (p_close > tf_ema21.iloc[prev_idx] and c_close < c_ema21):
-                    pts = action_pts - 10
-                    if pts > bear_base:
-                        bear_base = pts
-                        base_event = {"k": f"Fallo EMA21 {tf_name}", "v": "Tactico", "score": round(bear_base)}
-                    if i < last_event_idx: last_event_idx = i
-                
-                # Bear Bounce
-                touched_21_bear = tf_df['high'].iloc[idx] >= c_ema21
-                is_red = c_close < c_open
-                trend_down = c_ema21 < c_ema50
-                if trend_down and touched_21_bear and c_close < c_ema21:
-                    upper_wick = c_high - max(c_open, c_close)
-                    upper_wick_ratio = upper_wick / full_range
-                    if (upper_wick_ratio > 0.3 or body_ratio > 0.5) and is_red:
-                        pts = action_pts + (20 if upper_wick_ratio > 0.6 else 0)
-                        if pts > bear_base:
-                            bear_base = pts
-                            base_event = {"k": f"Bounce EMA21 {tf_name}", "v": "Rechazo", "score": round(bear_base)}
-                        if i < last_event_idx: last_event_idx = i
+                # 2. EMA21 Break (TYPE B vs C)
+                # Requires Stability Filter + Trend Alignment
+                elif (p_close < tf_ema21.iloc[prev_idx] and c_close > c_ema21) and is_strong_candle:
+                     # BUY SIGNAL
+                     if is_bull_trend and is_stable_buy:
+                         # TYPE B: Trend Resumption
+                         pts = action_pts - 10
+                         if pts > bull_base:
+                             bull_base = pts
+                             base_event = {"k": f"Re-Entrada EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bull_base)}
+                         if i < last_event_idx: last_event_idx = i
+                     elif is_bear_trend:
+                         # TYPE C: TRAP (Pullback in Bear Trend)
+                         # Ignored
+                         pass
+
+                elif (p_close > tf_ema21.iloc[prev_idx] and c_close < c_ema21) and is_strong_candle:
+                     # SELL SIGNAL
+                     if is_bear_trend and is_stable_sell:
+                         # TYPE B: Trend Resumption
+                         pts = action_pts - 10
+                         if pts > bear_base:
+                             bear_base = pts
+                             base_event = {"k": f"Re-Entrada EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bear_base)}
+                         if i < last_event_idx: last_event_idx = i
+                     elif is_bull_trend:
+                         # TYPE C: TRAP (Pullback in Bull Trend)
+                         # Ignored
+                         pass
+
                 
                 # Injection
                 if base_event:
@@ -206,23 +272,23 @@ class PSTEMAFlow:
         else:
             return {"entry": 0, "atr": 0, "metadata": {"status": "Neutral (Sin Sesgo)"}, "score": 0}
 
-        # --- NEW MTF MOMENTUM (ADX) ---
+        # --- NEW MTF MOMENTUM (ADX DYNAMIC) ---
         adx_pts = 0
-        if mtr_m5 and mtr_m5['adx'] >= 25: adx_pts += 30; factors_detailed.append({"k": "M5 Fuerza", "v": f"Alta ({mtr_m5['adx']:.1f})", "score": 30})
+        if mtr_m5 and mtr_m5['adx'] >= P_ADX_THR: adx_pts += 30; factors_detailed.append({"k": "M5 Fuerza", "v": f"Alta ({mtr_m5['adx']:.1f})", "score": 30})
         if mtr_m15 and mtr_m15['adx'] >= 20: adx_pts += 15; factors_detailed.append({"k": "M15 Fuerza", "v": f"OK ({mtr_m15['adx']:.1f})", "score": 15})
         if mtr_h1 and mtr_h1['adx'] >= 20: adx_pts += 10; factors_detailed.append({"k": "H1 Fuerza", "v": f"Trend ({mtr_h1['adx']:.1f})", "score": 10})
         if mtr_m1 and mtr_m1['adx'] >= 30: adx_pts += 5; factors_detailed.append({"k": "M1 Impulso", "v": f"Explosivo ({mtr_m1['adx']:.1f})", "score": 5})
 
         net_score += adx_pts # SUMAR PUNTOS POSITIVOS
-        adx_gate = adx_pts >= 30
+        adx_gate = adx_pts >= 30 # Keep strict minimum 30pts total from MTF
         if not adx_gate:
             penalty = 30
             net_score -= penalty
             factors_detailed.append({"k": "Filtro Fuerza", "v": "Insuficiente (MTF)", "score": -penalty})
         
-        # --- NEW MTF VOLUME ---
+        # --- NEW MTF VOLUME (DYNAMIC) ---
         vol_pts = 0
-        if mtr_m5 and mtr_m5['vol_rel'] >= 1.2: vol_pts += 30; factors_detailed.append({"k": "M5 Volumen", "v": f"OK ({mtr_m5['vol_rel']:.1f}x)", "score": 30})
+        if mtr_m5 and mtr_m5['vol_rel'] >= P_VOL_MULT: vol_pts += 30; factors_detailed.append({"k": "M5 Volumen", "v": f"OK ({mtr_m5['vol_rel']:.1f}x)", "score": 30})
         if mtr_m15 and mtr_m15['vol_rel'] >= 1.2: vol_pts += 20; factors_detailed.append({"k": "M15 Volumen", "v": f"Anomalía ({mtr_m15['vol_rel']:.1f}x)", "score": 20})
         if mtr_h1 and mtr_h1['vol_rel'] >= 1.1: vol_pts += 10; factors_detailed.append({"k": "H1 Volumen", "v": f"Interés ({mtr_h1['vol_rel']:.1f}x)", "score": 10})
 
@@ -242,6 +308,7 @@ class PSTEMAFlow:
              factors_detailed.append({"k": "Filtro Pendiente", "v": "OK", "score": 0})
 
         # 1. HTF ALIGNMENT (M15 EMA)
+        # 1. HTF ALIGNMENT (M15 EMA & H1 Dynamic Filter)
         if direction == 1 and htf_filter == -1:
             factors_detailed.append({"k": "Alineación M15", "v": "Contratendencia", "score": -20})
             net_score -= 20
@@ -251,6 +318,30 @@ class PSTEMAFlow:
         elif htf_filter != 0:
             net_score += 15
             factors_detailed.append({"k": "Alineación M15", "v": "Confirmada", "score": 15})
+
+        # --- H1 DYNAMIC FILTER (FRICTION) ---
+        # Instead of blocking, we apply a penalty if trading against H1 term trend.
+        if mtr_h1:
+            # Simple H1 Trend Estimation (Price vs EMA50)
+            # Cannot calculate EMA on mtr_h1 because it's just a dict, need history series.
+            # Assuming orchestration passes H1 EMA50 via mtr_h1 is complex, let's use Price vs EMA50 if we had it.
+            # Workaround: Calculate H1 EMA50 here if df_m15 implies H1 flow or use external data.
+            # BETTER: Use the `get_mtf_data` H1 dataframe passed in `data_input`.
+            df_h1 = data_input.get('h1') if isinstance(data_input, dict) else None
+            
+            if df_h1 is not None and len(df_h1) > 50:
+                 h1_ema50 = ta.ema(df_h1['close'], length=50).iloc[-1]
+                 h1_close = df_h1['close'].iloc[-1]
+                 
+                 h1_trend = 1 if h1_close > h1_ema50 else -1
+                 
+                 if direction != h1_trend:
+                     penalty_h1 = P_H1_PENALTY
+                     net_score -= penalty_h1
+                     factors_detailed.append({"k": f"Fricción H1 ({asset_class})", "v": "Contratendencia", "score": -penalty_h1})
+                 else:
+                     # Optional: Small bonus for full alignment
+                     pass
 
         # 2. FRESHNESS BONUS
         if last_event_idx == 0: 
@@ -286,11 +377,32 @@ class PSTEMAFlow:
         gate_failed = (not adx_gate) or (not vol_gate)
 
         if direction == 1:
-            if latest_c <= latest_ema21:
+            # STRICT: Must be above EMA21. If EMA50 > EMA21 (Bearish Cross), MUST be above EMA50 too.
+            fail_ema21 = latest_c <= latest_ema21
+            fail_ema50 = (latest_ema50 > latest_ema21) and (latest_c <= latest_ema50)
+            
+            # --- BREAKOUT CONFIRMATION LOGIC ---
+            # If previous candle was NOT above EMA21, this is a FRESH breakout.
+            # We require either current close > EMA21 + margin OR wait for next candle.
+            prev_c = df['close'].iloc[-2]
+            prev_ema21 = ema21_s.iloc[-2]
+
+            was_bullish = prev_c > prev_ema21
+            is_marginal = (latest_c - latest_ema21) < min_break_dist
+            
+            if not was_bullish and is_marginal and not fail_ema21:
+                 gate_failed = True
+                 penalty = round(pre_penalty_score * 0.5)
+                 net_score -= penalty
+                 factors_detailed.append({"k": "Confirmación", "v": "Marginal (Espere)", "score": -penalty})
+
+            if fail_ema21 or fail_ema50:
                 gate_failed = True
                 net_score = net_score * 0.3
                 penalty = round(pre_penalty_score - net_score)
-                factors_detailed.append({"k": "Validación", "v": "Cierre < EMA21", "score": -penalty})
+                # If we fail EMA50 in a downtrend (Orange > Blue), it means we are caught below Orange.
+                cause = "Cierre < EMA21" if fail_ema21 else "Zona de Trampa (Sandwich EMA50)"
+                factors_detailed.append({"k": "Validación", "v": cause, "score": -penalty})
             
             dist_ema50 = (latest_c - latest_ema50) / latest_ema50 * 100
             if dist_ema50 > 1.0:
@@ -298,11 +410,29 @@ class PSTEMAFlow:
                 factors_detailed.append({"k": "Exceso", "v": "Sobre-extendido", "score": -30})
                 net_score -= 30
         elif direction == -1:
-            if latest_c >= latest_ema21:
+            # STRICT: Must be below EMA21. If EMA50 < EMA21 (Bullish Cross), MUST be below EMA50 too.
+            fail_ema21 = latest_c >= latest_ema21
+            fail_ema50 = (latest_ema50 < latest_ema21) and (latest_c >= latest_ema50)
+            
+            # --- BREAKOUT CONFIRMATION LOGIC ---
+            prev_c = df['close'].iloc[-2]
+            prev_ema21 = ema21_s.iloc[-2]
+
+            was_bearish = prev_c < prev_ema21
+            is_marginal = (latest_ema21 - latest_c) < min_break_dist
+            
+            if not was_bearish and is_marginal and not fail_ema21:
+                 gate_failed = True
+                 penalty = round(pre_penalty_score * 0.5)
+                 net_score -= penalty
+                 factors_detailed.append({"k": "Confirmación", "v": "Marginal (Espere)", "score": -penalty})
+
+            if fail_ema21 or fail_ema50:
                 gate_failed = True
                 net_score = net_score * 0.3
                 penalty = round(pre_penalty_score - net_score)
-                factors_detailed.append({"k": "Validación", "v": "Cierre > EMA21", "score": -penalty})
+                cause = "Cierre > EMA21" if fail_ema21 else "Zona de Trampa (Sandwich EMA50)"
+                factors_detailed.append({"k": "Validación", "v": cause, "score": -penalty})
             
             dist_ema50 = (latest_ema50 - latest_c) / latest_ema50 * 100
             if dist_ema50 > 1.0:

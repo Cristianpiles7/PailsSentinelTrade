@@ -14,6 +14,7 @@ import pandas as pd
 from typing import List
 import json
 import numpy as np
+from ..utils.cooldown_manager import cooldown_mgr # Cooldown Import
 
 # Configuración básica de logs para el Corazón PST
 logging.basicConfig(
@@ -323,6 +324,11 @@ class SymbolTask:
                     active_strats = self.strategies.get(mode, [])
                     for strat in active_strats:
                         try:
+                            # 0. Cooldown Check (Last Stand)
+                            is_blocked, msg = cooldown_mgr.is_blocked(self.symbol)
+                            if is_blocked:
+                                continue # Skip strategy calculation if blocked
+
                             # Reutilizamos el mtf_data para consistencia total
                             sig = await strat.calculate_signal(mtf_data, mode, user_levels=user_levels)
                             
@@ -394,6 +400,13 @@ async def sync_trades_task(db: PSTDatabase):
                             if is_open:
                                 await db.update_trade_cierre(d.position_id, d.price, d.profit + d.swap + d.commission)
                                 logger.info(f"✅ Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL: {d.profit}")
+                                
+                                # COOLDOWN TRIGGER: Si fue pérdida, registrar en CooldownManager
+                                if (d.profit + d.swap + d.commission) <= 0:
+                                    # Importar localmente si fuera necesario, o usar global
+                                    from ..utils.cooldown_manager import cooldown_mgr
+                                    cooldown_mgr.register_loss(d.symbol, duration_minutes=60)
+                                    
                                 count_synced += 1
                         else:
                             # 2. Si NO existe, es una operación externa/antigua -> IMPORTAR

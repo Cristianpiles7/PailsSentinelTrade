@@ -212,3 +212,27 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
     return round(min(100, max(0, score))), action, factors
 
     return round(min(100, score)), action, factors
+
+def get_asset_class(symbol: str) -> str:
+    """
+    Identifica la clase de activo basada en el símbolo.
+    Retorna: 'CRYPTO', 'INDEX', 'METAL', 'FOREX'
+    """
+    s = symbol.upper()
+    
+    # METALES
+    if "XAU" in s or "XAG" in s or "GOLD" in s:
+        return "METAL"
+    
+    # INDICES
+    indices_keywords = ["US500", "SPX", "NAS100", "US30", "GER30", "DAX", "NVDA", "TSLA", "AAPL", "MSFT"]
+    if any(k in s for k in indices_keywords):
+        return "INDEX"
+        
+    # CRYPTO
+    crypto_keywords = ["BTC", "ETH", "SOL", "ADA", "XRP", "LTC", "DOT", "UNI", "LINK"]
+    if any(k in s for k in crypto_keywords):
+        return "CRYPTO"
+    
+    # Default fallback
+    return "FOREX"
