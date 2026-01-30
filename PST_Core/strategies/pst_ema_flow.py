@@ -179,34 +179,41 @@ class PSTEMAFlow:
                 is_bear_trend = c_ema21 < c_ema50
                 
                 # Stability Filter (Origin Check)
-                # Confirm we came from the "correct" side 5 bars ago for re-entries
+                # Confirm we came from the "correct" side 5 bars ago for re-entries AND reversals
                 origin_5_ema21 = tf_ema21.iloc[idx-5]
+                origin_5_ema50 = tf_ema50.iloc[idx-5] # NEW: Origin check for EMA50
                 origin_5_close = tf_df['close'].iloc[idx-5]
                 
-                # Estabilidad para BUY (Queremos venir de abajo de la azul)
-                is_stable_buy = origin_5_close < origin_5_ema21 
-                # Estabilidad para SELL (Queremos venir de arriba de la azul)
-                is_stable_sell = origin_5_close > origin_5_ema21
+                # Estabilidad para BUY (Queremos venir de abajo)
+                is_stable_buy_ema21 = origin_5_close < origin_5_ema21 
+                is_stable_buy_ema50 = origin_5_close < origin_5_ema50 # NEW
+                
+                # Estabilidad para SELL (Queremos venir de arriba)
+                is_stable_sell_ema21 = origin_5_close > origin_5_ema21
+                is_stable_sell_ema50 = origin_5_close > origin_5_ema50 # NEW
 
                 # 1. EMA50 Break (TYPE A - Reversal)
-                # NO Momentum Filter required (V-Turns allowed)
-                if (p_close < tf_ema50.iloc[prev_idx] and c_close > c_ema50) and is_strong_candle:
+                # STRUCTURE CHECK: Instant Reactivity
+                # We require the EMAs to be aligned in the OPPOSITE direction of the break.
+                # If buying (breaking Up), we want EMA21 < EMA50 (Bear Structure).
+                # BREAKOUT CONFIRMATION: Must exceed min_break_dist (15% ATR)
+                if (p_close < tf_ema50.iloc[prev_idx] and c_close > (tf_ema50.iloc[idx] + min_break_dist)) and is_strong_candle and is_bear_trend:
                      if action_pts > bull_base:
                          bull_base = action_pts
                          base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Reversal (Type A)", "score": round(bull_base)}
                      if i < last_event_idx: last_event_idx = i
 
-                elif (p_close > tf_ema50.iloc[prev_idx] and c_close < c_ema50) and is_strong_candle:
+                elif (p_close > tf_ema50.iloc[prev_idx] and c_close < (tf_ema50.iloc[idx] - min_break_dist)) and is_strong_candle and is_bull_trend:
                      if action_pts > bear_base:
                          bear_base = action_pts
                          base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Reversal (Type A)", "score": round(bear_base)}
                      if i < last_event_idx: last_event_idx = i
 
                 # 2. EMA21 Break (TYPE B vs C)
-                # Requires Stability Filter + Trend Alignment
-                elif (p_close < tf_ema21.iloc[prev_idx] and c_close > c_ema21) and is_strong_candle:
+                # Requires Stability Filter + Trend Alignment + ATR Margin
+                elif (p_close < tf_ema21.iloc[prev_idx] and c_close > (tf_ema21.iloc[idx] + min_break_dist)) and is_strong_candle:
                      # BUY SIGNAL
-                     if is_bull_trend and is_stable_buy:
+                     if is_bull_trend and is_stable_buy_ema21:
                          # TYPE B: Trend Resumption
                          pts = action_pts - 10
                          if pts > bull_base:
@@ -218,9 +225,9 @@ class PSTEMAFlow:
                          # Ignored
                          pass
 
-                elif (p_close > tf_ema21.iloc[prev_idx] and c_close < c_ema21) and is_strong_candle:
+                elif (p_close > tf_ema21.iloc[prev_idx] and c_close < (tf_ema21.iloc[idx] - min_break_dist)) and is_strong_candle:
                      # SELL SIGNAL
-                     if is_bear_trend and is_stable_sell:
+                     if is_bear_trend and is_stable_sell_ema21:
                          # TYPE B: Trend Resumption
                          pts = action_pts - 10
                          if pts > bear_base:
@@ -299,7 +306,18 @@ class PSTEMAFlow:
             net_score -= penalty
             factors_detailed.append({"k": "Filtro Vol.", "v": "Sin Interés (MTF)", "score": -penalty})
 
-        # SLOPE GATE (Keep M5 for tactical timing)
+        # --- FINAL HARD GATES (MTF CONFIRMATION) ---
+        # Instead of just losing points, we force score to 0 if MTF strength is missing.
+        # This prevents entries in choppy markets where base score might be high but ADX is dead.
+        if adx_pts < 30: # Use the gate we already calculated
+             net_score = 0
+             factors_detailed.append({"k": "Gate MTF", "v": "ADX Insuficiente (<30)", "score": -100})
+             gate_failed = True
+        
+        if not vol_gate:
+             net_score = 0
+             factors_detailed.append({"k": "Gate MTF", "v": "Volumen Insuficiente", "score": -100})
+             gate_failed = True
         ema50_slope = (ema50_s.iloc[-1] - ema50_s.iloc[-6]) / ema50_s.iloc[-6] * 100 if len(ema50_s) > 6 else 0
         if abs(ema50_slope) < 0.005: 
              factors_detailed.append({"k": "Filtro Pendiente", "v": f"Lateral ({ema50_slope:.4f})", "score": -15})
@@ -335,10 +353,22 @@ class PSTEMAFlow:
                  
                  h1_trend = 1 if h1_close > h1_ema50 else -1
                  
+                 # INTELLIGENT H1 FILTER:
+                 # If signal is TYPE A (Reversal Breakout), we IGNORE H1 trend (because we are changing it!)
+                 # If signal is TYPE B (Trend Re-Entry), we RESPECT H1 trend.
+                 is_type_a_reversal = False
+                 if base_event and "Type A" in base_event.get("v", ""):
+                     is_type_a_reversal = True
+
                  if direction != h1_trend:
-                     penalty_h1 = P_H1_PENALTY
-                     net_score -= penalty_h1
-                     factors_detailed.append({"k": f"Fricción H1 ({asset_class})", "v": "Contratendencia", "score": -penalty_h1})
+                     if is_type_a_reversal:
+                         # EXEMPTION GRANTED
+                         factors_detailed.append({"k": f"Fricción H1 ({asset_class})", "v": "Ignorada (Giro Maestro Tipo A)", "score": 0})
+                     else:
+                         # PENALTY APPLIED (Type B or other)
+                         penalty_h1 = P_H1_PENALTY
+                         net_score -= penalty_h1
+                         factors_detailed.append({"k": f"Fricción H1 ({asset_class})", "v": "Contratendencia", "score": -penalty_h1})
                  else:
                      # Optional: Small bonus for full alignment
                      pass

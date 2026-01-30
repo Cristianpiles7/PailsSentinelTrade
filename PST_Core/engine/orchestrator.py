@@ -401,8 +401,9 @@ async def sync_trades_task(db: PSTDatabase):
                                 await db.update_trade_cierre(d.position_id, d.price, d.profit + d.swap + d.commission)
                                 logger.info(f"✅ Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL: {d.profit}")
                                 
-                                # COOLDOWN TRIGGER: Si fue pérdida, registrar en CooldownManager
-                                if (d.profit + d.swap + d.commission) <= 0:
+                                # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0 para BE sucio), registrar en CooldownManager
+                                total_pnl = d.profit + d.swap + d.commission
+                                if total_pnl < -2.0: # TOLERANCIA BE: Perdonamos pérdidas menores a 2€ (comisiones/swap)
                                     # Importar localmente si fuera necesario, o usar global
                                     from ..utils.cooldown_manager import cooldown_mgr
                                     cooldown_mgr.register_loss(d.symbol, duration_minutes=60)
