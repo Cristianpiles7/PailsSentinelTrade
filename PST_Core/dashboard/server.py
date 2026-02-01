@@ -11,9 +11,16 @@ from PST_Core.utils.tech_utils import calculate_channel_boundary, calculate_manu
 from ..strategies.pst_channel_master import PSTChannelMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
+from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
+from ..strategies.pst_ai_oracle import PSTAIOracle # NEW AI
 from PST_Core.models.classifier import RegimeMode
+from PST_Core.config import CRYPTO_KEYWORDS # NEW
 import logging
 import asyncio # Added for asyncio.run
+import threading
+
+# Global set for background tasks
+background_ai_tasks = set()
 
 # Configurar Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
@@ -42,6 +49,61 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def recursive_clean(obj):
+    """Recursively convert numpy types to native Python types for JSON serialization."""
+    if isinstance(obj, dict):
+        return {k: recursive_clean(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [recursive_clean(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.uint64, np.int32, np.uint32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    else:
+        return obj
+
+# --- MOCK DB FOR AI TO AVOID ASYNCIO/THREAD CONFLICTS ---
+class MockAsyncDB:
+    def __init__(self, config_map=None, state_map=None, db_path=None): 
+        self.config = config_map or {}
+        self.state = state_map or {}
+        self.db_path = db_path
+    
+    async def get_config(self, key, default="AUTO"): 
+        return self.config.get(key, default)
+    
+    async def get_symbol_strategies(self, s): return {} 
+    
+    async def get_ai_oracle_state(self, symbol_key):
+        return self.state.get(symbol_key)
+    
+    async def count_active_strategy_symbols(self, strategy_id):
+        return 1
+
+    async def save_signal_log(self, *args, **kwargs): pass
+    async def save_trade_context(self, *args, **kwargs): pass
+    
+    async def save_ai_oracle_state(self, symbol_key, analysis_json, last_call_ts):
+        if not self.db_path: return False
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("""
+                INSERT INTO ai_oracle_state (symbol, analysis_json, last_call_ts)
+                VALUES (?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET 
+                    analysis_json=excluded.analysis_json,
+                    last_call_ts=excluded.last_call_ts
+            """, (symbol_key, analysis_json, last_call_ts))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error saving AI state mock: {e}")
+            return False
 
 @app.route('/')
 def index():
@@ -105,7 +167,8 @@ def get_status():
                 seconds_since_tick = now.timestamp() - tick.time
                 
                 # Umbral: 120s para general (2 min), 300s para Cripto
-                limit = 300 if ("BTC" in r['symbol'] or "ETH" in r['symbol']) else 120
+                is_crypto = any(k in r['symbol'] for k in CRYPTO_KEYWORDS)
+                limit = 300 if is_crypto else 120
                 if seconds_since_tick > limit:
                     is_open = False
             
@@ -117,8 +180,9 @@ def get_status():
             # y la estrategia activa en tech_data['active_strategy'].
             r['manual_score'] = r['tech_data'].get('score', 0)
             r['manual_action'] = r['tech_data'].get('signal_direction', 'WAIT')
+            r['direction'] = r['tech_data'].get('direction', 0)
             r['manual_desc'] = r['tech_data'].get('strat_status', {}).get('Status', 'N/A')
-            r['winning_strategy'] = r['tech_data'].get('active_strategy', 'PST-Channel-Master')
+            r['winning_strategy'] = r['tech_data'].get('active_strategy', 'Estrategia Maestra (Canales)')
             r['manual_strat_name'] = r['winning_strategy']
             r['manual_strat_desc'] = "Análisis unificado de estrategias élite (Canales, EMA Flow, RSI)."
 
@@ -196,47 +260,117 @@ def get_status():
 
 @app.route('/api/config', methods=['GET', 'POST'])
 def bot_config():
-    from PST_Core.models.database import PSTDatabase
-    import asyncio
-    db = PSTDatabase()
-    
-    if request.method == 'POST':
-        data = request.json
-        key = data.get('key')
-        value = data.get('value')
-        if not key or not value:
-            return jsonify({"error": "Missing key or value"}), 400
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-        success = asyncio.run(db.update_config(key, value))
-        return jsonify({"success": success})
-    
-    # GET
-    key = request.args.get('key', 'trading_mode')
-    value = asyncio.run(db.get_config(key))
-    return jsonify({"key": key, "value": value})
+        if request.method == 'POST':
+            data = request.json
+            key = data.get('key')
+            value = data.get('value')
+            if not key or not value:
+                conn.close()
+                return jsonify({"error": "Missing key or value"}), 400
+            
+            # Upsert config
+            cursor.execute("INSERT OR REPLACE INTO bot_config (key, value) VALUES (?, ?)", (key, value))
+            conn.commit()
+            conn.close()
+            return jsonify({"success": True})
+        
+        # GET
+        key = request.args.get('key', 'trading_mode')
+        cursor.execute("SELECT value FROM bot_config WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        return jsonify({"key": key, "value": row['value'] if row else None})
+    except Exception as e:
+        logger.error(f"Error in bot_config: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/config/symbols', methods=['GET'])
 def get_config_symbols():
-    from PST_Core.models.database import PSTDatabase
-    import asyncio
-    db = PSTDatabase()
-    symbols_data = asyncio.run(db.get_all_symbols_config())
-    return jsonify(symbols_data)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM symbols_config ORDER BY type DESC, symbol ASC")
+        rows = cursor.fetchall()
+        # Convert to list of dicts (array for frontend)
+        result = [dict(row) for row in rows]
+        conn.close()
+        return jsonify(result)
+    except Exception as e:
+         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/config/symbols/toggle', methods=['POST'])
 def toggle_symbol_active():
-    from PST_Core.models.database import PSTDatabase
-    import asyncio
-    db = PSTDatabase()
-    data = request.json
-    symbol = data.get('symbol')
-    active = data.get('active')
-    
-    if symbol is None or active is None:
-        return jsonify({"error": "Missing symbol or active status"}), 400
-    
-    success = asyncio.run(db.set_symbol_active(symbol, active))
-    return jsonify({"success": success})
+    try:
+        data = request.json
+        symbol = data.get('symbol')
+        active = data.get('active')
+        
+        if symbol is None or active is None:
+            return jsonify({"error": "Missing symbol or active status"}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        val = 1 if active else 0
+        cursor.execute("UPDATE symbols_config SET is_active = ? WHERE symbol = ?", (val, symbol))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/config/strategies/<symbol>', methods=['GET'])
+def get_symbol_strategies_config(symbol):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT strategy_name, is_active FROM symbol_strategies WHERE symbol = ?", (symbol,))
+        rows = cursor.fetchall()
+        strategies = {row['strategy_name']: bool(row['is_active']) for row in rows}
+        conn.close()
+        
+        # DEFAULTS: Asegurar que aparezcan aunque no estén en DB aún
+        defaults = ["PSTChannelMaster", "PSTEMAFlow", "PSTMeanReversion", "PSTAIOracle"]
+        for s in defaults:
+            if s not in strategies:
+                strategies[s] = True # Default Active
+                
+        return jsonify(strategies)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/config/strategies/toggle', methods=['POST'])
+def toggle_symbol_strategy():
+    try:
+        data = request.json
+        symbol = data.get('symbol')
+        strategy = data.get('strategy')
+        active = data.get('active')
+        
+        if symbol is None or strategy is None or active is None:
+             return jsonify({"error": "Missing params"}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        val = 1 if active else 0
+        
+        # Check if exists
+        cursor.execute("SELECT 1 FROM symbol_strategies WHERE symbol = ? AND strategy_name = ?", (symbol, strategy))
+        exists = cursor.fetchone()
+        
+        if exists:
+            cursor.execute("UPDATE symbol_strategies SET is_active = ? WHERE symbol = ? AND strategy_name = ?", (val, symbol, strategy))
+        else:
+             cursor.execute("INSERT INTO symbol_strategies (symbol, strategy_name, is_active) VALUES (?, ?, ?)", (symbol, strategy, val))
+             
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # Removed redundant get_dashboard_data and stats duplicates
 @app.route('/api/stats/advanced')
@@ -402,6 +536,7 @@ def get_chart_data(symbol):
             return jsonify({"error": "No data"}), 404
  
         mtf_data = {
+            'symbol': symbol,
             'm1': df_m1,
             'm5': df_m5_real if df_m5_real is not None else df, # Use Real M5 or fallback
             'm15': df_m15,
@@ -412,6 +547,22 @@ def get_chart_data(symbol):
         # Calcular Indicadores
         df['ema_21'] = ta.ema(df['close'], length=21)
         df['ema_50'] = ta.ema(df['close'], length=50) 
+        
+        # Bollinger Bands (Calculamos con parámetros de la estrategia)
+        from ..utils.tech_utils import get_asset_class
+        asset_class = get_asset_class(symbol)
+        bb_dev = 2.5
+        if asset_class == "CRYPTO": bb_dev = 2.8
+        
+        bbands = ta.bbands(df['close'], length=20, std=bb_dev)
+        if bbands is not None:
+             df['bb_lower'] = bbands.iloc[:, 0]
+             df['bb_mid'] = bbands.iloc[:, 1]
+             df['bb_upper'] = bbands.iloc[:, 2]
+        else:
+             df['bb_lower'] = None
+             df['bb_mid'] = None
+             df['bb_upper'] = None
         
         # Calcular RSIs adicionales para el HUD (M1, M5, H1)
         rsi_m1 = 50
@@ -443,8 +594,10 @@ def get_chart_data(symbol):
         # Prepare Response Objects
         u_macro, l_macro, u_local, l_local = [], [], [], []
         strategy_analysis = {}
+        grouped_strategies = []
         # Pre-init variables to avoid UnboundLocalError if try block fails early
         rsi_val = rsi_m5
+        atr_val = 0.0
         vol_val = df['tick_volume'].iloc[-1] if 'tick_volume' in df.columns else 0
         vol_ma = df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df.columns else 1
         # REMOVED: df = pd.DataFrame() - caused overwrite of fetched data
@@ -494,16 +647,88 @@ def get_chart_data(symbol):
                 def __init__(self, mode): self.mode = mode
             regime_obj = MockRegime(mode_str) 
             
-            # Lista de estrategias por regime (Sync con orchestrator)
-            # Enable ALL strategies for display (User Request: Show all even if 0)
-            strat_instances = [
-                # PSTRSIEquities(),
-                PSTEMAFlow()
-            ]
+            # --- STRATEGY CONFIGURATION (DB Driven - SYNC FIX) ---
+            # Replace asyncio.run to avoid Event Loop conflicts in Flask
+            strat_config = {}
+            try:
+                conn_conf = sqlite3.connect(DB_PATH)
+                conn_conf.row_factory = sqlite3.Row
+                c_conf = conn_conf.cursor()
+                # Check for table existence first (safety)
+                c_conf.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symbol_strategies'")
+                if c_conf.fetchone():
+                    c_conf.execute("SELECT strategy_name, is_active FROM symbol_strategies WHERE symbol = ?", (symbol,))
+                    rows = c_conf.fetchall()
+                    strat_config = {row['strategy_name']: bool(row['is_active']) for row in rows}
+                conn_conf.close()
+            except Exception as e:
+                logger.error(f"Error loading strat config sync: {e}")
+
+            # Defaults for missing entries
+            defaults = ["PSTChannelMaster", "PSTEMAFlow", "PSTMeanReversion", "PSTAIOracle"]
+            for s in defaults:
+                if s not in strat_config:
+                    strat_config[s] = True
             
-            # Inyectar nombres de estrategias activas
-            active_strats_list = [type(s).__name__.replace('PST','') for s in strat_instances] + ["ChannelMaster"]
-            logger.debug(f"📊 HUD Analysis for {symbol} | Mode: {mode_str} | Strats: {active_strats_list}")
+            # Build ACTIVE instances list
+            strat_instances = []
+            if strat_config.get('PSTEMAFlow', True):
+                strat_instances.append(PSTEMAFlow())
+            if strat_config.get('PSTMeanReversion', True):
+                strat_instances.append(PSTMeanReversion())
+            
+            # --- MOCK DB FOR AI TO AVOID ASYNCIO/THREAD CONFLICTS (Redundant removed) ---
+
+            # Pre-load config AND state for AI
+            config_map = {}
+            state_map = {}
+            try:
+                conn_conf = sqlite3.connect(DB_PATH)
+                conn_conf.row_factory = sqlite3.Row
+                c = conn_conf.cursor()
+                
+                # 1. Config
+                c.execute("SELECT key, value FROM bot_config")
+                for row in c.fetchall():
+                    config_map[row['key']] = row['value']
+                
+                # 2. AI State (Fetch relevant keys)
+                try:
+                    c.execute("SELECT symbol, analysis_json, last_call_ts FROM ai_oracle_state WHERE symbol LIKE ?", (f"{symbol}%",))
+                    for row in c.fetchall():
+                        import json
+                        try:
+                            state_map[row['symbol']] = {
+                                "analysis": json.loads(row['analysis_json']),
+                                "ts": row['last_call_ts']
+                            }
+                        except: pass
+                except Exception as ex_state:
+                     logger.error(f"Error reading AI state: {ex_state}")
+
+                conn_conf.close()
+            except Exception as e:
+                logger.error(f"Error loading config/state sync: {e}")
+            
+            mock_db = MockAsyncDB(config_map, state_map, db_path=DB_PATH)
+            
+            # MULTI-AI INSTANTIATION (For Tabs)
+            if strat_config.get('PSTAIOracle_gemini', True):
+                strat_instances.append(PSTAIOracle(provider_type="gemini", db=mock_db))
+            if strat_config.get('PSTAIOracle_groq', True):
+                strat_instances.append(PSTAIOracle(provider_type="groq", db=mock_db))
+            if strat_config.get('PSTAIOracle_ollama', True):
+                strat_instances.append(PSTAIOracle(provider_type="ollama", db=mock_db))
+            
+            # Fallback for old generic key compatibility
+            if not any(isinstance(s, PSTAIOracle) for s in strat_instances) and strat_config.get('PSTAIOracle', False):
+                 strat_instances.append(PSTAIOracle(db=mock_db))
+            
+            active_strats_list = [type(s).__name__.replace('PST','') for s in strat_instances]
+            if strat_config.get('PSTChannelMaster', True):
+                active_strats_list.append("ChannelMaster")
+            
+            logger.debug(f"📊 HUD Analysis for {symbol} | Mode: {mode_str} | Enabled: {active_strats_list}")
 
             # Recuperar niveles manuales del usuario para este símbolo
             conn_lvl = sqlite3.connect(DB_PATH)
@@ -546,6 +771,7 @@ def get_chart_data(symbol):
             strategy_analysis['score'] = master_score
             strategy_analysis['entry'] = master_res.get('entry', 0)
             strategy_analysis['manual_score'] = master_score
+            strategy_analysis['direction'] = master_res.get('entry', 0)
             
             # --- AUTO STRAT META INJECTION ---
             strategy_analysis['strat_meta'] = {
@@ -572,10 +798,12 @@ def get_chart_data(symbol):
                 "PST-Session-Master": "Maestro de Sesión (ORB)",
                 "PST-Divergence": "Cazador Divergencias",
                 "PST-News-Fade": "Contra-Noticia (Fade)",
-                "PSTEmaFlow": "Flujo EMA (Tendencia)",
+                "PSTEMAFlow": "Flujo EMA (Tendencia)",
                 "PST-EMA-Flow": "Flujo EMA (Tendencia)",
                 "PSTRSIEquities": "RSI Equities (Multi-Asset)",
-                "PST-RSI-Equities": "RSI Equities (Multi-Asset)"
+                "PST-RSI-Equities": "RSI Equities (Multi-Asset)",
+                "PSTMeanReversion": "Reversión a la Media (Rangos)",
+                "PST-Mean-Reversion": "Reversión a la Media (Rangos)"
             }
             KEY_TRANS = {
                 "H1 Trend": "Tendencia H1",
@@ -606,7 +834,99 @@ def get_chart_data(symbol):
             grouped_strategies = []
             
             # 1. Sub-Strategies
+            mtf_data['symbol'] = symbol 
+            
+            # --- AI BACKGROUND LOADING LOGIC ---
             for s in strat_instances:
+                s_real_name = str(getattr(s, 'STRATEGY_NAME', type(s).__name__))
+                
+                if 'AI-Oracle' in s_real_name:
+                    p_type_raw = getattr(s, 'provider_type', 'unknown')
+                    p_type = (p_type_raw or 'unknown').upper()
+                    
+                    # Fix Naming Duplication
+                    base_name = STRAT_TRANS.get(s_real_name, s_real_name)
+                    final_name = base_name if p_type in base_name else f"{base_name} [{p_type}]"
+
+                    # Check if already running in background
+                    if symbol in background_ai_tasks:
+                         if 'grouped_strategies' not in locals(): grouped_strategies = []
+                         grouped_strategies.append({
+                            "name": final_name,
+                            "score": 0,
+                            "status": "⏳ ANALIZANDO...", 
+                            "factors": [{"k": "Estado", "v": "Procesando en segundo plano..."}]
+                         })
+                         continue
+
+                    # INSTANT RESPONSE STRATEGY: Check cache first, spawn background if needed
+                    # This ensures modal opens instantly without waiting for AI
+                    try:
+                        # Quick check: is there a recent cached result in DB?
+                        provider_name = p_type.lower() if p_type and p_type != 'UNKNOWN' else 'unknown'
+                        cache_key = f"{symbol}_{provider_name}"
+                        
+                        # Check if we have fresh data in memory (from DB sync)
+                        last_analysis = getattr(s, '_shared_last_analysis', {}).get(cache_key)
+                        last_ts = getattr(s, '_shared_cooldowns', {}).get(cache_key, 0)
+                        now_ts = datetime.now().timestamp()
+                        is_fresh = (now_ts - last_ts) < 300  # 5 minutes
+                        
+                        if last_analysis and is_fresh:
+                            # We have fresh cached data - return it immediately
+                            s_score = last_analysis.get('score', 0)
+                            s_meta = last_analysis.get('metadata', {})
+                            reasoning = s_meta.get('score_breakdown', {}).get('IA', 'Análisis Completado')
+                            
+                            grouped_strategies.append({
+                                "name": final_name,
+                                "score": s_score,
+                                "status": reasoning[:50] + "..." if len(reasoning) > 50 else reasoning,
+                                "factors": s_meta.get('factors_detailed', [])
+                            })
+                            
+                            # Update max_sub_score for HUD
+                            if s_score > max_sub_score:
+                                max_sub_score = s_score
+                                best_s_name = final_name
+                        else:
+                            # No fresh cache - spawn background thread and return "ANALIZANDO..." immediately
+                            if symbol not in background_ai_tasks:
+                                def bg_ai_worker(strat, dat, lvls, sym):
+                                      try:
+                                          loop = asyncio.new_event_loop()
+                                          asyncio.set_event_loop(loop)
+                                          result = loop.run_until_complete(strat.calculate_signal(dat, "AUTO", user_levels=lvls, force=True))
+                                          loop.close()
+                                          logger.info(f"✅ [BG-AI] {sym} completed with score {result.get('score', 0)}")
+                                      except Exception as e:
+                                          logger.error(f"❌ [BG-AI] {sym} error: {e}")
+                                      finally:
+                                          if sym in background_ai_tasks: background_ai_tasks.remove(sym)
+
+                                t = threading.Thread(target=bg_ai_worker, args=(s, mtf_data, user_levels_input, symbol))
+                                t.daemon = True
+                                background_ai_tasks.add(symbol)
+                                t.start()
+                            
+                            # Return loading state immediately
+                            grouped_strategies.append({
+                               "name": final_name,
+                               "score": 0,
+                               "status": "⏳ ANALIZANDO...",
+                               "factors": [{"k": "Info", "v": "Iniciando análisis..."}]
+                            })
+                    except Exception as e:
+                        logger.error(f"Error loading AI strategy for {symbol}: {e}")
+                        grouped_strategies.append({
+                            "name": final_name,
+                            "score": 0,
+                            "status": "Error",
+                            "factors": [{"k": "Error", "v": str(e)}]
+                        })
+                    continue
+                
+                # Normal Execution (Non-AI or Cached AI)
                 try:
                     s_res = asyncio.run(s.calculate_signal(mtf_data, mode_str, user_levels=user_levels_input))
                     s_score = s_res.get('score', 0)
@@ -630,6 +950,7 @@ def get_chart_data(symbol):
                         strategy_analysis['score'] = s_score
                         strategy_analysis['score_breakdown'] = s_meta.get('score_breakdown', {})
                         strategy_analysis['factors_detailed'] = s_meta.get('factors_detailed', [])
+                        strategy_analysis['direction'] = s_meta.get('direction', 0)
                         best_s_name = s_name
                     
                     # Entry Status logic
@@ -681,9 +1002,11 @@ def get_chart_data(symbol):
                     traceback.print_exc()
 
             # 2. Master Strategy (Using isolated master_score and master_metadata)
-            # Solo mostrar si hay niveles manuales configurados para este símbolo
+            # Solo mostrar si hay niveles manuales configurados para este símbolo Y está activa
             has_manual_levels = len(user_levels) > 0
-            if has_manual_levels or master_score > 0:
+            is_master_active = strat_config.get('PSTChannelMaster', True)
+            
+            if is_master_active and (has_manual_levels or master_score > 0):
                 m_status = "¡ACCIÓN!" if master_score >= 70 else ("Vigilar" if master_score >= 40 else "Neutral")
                 m_factors = []
                 m_detailed = master_metadata.get('factors_detailed', [])
@@ -889,18 +1212,20 @@ def get_chart_data(symbol):
                         val_msg = []
                         
                         # USE UNIFIED SCORING
-                        strat_score, action_reco, val_msg = calculate_manual_score(
+                        strat_score, action_reco, val_msg, reco_risk = calculate_manual_score(
                             price=close_val,
                             lvl_price=lvl_price,
                             l_type=lvl['type'],
                             rsi=rsi_val,
                             vol_val=vol_val,
-                            vol_ma=vol_ma
+                            vol_ma=vol_ma,
+                            atr_val=atr_val
                         )
                         
                         lvl['action_reco'] = action_reco
                         lvl['strat_score'] = round(strat_score)
                         lvl['validation'] = ", ".join(val_msg) if val_msg else "Standard"
+                        lvl['risk_reco'] = reco_risk
 
             # logger.debug(f"DEBUG: HUD Analysis OK. Score: {strategy_analysis['score']}")
         except Exception as e:
@@ -947,7 +1272,11 @@ def get_chart_data(symbol):
             "channel_local_lower": l_local,
             "ema_21": df['ema_21'].tolist() if 'ema_21' in df.columns else [],
             "ema_50": df['ema_50'].tolist() if 'ema_50' in df.columns else [],
+            "bb_lower": df['bb_lower'].tolist() if 'bb_lower' in df.columns else [],
+            "bb_upper": df['bb_upper'].tolist() if 'bb_upper' in df.columns else [],
+            "bb_mid": df['bb_mid'].tolist() if 'bb_mid' in df.columns else [],
             "analysis": strategy_analysis,
+            "detailedData": grouped_strategies,
             "technical_analysis": technical_analysis,
             "trade": trade_info
         }
@@ -1362,6 +1691,58 @@ def close_all_positions():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/ai/force-analyze/<symbol>', methods=['POST'])
+def force_analyze_ia(symbol):
+    """Fuerza un análisis de IA ignorando filtros Sniper."""
+    try:
+        from ..engine.mt5_async import get_mtf_data_async
+        from ..models.classifier import RegimeClassifier
+        from ..strategies.pst_ai_oracle import PSTAIOracle
+        import asyncio
+
+        # Obtener proveedor solicitado (opcional)
+        provider_type = request.args.get('provider') # ej: 'groq', 'ollama'
+        
+        # 1. Obtener datos MTF y niveles
+        mtf_data = asyncio.run(get_mtf_data_async(symbol))
+        if not mtf_data:
+             return jsonify({"error": "No data found"}), 404
+             
+        # DEFENSIVE: Ensure symbol is present
+        mtf_data['symbol'] = symbol
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM user_levels WHERE symbol = ? AND is_active = 1", (symbol,))
+        levels = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        # 2. Ejecutar IA con FORCE=True y el proveedor específico
+        # FIX: Usar MockAsyncDB para evitar "RuntimeError: Event loop is closed"
+        # FIX: Pasar 'symbol' explícitamente en mtf_data
+        
+        mock_db_instance = MockAsyncDB(db_path=DB_PATH) # Ensure we use the SYNC mock
+        oracle = PSTAIOracle(provider_type=provider_type, db=mock_db_instance)
+        
+        classifier = RegimeClassifier()
+        regime = "BUSCANDO..."
+        
+        if mtf_data and mtf_data.get('h1') is not None:
+            r_obj, _ = classifier.classify(mtf_data['h1'])
+            regime = str(r_obj)
+
+        result = asyncio.run(oracle.calculate_signal(mtf_data, regime, user_levels=levels, force=True))
+        
+        return jsonify({
+            "success": True, 
+            "result": result,
+            "message": f"Oráculo {oracle.provider_type.upper()} disparado manualmente."
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error forzando IA para {symbol}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/levels/<symbol>')
 def get_user_levels(symbol):

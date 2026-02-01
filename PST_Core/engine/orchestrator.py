@@ -1,20 +1,24 @@
 import asyncio
 import logging
-from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sym_info_async, get_positions_async, get_mtf_data_async
+from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sym_info_async, get_positions_async, get_mtf_data_async, send_order_async
 from ..models.classifier import RegimeClassifier, RegimeMode
 from ..models.database import PSTDatabase
 from .executor import PSTExecutor
 from ..strategies.pst_channel_master import PSTChannelMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
+from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
+from ..strategies.pst_ai_oracle import PSTAIOracle # NEW V6.5 AI
 from ..portfolio.manager import PortfolioManager
-from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER
+from ..utils.news_manager import news_mgr # NEW V3.0
+from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS
 import pandas_ta as ta
 import pandas as pd
 from typing import List
 import json
 import numpy as np
 from ..utils.cooldown_manager import cooldown_mgr # Cooldown Import
+from ..utils.notification_manager import notif_mgr
 
 # Configuración básica de logs para el Corazón PST
 logging.basicConfig(
@@ -34,21 +38,43 @@ class SymbolTask:
         self.interval = interval
         self.running = True
         self.classifier = RegimeClassifier()
-        # Instanciar estrategias élite
-        # SIMPLIFICACIÓN ESTRATÉGICA: Master + RSI Equities + EMA Flow
-        self.strategies = {
-            RegimeMode.TREND: [PSTChannelMaster(), PSTEMAFlow()],
-            RegimeMode.RANGE: [PSTChannelMaster()], # PSTRSIEquities() Desactivada
-            RegimeMode.VOLATILE: [PSTChannelMaster(), PSTEMAFlow()] # PSTRSIEquities() Desactivada
-        }
+        # Instanciar estrategias
+        self.channel_master = PSTChannelMaster()
+        self.ema_flow = PSTEMAFlow()
+        self.mean_reversion = PSTMeanReversion()
+        
+        # IA Dinámica (Selector por Símbolo)
+        # Motor de IA Oráculo (Multi-Instancia para Competición)
+        self.ai_oracle_gemini = PSTAIOracle(db=self.db, provider_type="gemini")
+        self.ai_oracle_groq = PSTAIOracle(db=self.db, provider_type="groq")
+        self.ai_oracle_ollama = PSTAIOracle(db=self.db, provider_type="ollama")
+
+        self.strategies = [
+            self.ema_flow, 
+            self.mean_reversion, 
+            self.ai_oracle_gemini,
+            self.ai_oracle_groq,
+            self.ai_oracle_ollama
+        ]
 
     async def run(self):
         logger.debug(f"🚀 Iniciando tarea para {self.symbol}")
         while self.running:
-            user_levels = None # Inicialización de seguridad
+            mtr_m1 = mtr_m5 = mtr_m15 = mtr_h1 = {"rsi": 0, "vol": 0, "adx": 0}
+            volatility_factor = 1.0
+            is_market_open = True
+            user_levels = None 
+
+            # 0. Verificar si el símbolo sigue activo globalmente
+            is_active = await self.db.get_config(f"symbol_active_{self.symbol}", default="1")
+            if is_active == "0":
+                logger.info(f"🛑 Deteniendo tarea para {self.symbol} por desactivación global.")
+                self.running = False
+                break
             try:
                 # 1. Obtener Datos Multi-Timeframe (M5, M15, H1, H4)
                 mtf_data = await get_mtf_data_async(self.symbol)
+                mtf_data['symbol'] = self.symbol # Inyectar símbolo para estrategias
                 
                 # Obtener niveles manuales del usuario (Crítico para Trading Híbrido)
                 user_levels_list = await self.db.get_user_levels(self.symbol)
@@ -147,7 +173,9 @@ class SymbolTask:
                     is_market_open = True
                     
                     # Reglas por tipo de activo
-                    if "BTC" in self.symbol or "ETH" in self.symbol: 
+                    is_crypto = any(k in self.symbol for k in CRYPTO_KEYWORDS)
+                    
+                    if is_crypto: 
                         # Cripto 24/7
                         is_market_open = True
                     elif "EU50" in self.symbol:
@@ -179,7 +207,7 @@ class SymbolTask:
                     # 2. Cierre Viernes Noche (para evitar gaps de finde)
                     # Si es Viernes (4) y son más de las 23:00 (hora local del servidor), marcar como cerrado
                     # EXCEPCION: Criptomonedas (24/7)
-                    if not ("BTC" in self.symbol or "ETH" in self.symbol):
+                    if not is_crypto:
                         if now.weekday() == 4 and now.hour >= 23:
                             is_market_open = False
 
@@ -207,22 +235,96 @@ class SymbolTask:
                     best_metadata = {}
                     
                     # Definir estrategias "Élite" que siempre queremos monitorear
-                    elite_strats = [PSTChannelMaster(), PSTEMAFlow()] # PSTRSIEquities() Desactivada
+                    elite_strats = [self.channel_master] + self.strategies # PSTRSIEquities() Desactivada
                     
                     # Mapeo de nombres para consistencia
                     STRAT_TRANS = {
-                        "PSTChannelMaster": "Estrategia Maestra (Canales)",
+                        "PSTChannelMaster": "Canal Maestro (T. Híbrido)",
                         "PSTRSIEquities": "RSI Equities (Multi-Asset)",
-                        "PSTEMAFlow": "Flujo EMA (Tendencia)"
+                        "PSTEMAFlow": "Flujo EMA (Tendencia)",
+                        "PSTMeanReversion": "Reversión a la Media (Rangos)",
+                        "PSTAIOracle_gemini": "🤖 IA Gemini (Cloud)",
+                        "PSTAIOracle_groq": "🚀 IA Groq (Super Sónica)",
+                        "PSTAIOracle_ollama": "🏠 IA Ollama (Local)"
                     }
+
+                    # Obtener configuración de estrategias para este símbolo (NEW V3.3)
+                    # Si no existe configuración, se asume True. 
+                    # strat_config es un dict: {'PSTEMAFlow': False, ...}
+                    strat_config = await self.db.get_symbol_strategies(self.symbol)
+                    
+                    # DEBUG CRITICO: Verificar tipo de strat_config
+                    if isinstance(strat_config, list):
+                        logger.warning(f"⚠️ [TYPE FIX] strat_config for {self.symbol} is LIST, converting to DICT. Val: {strat_config}")
+                        strat_config = {}
+
+                    # --- PRE-CALCULO DE MÉTRICAS (Necesario para el Dashboard incluso si cerrado) ---
+                    # Calcular factor de volatilidad
+                    atr_val = get_safe(atr_series) if 'atr_series' in locals() else 0.0
+                    atr_mean = atr_series.rolling(window=20).mean().iloc[-1] if len(atr_series) > 20 else atr_val
+                    volatility_factor = (atr_val / atr_mean) if atr_mean > 0 else 1.0
+
+                    # Helper para calcular métricas de un DF
+                    def calc_metrics(df_in):
+                        if df_in is None or len(df_in) < 20: return {"rsi": 0, "vol": 0, "adx": 0}
+                        try:
+                            _rsi = ta.rsi(df_in['close'], length=14).iloc[-1]
+                            # Vol Relativo: Vol Actual / Media 20
+                            _v = df_in['tick_volume'].iloc[-1] if 'tick_volume' in df_in else 0
+                            _v_ma = df_in['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df_in else 1
+                            if _v_ma == 0: _v_ma = 1
+                            _vol_rel = round(_v / _v_ma, 1) if 'tick_volume' in df_in else 0
+                            _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-1]
+                            return {"rsi": round(_rsi, 1), "vol": _vol_rel, "adx": round(_adx, 1)}
+                        except:
+                            return {"rsi": 0, "vol": 0, "adx": 0}
+
+                    mtr_m1 = calc_metrics(mtf_data.get('m1'))
+                    mtr_m5 = calc_metrics(mtf_data.get('m5'))
+                    mtr_m15 = calc_metrics(mtf_data.get('m15'))
+                    mtr_h1 = calc_metrics(mtf_data.get('h1'))
+
+                    # --- CORTOCIRCUITO POR MERCADO CERRADO ---
+                    # Si el mercado está cerrado, saltamos la ejecución de estrategias (incluye IA)
+                    if not is_market_open:
+                        # Creamos un tech_data mínimo para alimentar el dashboard sin procesar estrategias
+                        tech_data = {
+                            "rsi": rsi_val, "adx": adx,
+                            "mtf": {"m1": mtr_m1, "m5": mtr_m5, "m15": mtr_m15, "h1": mtr_h1},
+                            "ema_alignment": ema_alignment,
+                            "dist_ema21": float((price_h1 - ema21) / ema21 * 100) if ema21 > 0 else 0,
+                            "dist_ema50": float((price_h1 - ema50) / ema50 * 100) if ema50 > 0 else 0,
+                            "dist_ema200": float((price_h1 - ema200) / ema200 * 100) if ema200 > 0 else 0,
+                            "atr_val": atr_val,
+                            "volatility_factor": volatility_factor,
+                            "strat_status": {},
+                            "score": 0,
+                            "active_strategy": "MERCADO CERRADO", 
+                            "direction": 0,
+                            "signal_direction": "NONE", 
+                            "market_open": False
+                        }
+                        await self.db.log_regime(self.symbol, mode, adx, tech_data=json.dumps(tech_data))
+                        await asyncio.sleep(self.interval)
+                        continue
 
                     for strat in elite_strats:
                         try:
+                            # Usar el ID específico si existe (para Multi-IA) o el nombre de clase
+                            strat_id = getattr(strat, 'STRAT_ID', type(strat).__name__)
+                            is_strat_active = strat_config.get(strat_id, True)
+                            if not is_strat_active:
+                                continue
+
                             # 1. Calcular señal
                             s_result = await strat.calculate_signal(mtf_data, mode, user_levels=user_levels)
+                            
                             s_score = s_result.get("score", 0)
                             s_meta = s_result.get("metadata", {})
                             s_name_raw = getattr(strat, 'STRATEGY_NAME', type(strat).__name__)
+                            
+                            # Inyectar nombre limpio en metadata
+                            s_meta["strategy_display"] = STRAT_TRANS.get(s_name_raw, s_name_raw)
                             s_name = STRAT_TRANS.get(s_name_raw, s_name_raw)
 
                             # 2. Actualizar mejor score para el HUD
@@ -232,55 +334,83 @@ class SymbolTask:
                                 best_metadata = s_meta
                                 atr_val = s_result.get("atr", 0)
 
-                            # 3. Evaluar Ejecución (SOLO si pertenece al régimen actual)
-                            # Esto previene "señales fantasma" de estrategias no aptas para el régimen
+                            # 3. Evaluar Ejecución (Trading Automático)
+                            # Verificamos si la estrategia es apta para el régimen actual
+                            strat_type = getattr(strat, 'STRATEGY_TYPE', "UNKNOWN")
                             is_strat_in_regime = False
-                            if mode in self.strategies:
-                                if any(type(strat) == type(rs) for rs in self.strategies[mode]):
-                                    is_strat_in_regime = True
                             
-                            if is_strat_in_regime and s_result.get("entry", 0) != 0:
-                                # Capturamos la señal oficial
-                                if signal == 0: # Priorizamos la primera que dispare en el régimen
-                                    signal = s_result.get("entry", 0)
-                                    # Opcional: Podríamos re-setear strategy_name aquí para que coincida con la ejecución
-                                    # Pero dejar la de mayor score también es informativo.
+                            # Lógica de Compatibilidad de Régimen
+                            if strat_type == mode: 
+                                is_strat_in_regime = True
+                            elif mode == RegimeMode.VOLATILE: # En volátil operamos todo
+                                is_strat_in_regime = True
+                            elif strat_type == "ALL":
+                                is_strat_in_regime = True
+                            
+                            # Si es la Maestra, siempre monitorea
+                            if "ChannelMaster" in type(strat).__name__:
+                                is_strat_in_regime = True
+
+                            # Check rápido de trading mode
+                            trading_mode = await self.db.get_config('trading_mode', 'AUTO')
+                            
+                            if is_strat_in_regime and s_result.get("entry", 0) != 0 and trading_mode == 'AUTO' and is_market_open:
+                                
+                                # 0. Cooldown Check
+                                is_blocked, msg = cooldown_mgr.is_blocked(self.symbol)
+                                if is_blocked:
+                                    logger.debug(f"🧊 {self.symbol} en Cooldown: {msg}")
+                                else:
+                                    # 1. Ejecución
+                                    sig_val = s_result.get("entry", 0)
+                                    sig_type_str = "BUY" if sig_val == 1 else "SELL"
+                                    
+                                    # News Filter
+                                    if news_mgr.is_news_near(self.symbol, window_minutes=30):
+                                         logger.warning(f"🛑 [NEWS BLOCK] {self.symbol} signal blocked.")
+                                         best_metadata["news_blocked"] = True
+                                    else:
+                                        # Check Portfolio Limits
+                                        open_positions = await get_positions_async()
+                                        can_trade = await self.portfolio.can_open_trade(self.symbol, sig_type_str, open_positions)
+                                        
+                                        if can_trade and s_score >= 70:
+                                            # FIRE!
+                                            logger.info(f"⚡ [TRADE] {self.symbol} {sig_type_str} by {s_name} (Score: {s_score})")
+                                            # SL/TP dinámico basado en ATR (si la estrategia lo provee o default)
+                                            atr_current = s_result.get("atr", 0)
+                                            if atr_current == 0: atr_current = atr_val # Fallback
+                                            
+                                            sl_dist = atr_current * SL_ATR_MULTIPLIER if atr_current > 0 else 0
+                                            tp_dist = atr_current * TP_ATR_MULTIPLIER if atr_current > 0 else 0
+                                            
+                                            await self.executor.execute_trade(
+                                                self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode
+                                            )
+                                            await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
+                                            
+                                            # NOTIFICACIÓN TELEGRAM (Ph3)
+                                            if s_score >= 80: # Solo ALERTAS VIP
+                                                asyncio.create_task(notif_mgr.send_signal_alert(
+                                                    self.symbol, s_name, s_score, sig_type_str, 
+                                                    round(sl_dist, 5), round(tp_dist, 5),
+                                                    s_meta.get('factors_detailed', [])
+                                                ))
+                                            
+                                            # Marcar visualmente
+                                            signal = sig_val
+                                            strategy_name = s_name
+                                        else:
+                                            if s_score >= 70:
+                                                 await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_{sig_type_str}", s_score, price)
                         
                         except Exception as e:
-                            logger.error(f"❌ [{self.symbol}] Error estrat {type(strat).__name__}: {e}")
+                            logger.exception(f"❌ [{self.symbol}] Error estrat {type(strat).__name__}: {e}")
 
                     # Fallback de nombre si sigue siendo None o similar
                     if not strategy_name or str(strategy_name) == "None":
                         strategy_name = "PST Strategy Hub"
 
-
-                    # Calcular factor de volatilidad para el dashboard
-                    atr_mean = atr_series.rolling(window=20).mean().iloc[-1] if len(atr_series) > 20 else atr_val
-                    volatility_factor = (atr_val / atr_mean) if atr_mean > 0 else 1.0
-
-                    # --- MTF METRICS CALCULATION (User Request) ---
-                    # Helper para calcular métricas de un DF
-                    def calc_metrics(df_in):
-                        if df_in is None or len(df_in) < 20: return {"rsi": 0, "vol": 0, "adx": 0}
-                        try:
-                            _rsi = ta.rsi(df_in['close'], length=14).iloc[-1]
-                            
-                            # Vol Relativo: Vol Actual / Media 20
-                            _v = df_in['tick_volume'].iloc[-1] if 'tick_volume' in df_in else 0
-                            _v_ma = df_in['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in df_in else 1
-                            if _v_ma == 0: _v_ma = 1
-                            _vol_rel = round(_v / _v_ma, 1) if 'tick_volume' in df_in else 0
-                            
-                            _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-1]
-                            
-                            return {"rsi": round(_rsi, 1), "vol": _vol_rel, "adx": round(_adx, 1)}
-                        except:
-                            return {"rsi": 0, "vol": 0, "adx": 0}
-
-                    mtr_m1 = calc_metrics(mtf_data.get('m1')) # NEW M1
-                    mtr_m5 = calc_metrics(mtf_data.get('m5'))
-                    mtr_m15 = calc_metrics(mtf_data.get('m15'))
-                    mtr_h1 = calc_metrics(mtf_data.get('h1'))
 
                     tech_data = {
                         "rsi": rsi_val, # Legacy H1
@@ -300,6 +430,7 @@ class SymbolTask:
                         "strat_status": make_serializable(best_metadata),
                         "score": current_score,
                         "active_strategy": strategy_name, 
+                        "direction": best_metadata.get("direction", 0),
                         "signal_direction": "BUY" if signal > 0 else ("SELL" if signal < 0 else "NONE"), 
                         "market_open": is_market_open 
                     }
@@ -310,47 +441,8 @@ class SymbolTask:
                     # Log en la Base de Datos para historial
                     await self.db.log_regime(self.symbol, mode, adx, tech_data=json.dumps(tech_data))
                     
-                # 2. SECCIÓN DE TRADING (SYNC CON HUD)
-                # Solo operamos si el mercado está abierto y tenemos datos M5
-                df_m5 = mtf_data.get('m5')
-                trading_mode = await self.db.get_config('trading_mode', 'AUTO')
-                
-                if df_m5 is not None and is_market_open and trading_mode == 'AUTO':
-                    price = df_m5['close'].iloc[-1]
-                    total_score_buy = 0
-                    total_score_sell = 0
-                    
-                    # Solo iteramos sobre las estrategias del régimen ACTUAL (Evita señales fantasma)
-                    active_strats = self.strategies.get(mode, [])
-                    for strat in active_strats:
-                        try:
-                            # 0. Cooldown Check (Last Stand)
-                            is_blocked, msg = cooldown_mgr.is_blocked(self.symbol)
-                            if is_blocked:
-                                continue # Skip strategy calculation if blocked
-
-                            # Reutilizamos el mtf_data para consistencia total
-                            sig = await strat.calculate_signal(mtf_data, mode, user_levels=user_levels)
-                            
-                            if sig["entry"] != 0:
-                                sig_type = "BUY" if sig["entry"] == 1 else "SELL"
-                                open_positions = await get_positions_async()
-                                can_trade = await self.portfolio.can_open_trade(self.symbol, sig_type, open_positions)
-                                
-                                score = sig.get("score", 0)
-                                if can_trade:
-                                    if score >= 70: # Umbral de ejecución
-                                        logger.info(f"⚡ [TRADE] {self.symbol} disparado por {strat.STRATEGY_NAME} (Score: {score})")
-                                        await self.executor.execute_trade(self.symbol, sig_type, sig["atr"]*SL_ATR_MULTIPLIER, sig["atr"]*TP_ATR_MULTIPLIER, strat.STRATEGY_NAME, mode)
-                                        await self.db.log_signal(self.symbol, mode, strat.STRATEGY_NAME, sig_type, score, price)
-                                    else:
-                                        logger.debug(f"🔍 [SIGNAL] {self.symbol} {sig_type} descartada por score bajo ({score})")
-                                else:
-                                    # Solo loguear si el score era alto para no spammear
-                                    if score >= 70:
-                                        await self.db.log_signal(self.symbol, mode, strat.STRATEGY_NAME, f"BLOCKED_{sig_type}", score, price)
-                        except Exception as e:
-                            logger.error(f"❌ Error ejecutando estrategia {strat} para {self.symbol}: {e}")
+                # 2. SECCIÓN DE TRADING (SYNC CON HUD) -> MIGRADO AL BUCLE 1
+                # Bloque eliminado por redundancia y error de tipos.
 
                 # Log de latido (Status Monitor)
                 status_icon = "📈" if mode == RegimeMode.TREND else "↕️" if mode == RegimeMode.RANGE else "⚠️"
@@ -359,13 +451,13 @@ class SymbolTask:
                     if not is_market_open: status_msg = "⛔ [MERCADO CERRADO]"
                     logger.debug(f"{status_icon} {self.symbol:<10} | MODO: {mode:<10} | {status_msg}")
                 else:
-                    # En modo AUTO, el log lo da la estrategia si dispara, 
                     # aquí solo logueamos el estado general en debug
-                    logger.debug(f"{status_icon} {self.symbol:<10} | MODO: {mode:<10} | Precio: {df_m5['close'].iloc[-1] if df_m5 is not None else 'N/A'}")
+                    df_m5_dbg = mtf_data.get('m5')
+                    logger.debug(f"{status_icon} {self.symbol:<10} | MODO: {mode:<10} | Precio: {df_m5_dbg['close'].iloc[-1] if df_m5_dbg is not None else 'N/A'}")
 
                 await asyncio.sleep(self.interval)
             except Exception as e:
-                logger.error(f"❌ Error en {self.symbol}: {e}")
+                logger.exception(f"❌ Error en {self.symbol}: {e}")
                 await asyncio.sleep(10)
 
 async def sync_trades_task(db: PSTDatabase):
@@ -481,6 +573,10 @@ async def start_v6(symbols: List[str]):
         logger.warning(f"⚠️ Error cargando símbolos desde DB: {e}. Usando lista por defecto.")
 
     logger.info("💎 PST ASYNC CORE ONLINE 💎")
+    
+    # Initialize Notification Manager with DB
+    from ..utils.notification_manager import notif_mgr
+    notif_mgr.db = db
     
     executor = PSTExecutor(db, portfolio)
     # Crear tareas para cada símbolo pasando DB y Portfolio

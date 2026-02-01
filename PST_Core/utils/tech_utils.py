@@ -111,10 +111,10 @@ def calculate_channel_boundary(df, window=10, projection=30, recent_pivots=None)
         print(f"Error in calculate_channel_boundary: {e}")
         return [], [], None
 
-def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None, trend_slope=0, adx=0):
+def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_green=None, is_red=None, trend_slope=0, adx=0, atr_val=0):
     """
     Motor de puntuacion ULTRA-LÓGICO y ESTRICTO.
-    Retorna: (total_score, action_name, factor_details_list)
+    Retorna: (total_score, action_name, factor_details_list, recommendations)
     """
     if price <= 0: return 0, "NEUTRAL", []
     
@@ -209,7 +209,14 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         else:
             factors.append({"k": "Vela", "v": "Indecisión", "score": 0})
 
-    return round(min(100, max(0, score))), action, factors
+    # 3. Lógica de Riesgos (NUEVO Ph2)
+    reco = {"sl_dist": 0, "tp_dist": 0}
+    if atr_val > 0:
+        # Recomendamos 1.5 ATR para SL y 2.5 para TP por defecto
+        reco["sl_dist"] = round(atr_val * 1.5, 5)
+        reco["tp_dist"] = round(atr_val * 2.5, 5)
+
+    return round(min(100, max(0, score))), action, factors, reco
 
     return round(min(100, score)), action, factors
 
@@ -236,3 +243,92 @@ def get_asset_class(symbol: str) -> str:
     
     # Default fallback
     return "FOREX"
+
+def detect_divergence(df, window=5, order=2):
+    """
+    Detecta divergencias entre Precio y RSI.
+    Retorna: 'BULLISH', 'BEARISH' o None
+    """
+    if len(df) < 50: return None
+    
+    # 1. Asegurar RSI
+    import pandas_ta as ta
+    if 'rsi' not in df.columns:
+        df['rsi'] = ta.rsi(df['close'], length=14)
+    
+    # Identificar picos y valles (Pivots)
+    def is_pivot(series, idx, w, is_high=True):
+        if idx < w or idx >= len(series) - w: return False
+        val = series.iloc[idx]
+        subset = series.iloc[idx-w : idx+w+1]
+        return val == subset.max() if is_high else val == subset.min()
+
+    # Buscamos los 2 últimos pivotes
+    pivots_price = [] # (index, type, value)
+    pivots_rsi = []
+    
+    # Escaneamos las últimas 40 velas buscando pivotes
+    for i in range(len(df)-window-1, len(df)-40, -1):
+        if i < window: break
+        # Altos (Para Bearish)
+        if is_pivot(df['high'], i, window, True):
+            pivots_price.append(('H', i, df['high'].iloc[i]))
+            pivots_rsi.append(('H', i, df['rsi'].iloc[i]))
+        # Bajos (Para Bullish)
+        if is_pivot(df['low'], i, window, False):
+            pivots_price.append(('L', i, df['low'].iloc[i]))
+            pivots_rsi.append(('L', i, df['rsi'].iloc[i]))
+        
+        if len(pivots_price) >= order: break
+
+    if len(pivots_price) < 2: return None
+
+    # Lógica de Divergencia
+    # BULLISH: Precio hace mínimo más bajo, RSI hace mínimo más alto
+    lows = [p for p in pivots_price if p[0] == 'L']
+    if len(lows) >= 2:
+        p2, p1 = lows[0], lows[1] # p2 es más reciente
+        r2 = df['rsi'].iloc[p2[1]]
+        r1 = df['rsi'].iloc[p1[1]]
+        if p2[2] < p1[2] and r2 > r1: return "BULLISH"
+
+    # BEARISH: Precio hace máximo más alto, RSI hace máximo más bajo
+    highs = [p for p in pivots_price if p[0] == 'H']
+    if len(highs) >= 2:
+        p2, p1 = highs[0], highs[1]
+        r2 = df['rsi'].iloc[p2[1]]
+        r1 = df['rsi'].iloc[p1[1]]
+        if p2[2] > p1[2] and r2 < r1: return "BEARISH"
+
+    return None
+
+def detect_absorption(df, vol_rel_threshold=1.5):
+    """
+    Detecta absorción institucional: Alto volumen + Mecha grande + Cuerpo pequeño.
+    Retorna: 'BUY_ABS' (Absorción en suelo), 'SELL_ABS' (Absorción en techo) o None
+    """
+    if len(df) < 20: return None
+    
+    last = df.iloc[-1]
+    import pandas_ta as ta
+    vol_ma = ta.sma(df['tick_volume'], length=20).iloc[-1] if 'tick_volume' in df.columns else 1
+    vol_rel = last['tick_volume'] / vol_ma if vol_ma > 0 else 0
+    
+    if vol_rel < vol_rel_threshold: return None
+    
+    range_total = last['high'] - last['low']
+    body = abs(last['close'] - last['open'])
+    upper_wick = last['high'] - max(last['open'], last['close'])
+    lower_wick = min(last['open'], last['close']) - last['low']
+    
+    if range_total == 0: return None
+    
+    # ABSORCIÓN EN SUELO (Martillo con volumen)
+    if lower_wick > (body * 2) and vol_rel > vol_rel_threshold:
+        return "BUY_ABS"
+    
+    # ABSORCIÓN EN TECHO (Shooting star con volumen)
+    if upper_wick > (body * 2) and vol_rel > vol_rel_threshold:
+        return "SELL_ABS"
+        
+    return None

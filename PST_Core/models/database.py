@@ -98,6 +98,7 @@ class PSTDatabase:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     price2 REAL, -- Para lineas de tendencia
                     time2 TEXT   -- Para lineas de tendencia
+                    , time1 TEXT, time1_ts REAL, time2_ts REAL
                 )
             """)
 
@@ -116,6 +117,25 @@ class PSTDatabase:
                     symbol TEXT PRIMARY KEY,
                     enable_macro INTEGER DEFAULT 1,
                     enable_tactical INTEGER DEFAULT 1
+                )
+            """)
+
+            # Tabla de Configuración de Estrategias por Símbolo (NEW V3.3)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS symbol_strategies (
+                    symbol TEXT,
+                    strategy_name TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    PRIMARY KEY (symbol, strategy_name)
+                )
+            """)
+
+            # Tabla de Caché de IA Oracle (Persistencia entre procesos)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS ai_oracle_state (
+                    symbol TEXT PRIMARY KEY,
+                    analysis_json TEXT,
+                    last_call_ts REAL
                 )
             """)
 
@@ -327,3 +347,75 @@ class PSTDatabase:
             logger.error(f"❌ Error setting symbol active {symbol}: {e}")
             return False
 
+    async def get_symbol_strategies(self, symbol) -> dict:
+        """Obtiene el mapa de estrategias activas/inactivas para un símbolo. {StrategyName: bool}"""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("SELECT strategy_name, is_active FROM symbol_strategies WHERE symbol = ?", (symbol,)) as cursor:
+                    rows = await cursor.fetchall()
+                    return {r['strategy_name']: bool(r['is_active']) for r in rows}
+        except Exception as e:
+            logger.error(f"❌ Error getting strategies for {symbol}: {e}")
+            return {}
+
+    async def set_symbol_strategy(self, symbol, strategy_name, is_active):
+        """Activa o desactiva una estrategia específica para un símbolo."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                val = 1 if is_active else 0
+                await db.execute("""
+                    INSERT INTO symbol_strategies (symbol, strategy_name, is_active)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(symbol, strategy_name) DO UPDATE SET is_active=excluded.is_active
+                """, (symbol, strategy_name, val))
+                await db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error setting strategy {strategy_name} for {symbol}: {e}")
+            return False
+    async def save_ai_oracle_state(self, symbol, analysis_json, last_call_ts):
+        """Guarda el estado actual de la IA para un símbolo."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                await db.execute("""
+                    INSERT INTO ai_oracle_state (symbol, analysis_json, last_call_ts)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(symbol) DO UPDATE SET 
+                        analysis_json=excluded.analysis_json,
+                        last_call_ts=excluded.last_call_ts
+                """, (symbol, analysis_json, last_call_ts))
+                await db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error saving AI state for {symbol}: {e}")
+            return False
+
+    async def get_ai_oracle_state(self, symbol):
+        """Obtiene el último estado guardado de la IA."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                async with db.execute("SELECT analysis_json, last_call_ts FROM ai_oracle_state WHERE symbol = ?", (symbol,)) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        import json
+                        return {
+                            "analysis": json.loads(row[0]),
+                            "ts": row[1]
+                        }
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error getting AI state for {symbol}: {e}")
+            return None
+
+    async def count_active_strategy_symbols(self, strategy_id: str) -> int:
+        """Cuenta cuántos símbolos tienen activada una estrategia específica."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                # La tabla symbol_strategies tiene columnas (symbol, strategy_name, is_active)
+                async with db.execute("SELECT COUNT(*) FROM symbol_strategies WHERE strategy_name = ? AND is_active = 1", (strategy_id,)) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row else 0
+        except Exception as e:
+            logger.error(f"❌ Error counting active strategy symbols for {strategy_id}: {e}")
+            return 1 # Fallback conservador

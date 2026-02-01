@@ -1,0 +1,281 @@
+import pandas_ta as ta
+import pandas as pd
+import numpy as np
+import logging
+from datetime import datetime, timezone
+from ..models.classifier import RegimeMode
+from ..utils.tech_utils import get_asset_class
+
+# Helper for momentum/volume metrics
+def get_mtr_data(df_in, tf_minutes=5):
+    if df_in is None or len(df_in) < 20: return None
+    try:
+        _rsi = ta.rsi(df_in['close'], length=14).iloc[-1]
+        _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-1]
+        _v = df_in['tick_volume'].iloc[-1] if 'tick_volume' in df_in else 0
+        _v_ma = ta.sma(df_in['tick_volume'], length=20).iloc[-1] if 'tick_volume' in df_in else 1
+        return {"rsi": _rsi, "adx": _adx, "vol_rel": _v / _v_ma if _v_ma > 0 else 0}
+    except: return None
+
+logger = logging.getLogger("PST-Mean-Reversion")
+
+class PSTMeanReversion:
+    STRATEGY_NAME = "PST-Mean-Reversion"
+    STRATEGY_TYPE = RegimeMode.RANGING # Especialista en rangos
+    WEIGHT = 1.0 # Peso estándar
+
+    async def calculate_signal(self, data_input, current_regime, user_levels=None):
+        """
+        Calcula señales de reversión a la media basadas en Bollinger Bands (2.5 dev) + RSI.
+        """
+        # 1. Adaptador de Datos
+        df = None
+        if isinstance(data_input, dict):
+            df = data_input.get('m5') # Usamos M5 como base
+        else:
+            df = data_input
+        
+        # --- ASSET PROFILE LOADER ---
+        symbol = "UNKNOWN"
+        if isinstance(data_input, dict) and 'symbol' in data_input:
+             symbol = data_input['symbol']
+        asset_class = get_asset_class(symbol)
+
+        # PARAMETROS BASE
+        P_BB_LEN = 20
+        P_BB_DEV = 2.5      # Exigente: Solo extremos reales
+        P_RSI_LEN = 14
+        P_RSI_OB = 70       # Sobrecompra
+        P_RSI_OS = 30       # Sobreventa
+        P_ADX_MAX = 50      # Filtro anti-tren: Si ADX > 50, no operar contra tendencia
+        
+        if asset_class == "CRYPTO":
+            P_BB_DEV = 2.8   # Cripto es más volátil, exigimos más desviación
+            P_ADX_MAX = 40   # Cripto en tendencia te mata rápido
+        elif asset_class == "INDEX":
+            P_RSI_OB = 75    # Indices suelen sobre-extenderse
+            P_RSI_OS = 25
+
+        if df is None or len(df) < 50:
+             return self._build_neutral_result("Datos insuficientes (<50 velas)")
+
+        # 2. CALCULO DE INDICADORES
+        # RSI
+        df['rsi'] = ta.rsi(df['close'], length=P_RSI_LEN)
+        
+        # Bollinger Bands
+        bbands = ta.bbands(df['close'], length=P_BB_LEN, std=P_BB_DEV)
+        if bbands is None:
+             return self._build_neutral_result("Error calculando Bollinger Bands")
+        
+        # Nombres de columnas BB (pandas_ta suele usar BBL_20_2.5, BBM_20_2.5, BBU_20_2.5)
+        # Buscamos dinámicamente
+        lower_col = f"BBL_{P_BB_LEN}_{P_BB_DEV}"
+        upper_col = f"BBU_{P_BB_LEN}_{P_BB_DEV}"
+        mid_col = f"BBM_{P_BB_LEN}_{P_BB_DEV}"
+        
+        # Fallback si pandas_ta usa nombres genéricos
+        if lower_col not in bbands.columns:
+            # Intentar inferir
+            cols = list(bbands.columns)
+            lower_col = cols[0]
+            mid_col = cols[1]
+            upper_col = cols[2]
+
+        df['bb_lower'] = bbands[lower_col]
+        df['bb_upper'] = bbands[upper_col]
+        df['bb_mid'] = bbands[mid_col]
+        
+        # ADX (Filtro de Fuerza)
+        adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+        adx_val = 0
+        if adx_df is not None and not adx_df.empty:
+             adx_val = adx_df.iloc[-1, 0] # ADX_14 suele ser la primera columna
+
+        # 3. ANALISIS DE LA VELA ACTUAL
+        close = df['close'].iloc[-1]
+        high = df['high'].iloc[-1]
+        low = df['low'].iloc[-1]
+        rsi = df['rsi'].iloc[-1]
+        
+        bb_upper = df['bb_upper'].iloc[-1]
+        bb_lower = df['bb_lower'].iloc[-1]
+        bb_mid = df['bb_mid'].iloc[-1]
+        
+        # Estado Anterior (Para detectar cruces/reingresos)
+        prev_close = df['close'].iloc[-2]
+        prev_rfc = df['close'].iloc[-2] # Reference for crossover
+        prev_rsi = df['rsi'].iloc[-2]
+        prev_bb_lower = df['bb_lower'].iloc[-2]
+        prev_bb_upper = df['bb_upper'].iloc[-2]
+
+        # 4. LOGICA DE ENTRADA Y FACTORES
+        score = 0
+        factor_groups = {
+            "ESTADO": {"k": "Estado", "v": "Analizando Rango", "score": 0},
+            "ESTRUCTURA": None,
+            "RSI": None,
+            "GATILLO": None,
+            "ENTORNO": None,
+            "VOLUMEN": None,
+            "DIVERGENCIA": None,
+            "ABSORCION": None
+        }
+        signal_type = "NEUTRAL"
+        
+        # --- 4.1 FILTRO MAESTRO: ADX (BLOQUEO) ---
+        is_adx_safe = adx_val < P_ADX_MAX
+        if not is_adx_safe:
+             factor_groups["ENTORNO"] = {"k": "Filtro ADX", "v": f"Tendencia Fuerte ({adx_val:.1f})", "score": -100}
+             return self._build_result(0, list(filter(None, factor_groups.values())), "Bloqueado por Tendencia")
+
+        # --- 4.2 Métricas de Entorno (Siempre visibles) ---
+        from ..utils.tech_utils import detect_divergence, detect_absorption
+        div_type = detect_divergence(df)
+        abs_type = detect_absorption(df)
+        
+        # Divergencia Info
+        if div_type:
+            score_div = 20
+            factor_groups["DIVERGENCIA"] = {"k": "Divergencia", "v": f"Detectada ({div_type})", "score": score_div}
+        else:
+            factor_groups["DIVERGENCIA"] = {"k": "Divergencia", "v": "No detectada", "score": 0}
+            
+        # Absorción Info
+        if abs_type:
+            score_abs = 15
+            factor_groups["ABSORCION"] = {"k": "Absorción", "v": "Presión Institucional", "score": score_abs}
+        else:
+            factor_groups["ABSORCION"] = {"k": "Absorción", "v": "Neutro", "score": 0}
+
+        mtr = get_mtr_data(df, tf_minutes=5)
+        vol_rel = mtr['vol_rel'] if mtr else 0
+        adx_now = mtr['adx'] if mtr else adx_val
+
+        # ADX Logic
+        if adx_now < 25:
+            factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Ideal Lateral ({adx_now:.1f})", "score": 10}
+        else:
+            factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Moderado ({adx_now:.1f})", "score": 0}
+        
+        # Volume Logic
+        if vol_rel > 1.2:
+            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Alto ({vol_rel:.1f}x)", "score": 10}
+        else:
+            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Neutro ({vol_rel:.1f}x)", "score": 0}
+
+        # Determinar Sesgo Potencial
+        potential_buy = (low <= bb_lower) or (prev_close <= prev_bb_lower)
+        potential_sell = (high >= bb_upper) or (prev_close >= prev_bb_upper)
+
+        if potential_buy:
+             signal_type = "BUY"
+             # Estructura: Siempre +40 si toca banda (Base operativa)
+             score += 40
+             factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": f"Extrema Inf. ({bb_lower:.5f})", "score": 40}
+             
+             # RSI OS
+             if rsi <= P_RSI_OS:
+                 score += 15
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobreventa ({rsi:.1f})", "score": 15}
+             else:
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
+
+             # GATILLOS
+             trigger_buy_reentry = (prev_close < prev_bb_lower) and (close > bb_lower)
+             trigger_buy_rsi = (prev_rsi < P_RSI_OS) and (rsi > P_RSI_OS)
+             
+             if trigger_buy_reentry:
+                 score += 15
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
+             elif trigger_buy_rsi:
+                 score += 10
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Escape de Sobreventa", "score": 10}
+             else:
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Sin disparador", "score": 0}
+             
+             if factor_groups["ENTORNO"]["score"] > 0: score += 10
+             if factor_groups["VOLUMEN"]["score"] > 0: score += 10
+             if div_type == "BULLISH": score += factor_groups["DIVERGENCIA"]["score"]
+             if abs_type == "BUY_ABS": score += factor_groups["ABSORCION"]["score"]
+
+        elif potential_sell:
+             signal_type = "SELL"
+             # Estructura: Siempre +40 si toca banda
+             score += 40
+             factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": f"Extrema Sup. ({bb_upper:.5f})", "score": 40}
+             
+             # RSI OB
+             if rsi >= P_RSI_OB:
+                 score += 15
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobrecompra ({rsi:.1f})", "score": 15}
+             else:
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
+
+             # GATILLOS
+             trigger_sell_reentry = (prev_close > prev_bb_upper) and (close < bb_upper)
+             trigger_sell_rsi = (prev_rsi > P_RSI_OB) and (rsi < P_RSI_OB)
+             
+             if trigger_sell_reentry:
+                 score += 15
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
+             elif trigger_sell_rsi:
+                 score += 10
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Escape de Sobrecompra", "score": 10}
+             else:
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Sin disparador", "score": 0}
+
+             if factor_groups["ENTORNO"]["score"] > 0: score += 10
+             if factor_groups["VOLUMEN"]["score"] > 0: score += 10
+             if div_type == "BEARISH": score += factor_groups["DIVERGENCIA"]["score"]
+             if abs_type == "SELL_ABS": score += factor_groups["ABSORCION"]["score"]
+
+        # Finalización de factores
+        factors_final = []
+        for k in ["ESTADO", "ESTRUCTURA", "RSI", "GATILLO", "ENTORNO", "VOLUMEN", "DIVERGENCIA", "ABSORCION"]:
+             if factor_groups[k]:
+                  factors_final.append(factor_groups[k])
+
+        # --- VALIDACION FINAL ---
+        final_score = min(100, score)
+        if final_score >= 80:
+             factor_groups["ESTADO"]["v"] = "Oportunidad Confirmada"
+             return self._build_result(final_score, factors_final, f"Reversión {signal_type}", entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1)
+        elif final_score >= 50:
+             factor_groups["ESTADO"]["v"] = "Vigilando Extremo"
+             return self._build_result(final_score, factors_final, "Posible Reversión", entry_signal="NEUTRAL", direction=1 if signal_type == "BUY" else -1)
+        else:
+             return self._build_result(0, factors_final, "Rango Neutral", direction=0)
+
+
+    def _build_neutral_result(self, reason):
+        return {
+            "entry": 0,
+            "atr": 0,
+            "metadata": {
+                "strategy": self.STRATEGY_NAME,
+                "score": 0,
+                "total_score": 0,
+                "score_breakdown": {"Estado": reason},
+                "factors_detailed": [],
+                "direction": 0
+            },
+            "score": 0
+        }
+
+    def _build_result(self, score, factors, status_msg, entry_signal="NEUTRAL", direction=0):
+        entry = 1 if entry_signal == "BUY" else (-1 if entry_signal == "SELL" else 0)
+        return {
+            "entry": entry,
+            "atr": 0, # No recalculamos ATR aqui, lo hace el orchestrator
+            "metadata": {
+                "strategy": self.STRATEGY_NAME,
+                "score": score,
+                "total_score": score,
+                "score_breakdown": {"Estado": status_msg},
+                "factors_detailed": factors,
+                "can_entry": entry != 0,
+                "direction": direction
+            },
+            "score": score
+        }

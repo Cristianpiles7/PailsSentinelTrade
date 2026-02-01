@@ -36,12 +36,29 @@ class PSTExecutor:
         acc = await self.portfolio.get_account_status()
         if not acc: return
 
-        # 3. Calcular Stop Loss y Lote
+        # 3. Calcular Stop Loss y Lote con Volatilidad
         price = s_info.ask if signal_type == "BUY" else s_info.bid
         sl_points = stop_loss_atr / s_info.point
         tp_points = take_profit_atr / s_info.point
 
-        lot = self.portfolio.calculate_lot_size(acc["balance"], self.portfolio.max_risk_pct, sl_points, s_info)
+        # Obtener ATR actual y media para escalado de riesgo (V3.0)
+        df_m5 = await fetch_rates_async(symbol, 5, 50)
+        current_atr = stop_loss_atr / 3.0 # El SL suele ser 3*ATR
+        ma_atr = 0
+        if df_m5 is not None:
+             atr_s = ta.atr(df_m5['high'], df_m5['low'], df_m5['close'], length=14)
+             if atr_s is not None:
+                 current_atr = atr_s.iloc[-1]
+                 ma_atr = atr_s.rolling(20).mean().iloc[-1]
+
+        lot = self.portfolio.calculate_lot_size(
+            acc["balance"], 
+            self.portfolio.max_risk_pct, 
+            sl_points, 
+            s_info,
+            current_atr=current_atr,
+            ma_atr=ma_atr
+        )
         
         # 4. Construir el Request de MT5
         sl_price = price - stop_loss_atr if signal_type == "BUY" else price + stop_loss_atr
@@ -141,6 +158,29 @@ class PSTExecutor:
                     elif p_type == "SELL" and (trail_sl < new_sl or new_sl == 0):
                         new_sl = trail_sl
                         logger.info(f"📉 [TRAILING] {symbol} (Ticket: {ticket}). Siguiendo tendencia a {new_sl:.5f}")
+
+                # C. LÓGICA DE SALIDA DINÁMICA (EMA-Flow V3.0)
+                # Si la tendencia se invalida (cierre al otro lado de EMA21), cerramos de inmediato.
+                if "PST_PST-EMA-Flow" in p.comment:
+                    from ..strategies.pst_ema_flow import PSTEMAFlow
+                    ema_strat = PSTEMAFlow()
+                    if ema_strat.check_exit_signal(df, p_type):
+                         logger.info(f"🛑 [DYNAMIC EXIT] {symbol} (Ticket: {ticket}) - Tendencia invalidada.")
+                         # Cerramos a mercado
+                         request = {
+                             "action": mt5.TRADE_ACTION_DEAL,
+                             "position": ticket,
+                             "symbol": symbol,
+                             "volume": p.volume,
+                             "type": mt5.ORDER_TYPE_SELL if p_type == "BUY" else mt5.ORDER_TYPE_BUY,
+                             "price": s_info.bid if p_type == "BUY" else s_info.ask,
+                             "magic": 666,
+                             "comment": "PST_DynamicExit",
+                             "type_time": mt5.ORDER_TIME_GTC,
+                             "type_filling": mt5.ORDER_FILLING_IOC,
+                         }
+                         await send_order_async(request)
+                         continue # Siguiente posición, esta ya se cerró
 
                 # 3. Ejecutar modificación si ha cambiado el SL
                 if abs(new_sl - p.sl) > s_info.point:

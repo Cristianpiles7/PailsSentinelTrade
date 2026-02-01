@@ -86,20 +86,32 @@ class PortfolioManager:
                 return True
         return False
 
-    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info):
-        """Calcula el lotaje basado en el riesgo monetario y CAP de exposición."""
-        from ..config import MAX_POSITION_COST 
+    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info, current_atr=None, ma_atr=None):
+        """
+        Calcula el lotaje basado en el riesgo monetario, CAP de exposición y VOLATILIDAD.
+        """
         
         if stop_loss_points <= 0 or symbol_info is None:
             return symbol_info.volume_min if symbol_info else 0.01
 
-        risk_money = balance * (risk_per_trade_pct / 100)
+        # --- VOLATILITY RISK ADJUSTMENT (NEW V3.0) ---
+        adjusted_risk = risk_per_trade_pct
+        vol_factor = 1.0
+        if current_atr and ma_atr and ma_atr > 0:
+             vol_factor = ma_atr / current_atr
+             # Ajustar el riesgo: Si hay pánico (ATR > MA), bajamos riesgo. Si hay calma, subimos un poco.
+             # Rango de riesgo: 1.5% base -> min 0.75%, max 1.8%
+             adjusted_risk = risk_per_trade_pct * vol_factor
+             adjusted_risk = max(0.75, min(1.8, adjusted_risk))
+             logger.info(f"🧮 [VOLATILITY] Factor: {vol_factor:.2f} -> Riesgo ajustado: {adjusted_risk:.2f}%")
+
+        risk_money = balance * (adjusted_risk / 100)
         
         # FIX: Usar directamente trade_tick_value (Valor de 1 punto/tick de movimiento)
         tick_value = symbol_info.trade_tick_value
         
         # Debug crítico para el usuario
-        logger.info(f"🧮 [DEBUG LOTS] Balance: {balance} | Risk: {risk_per_trade_pct}% (${risk_money:.2f})")
+        logger.info(f"🧮 [DEBUG LOTS] Balance: {balance} | Risk: {adjusted_risk:.2f}% (${risk_money:.2f})")
         logger.info(f"   ℹ️ Stats: TickVal={tick_value} | SL Points={stop_loss_points}")
 
         if tick_value == 0:
@@ -112,40 +124,27 @@ class PortfolioManager:
         except ZeroDivisionError:
              raw_lot = symbol_info.volume_min
              
-        # --- APPLIED CAP LOGIC ---
-        # Calcular el costo de la posición: Precio * Lotes * ContractSize (aprox Precio*Lote para stocks CFDs)
-        # Nota: symbol_info.ask podría no estar disponible aquí, usamos una estimación o requerimos precio.
-        # Pero calculate_lot_size no recibe precio. Asumimos que el usuario quiere limitar EXPOSICIÓN nominal.
-        # Si es FX, exposure = 100,000 * lot. Si es Stock, exposure = Price * Lot.
-        # SIN PRECIO ACTUAL, es difícil limitar por "Coste".
-        # PERO... Risk Manager suele llamarse desde Executor que TIENE el precio.
-        # VOY A LIMITAR por MARGEN LIBRE si no, pero el usuario pidió "entre 2K y 3K".
-        # Asumiré que calculate_lot_size debe recibir 'current_price' o obtenerlo.
-        # Como no puedo cambiar la firma fácilmente sin romper todo, usaré una aproximación si puedo,
-        # O MEJOR: Limitar por Margen si ContractSize es conocido. 
+        # --- APPLIED CAP LOGIC (V3.1 Dynamic Balance %) ---
+        from ..config import MAX_POSITION_COST_PCT
         
-        # REVISIÓN: executor.py línea 43 llama a calculate_lot_size(acc["balance"], ..., s_info).
-        # NO pasa precio.
-        # Voy a asumir que debemos limitar el raw_lot si sabemos el precio aproximado.
-        # PERO NO LO SABEMOS AQUÍ.
-        # HACK: Usar el precio Ask como referencia para la exposición nominal
         estimated_price = symbol_info.ask if symbol_info.ask > 0 else symbol_info.last
         contract_size = symbol_info.trade_contract_size if symbol_info.trade_contract_size > 0 else 1
         
-        # DEBUG EXTENDIDO PARA EL USUARIO
         logger.info(f"   🔍 [DEBUG CAP] Sym: {symbol_info.name} | Price: {estimated_price} | Contract: {contract_size} | TickVal: {tick_value}")
         
         if estimated_price > 0:
-             # Exposición Nominal = Lotes * Precio * Tamaño del Contrato (NOMINAL EXPOSURE)
-             # Queremos que Exposición <= MAX_POSITION_COST
-             # max_lots_by_cost = 3000 / (Price * Contract)
+             # El CAP ahora es un porcentaje del balance para asegurar "slots" multiactivo
+             nominal_cap_money = balance * (MAX_POSITION_COST_PCT / 100)
              denom = estimated_price * contract_size
-             max_lots_by_cost = MAX_POSITION_COST / denom if denom > 0 else 0
+             max_lots_by_cap = nominal_cap_money / denom if denom > 0 else 0
              
-             # Si el lote calculado por riesgo > lote por coste, cortamos.
-             if max_lots_by_cost > 0 and raw_lot > max_lots_by_cost:
-                 logger.info(f"   ✂️ CAP DE COSTO ACTIVADO: {raw_lot:.2f} lotes -> {max_lots_by_cost:.4f} lotes (Max Nom: ${MAX_POSITION_COST})")
-                 raw_lot = max_lots_by_cost
+             if max_lots_by_cap > 0 and raw_lot > max_lots_by_cap:
+                 # FALLBACK: Si el CAP es demasiado bajo para operar siquiera el mínimo (ej. Oro),
+                 # permitimos al menos el volumen mínimo del broker para que no se bloquee.
+                 safe_lot_cap = max(max_lots_by_cap, symbol_info.volume_min)
+                 if raw_lot > safe_lot_cap:
+                    logger.info(f"   ✂️ CAP DINÁMICO ({MAX_POSITION_COST_PCT}%): {raw_lot:.2f} lotes -> {safe_lot_cap:.4f} lotes")
+                    raw_lot = safe_lot_cap
         
         logger.info(f"   ⚖️ Lot Final (Pre-Broker): {raw_lot}")
              

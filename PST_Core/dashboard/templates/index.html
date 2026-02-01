@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PAILS SENTINEL TRADE</title>
+    <!-- FAVICON PREMIUM PST -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='25' fill='%230f172a'/><path d='M50 15 L80 30 L80 60 C80 75 50 85 50 85 C50 85 20 75 20 60 L20 30 L50 15 Z' fill='none' stroke='%2338bdf8' stroke-width='6' stroke-linejoin='round'/><path d='M35 60 L45 45 L55 55 L65 35' fill='none' stroke='%2322c55e' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/></svg>">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <!-- USANDO VERSION ESPECIFICA PARA EVITAR ERRORES DE API -->
     <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -321,7 +323,7 @@
             background: var(--bg);
             width: 85%;
             max-width: 1000px;
-            height: 600px;
+            height: 800px;
             border-radius: 20px;
             border: 1px solid var(--accent);
             padding: 30px;
@@ -378,58 +380,74 @@
                 gap: 8px !important;
                 padding: 4px !important;
             }
-            .mtf-block {
-                min-width: 42% !important;
-                border: 1px solid rgba(255,255,255,0.05);
-                padding: 2px !important;
-                border-radius: 6px;
-            }
-            /* Header cleanup */
-            #account-status {
-                gap: 10px !important;
-                width: 100%;
-                justify-content: center;
-            }
-            #account-status > div {
+            /* PST UI V3 - REFACTORED TO BUST CACHE & CONFLICTS */
+            .pst-tabs-container {
+                display: flex !important;
                 gap: 8px !important;
-                padding: 5px !important;
-                width: 100%;
-                justify-content: space-around;
+                margin-bottom: 20px !important;
+                border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+                padding-bottom: 12px !important;
+                overflow-x: auto !important;
+                justify-content: flex-start !important;
+                position: relative !important;
+                z-index: 50 !important;
+                background: transparent !important;
             }
-            .stats-item {
-                flex: 1;
-                min-width: 80px;
+            .pst-tab-btn {
+                position: relative !important;
+                z-index: 60 !important;
+                pointer-events: auto !important; /* CRITICAL */
+                cursor: pointer !important;
+                background: rgba(255,255,255,0.05) !important;
+                border: 1px solid rgba(255,255,255,0.1) !important;
+                color: #94a3b8 !important;
+                padding: 8px 16px !important;
+                border-radius: 999px !important;
+                font-size: 11px !important;
+                font-weight: 700 !important;
+                transition: all 0.2s !important;
+                display: flex !important;
+                align-items: center !important;
+                gap: 8px !important;
+                white-space: nowrap !important;
+                user-select: none !important;
             }
-            /* Inspector Premium Redesign */
-            .inspector-header-container {
-                flex-direction: column !important;
-                gap: 20px !important;
-                background: linear-gradient(180deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0) 100%);
-                padding: 15px;
-                border-radius: 16px;
-                border: 1px solid rgba(255,255,255,0.05);
-            }
-            .score-circle-wrapper {
-                width: 75px !important;
-                height: 75px !important;
-                filter: drop-shadow(0 0 15px rgba(59, 130, 246, 0.3));
-            }
-            .premium-card {
-                background: rgba(255, 255, 255, 0.03);
-                backdrop-filter: blur(8px);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                padding: 8px 12px;
-                border-radius: 12px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                min-width: 85px;
-                flex: 1;
-                transition: transform 0.2s;
-            }
-            .premium-card:hover {
-                background: rgba(255, 255, 255, 0.06);
+            .pst-tab-btn:hover {
+                background: rgba(255,255,255,0.15) !important;
                 transform: translateY(-2px);
+                border-color: rgba(255,255,255,0.3) !important;
+            }
+            .pst-tab-btn.active {
+                background: rgba(59, 130, 246, 0.2) !important;
+                border-color: #3b82f6 !important;
+                color: #fff !important;
+                box-shadow: 0 0 15px rgba(59, 130, 246, 0.3) !important;
+            }
+            .pst-score-badge {
+                padding: 2px 6px !important;
+                border-radius: 6px !important;
+                font-size: 10px !important;
+                font-weight: 800 !important;
+                background: rgba(0,0,0,0.4) !important;
+                min-width: 20px !important;
+                text-align: center !important;
+            }
+            .pst-tab-content {
+                display: none !important;
+                animation: fadeIn 0.3s ease-out;
+            }
+            .pst-tab-content.active {
+                display: block !important;
+            }
+            .factor-row {
+                background: rgba(255,255,255,0.015);
+                margin-bottom: 4px;
+                border-radius: 6px;
+                padding: 8px 12px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-left: 2px solid transparent;
             }
             .insight-row {
                 background: rgba(255,255,255,0.02);
@@ -441,6 +459,7 @@
                 justify-content: space-between;
                 align-items: center;
             }
+            @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
             .insight-label {
                 font-size: 11px;
                 color: #94a3b8;
@@ -597,12 +616,71 @@
             justify-content: space-between;
             margin-bottom: 3px;
         }
+
+        /* Strategy Switch (Toggle) Styles */
+        .strat-switch-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+            padding: 3px 0;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 24px;
+            height: 14px;
+        }
+        
+        .switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #334155;
+            transition: .4s;
+            border-radius: 14px;
+        }
+        
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 10px;
+            width: 10px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+            background-color: #10b981;
+        }
+        
+        input:focus + .slider {
+            box-shadow: 0 0 1px #10b981;
+        }
+        
+        input:checked + .slider:before {
+            transform: translateX(10px);
+        }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="title-group">
-            <h1>PAILS SENTINEL TRADE <small id="version-tag" style="font-size: 10px; opacity: 0.5;">v6.2.2-FINAL</small></h1>
+            <h1>PAILS SENTINEL TRADE <small id="version-tag" style="font-size: 10px; color: #38bdf8; font-weight: 800; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; animation: pulse 2s infinite;">v6.5-PREMIUM</small></h1>
             <div style="font-size: 12px; color: #94a3b8; margin-top: 5px;">
                 <span id="bot-status-dot" class="live-dot"></span> <span id="bot-status-text">MOTOR ONLINE</span>
             </div>
@@ -751,7 +829,7 @@
 
     <!-- STRATEGY INSPECTOR MODAL -->
     <div id="strategy-inspector-modal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.8); justify-content: center; align-items: center;">
-        <div class="modal-content" style="max-width: 750px;">
+        <div class="modal-content" style="width: 98%; max-width: none;">
             <div class="modal-header">
                 <h2 id="inspector-title">🧐 Inspector de Estrategia</h2>
                 <span class="close-btn" onclick="closeInspector()">&times;</span>
@@ -778,7 +856,8 @@
                 </div>
 
                 <!-- Breakdown Container (Stable Reference) -->
-                <h3 style="font-size: 13px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; color: #cbd5e1;">Desglose de Factores</h3>
+                <!-- Breakdown Container (Stable Reference) -->
+                <div style="margin-bottom: 15px;"></div>
                 <div id="inspector-insights-container">
                     <!-- Targeted via JS -->
                     <div style="text-align: center; color: #64748b; padding: 20px; font-size: 11px;">Cargando análisis...</div>
@@ -789,7 +868,7 @@
 
     <!-- CHART MODAL (LIGHTWEIGHT CHARTS) -->
     <div id="chart-modal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; background-color: rgba(0,0,0,0.9); justify-content: center; align-items: center;">
-        <div class="modal-content" style="width: 95%; max-width: 1000px; height: 80vh; display: flex; flex-direction: column; background: #111827; border: 1px solid #334155;">
+        <div class="modal-content" style="width: 98%; max-width: none; height: 90vh; display: flex; flex-direction: column; background: #111827; border: 1px solid #334155;">
             <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding: 15px; display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; align-items: center; gap: 15px;">
                     <h2 id="modal-title" style="margin: 0; font-size: 18px; display: flex; align-items: center;">Análisis Técnico</h2>
@@ -842,6 +921,52 @@
                 }
                 .tf-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
                 .tf-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+                
+                /* New Strategy Button Styles */
+                .strat-btn {
+                    background: rgba(255,255,255,0.05);
+                    border: 1px solid rgba(255,255,255,0.1);
+                    color: #94a3b8;
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    font-weight: 600;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    transition: all 0.2s;
+                }
+                .strat-btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.2); }
+                .strat-btn.active { 
+                    background: linear-gradient(135deg, #2563eb, #1d4ed8); 
+                    border-color: #3b82f6; 
+                    color: white; 
+                    box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.3);
+                }
+                
+                /* Sub Strategy Buttons (Pills) */
+                .sub-strat-btn {
+                    font-size: 11px;
+                    padding: 4px 12px;
+                    border-radius: 20px;
+                    border: 1px solid #334155;
+                    background: rgba(255,255,255,0.05);
+                    color: #94a3b8;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    display: flex;
+                    gap: 6px;
+                    align-items: center;
+                    white-space: nowrap;
+                }
+                .sub-strat-btn:hover { background: rgba(255,255,255,0.1); border-color: #64748b; color: white; }
+                .sub-strat-btn.active {
+                    background: linear-gradient(135deg, #0f766e, #115e59);
+                    border-color: #14b8a6;
+                    color: #ccfbf1;
+                    box-shadow: 0 4px 6px -1px rgba(15, 118, 110, 0.3);
+                }
             </style>
             <div class="modal-body" style="flex-grow: 1; padding: 0; position: relative; display: flex; flex-direction: column;">
                 <div id="chart-container" style="width: 100%; flex-grow: 1;"></div>
@@ -873,6 +998,10 @@
                          <div style="color: #475569;">Esperando datos...</div>
                     </div>
                 </div>
+
+                <!-- STRATEGY TABS (Restored) -->
+                <div class="strat-selectors" style="display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 15px; border-top: 1px solid rgba(255,255,255,0.1); background: #0f172a;"></div>
+                <div id="strat-details" style="padding: 15px; overflow-y: auto; background: #0f172a; height: 150px; border-top: 1px solid rgba(255,255,255,0.05); color: #94a3b8; font-size: 12px;"></div>
                 
                 <!-- MONITOR REMOVED (Previous Location) -->
                 
@@ -886,20 +1015,199 @@
     <!-- NUCLEAR MONITOR REMOVED -->
 
     <!-- MODAL CONFIGURACIÓN -->
-    <div id="config-modal" class="modal">
-        <div class="modal-content" style="max-width: 500px;">
-            <div class="modal-header">
-                <h3>⚙️ Configuración de Símbolos</h3>
-                <span class="close" onclick="closeConfigModal()">&times;</span>
+    <div id="config-modal" class="modal" style="display: none; align-items: center; justify-content: center; backdrop-filter: blur(15px);">
+        <div class="modal-content" style="
+            max-width: 650px; 
+            width: 90%; 
+            background: rgba(15, 23, 42, 0.95); 
+            border: 1px solid rgba(56, 189, 248, 0.2); 
+            border-radius: 16px; 
+            padding: 25px; 
+            box-shadow: 0 0 50px rgba(0,0,0,0.5); 
+            position: relative;
+            max-height: 85vh; /* Fix height overflow */
+            overflow-y: auto; /* Enable scrolling */
+            scrollbar-width: thin;
+            scrollbar-color: #38bdf8 rgba(255,255,255,0.05);
+        ">
+            <!-- Header Premium -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 25px;">
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <h3 style="margin: 0; font-size: 20px; color: #fff; font-weight: 900; letter-spacing: -0.5px; display: flex; align-items: center; gap: 10px;">
+                        <span style="background: rgba(56, 189, 248, 0.1); width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: #38bdf8;">⚙️</span> 
+                        Configuración Maestra
+                    </h3>
+                    <p style="margin: 0; font-size: 12px; color: #94a3b8; font-weight: 500;">Control total sobre activos, algoritmos y notificaciones directas.</p>
+                </div>
+                <button onclick="closeConfigModal()" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); color: #fff; width: 32px; height: 32px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; font-size: 18px;" onmouseover="this.style.background='rgba(239, 68, 68, 0.2)'; this.style.borderColor='rgba(239, 68, 68, 0.4)'" onmouseout="this.style.background='rgba(255,255,255,0.03)'; this.style.borderColor='rgba(255,255,255,0.08)'">
+                    &times;
+                </button>
             </div>
-            <div style="font-size: 13px; color: #94a3b8; margin-bottom: 20px;">
-                Selecciona los activos que deseas visualizar y operar. Los cambios se aplican en tiempo real.
-            </div>
-            <div id="config-symbols-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
+
+            <!-- Symbols Grid (Scrollable Institutional Style) -->
+            <div id="config-symbols-container" style="
+                display: grid; 
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); 
+                gap: 20px; 
+                max-height: 350px; 
+                overflow-y: auto; 
+                padding-right: 15px;
+                margin-bottom: 30px;
+                scrollbar-width: thin;
+                scrollbar-color: #38bdf8 rgba(255,255,255,0.05);
+            ">
                 <!-- Dinámico: Agrupado por tipo -->
             </div>
-            <div style="margin-top: 25px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); text-align: center;">
-                <button onclick="closeConfigModal()" style="background: var(--accent); color: #000; border: none; padding: 10px 30px; border-radius: 8px; font-weight: 700; cursor: pointer;">LISTO</button>
+            
+            <!-- Telegram Alertas (Exclusive Block) -->
+            <div style="
+                padding: 20px; 
+                background: linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%); 
+                border: 1px solid rgba(56, 189, 248, 0.2); 
+                border-radius: 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 15px;
+                box-shadow: inset 0 0 20px rgba(0,0,0,0.2);
+            ">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-size: 12px; color: #38bdf8; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 18px;">📲</span> CANAL DE ALERTAS VIP
+                    </span>
+                    <span style="font-size: 10px; color: #10b981; background: rgba(16, 185, 129, 0.1); padding: 4px 12px; border-radius: 99px; border: 1px solid rgba(16, 185, 129, 0.2); font-weight: 800;">ACTIVO (AUTO)</span>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <span style="font-size: 10px; color: #64748b; font-weight: 700; text-transform: uppercase;">Bot Token Secreto</span>
+                        <input type="password" id="tg-token" placeholder="Introduce el Token..." style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 12px; color: #fff; font-size: 12px; width: 100%; box-sizing: border-box; font-family: 'Roboto Mono', monospace; transition: all 0.2s;" onfocus="this.style.borderColor='#38bdf8'; this.style.boxShadow='0 0 10px rgba(56, 189, 248, 0.2)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.boxShadow='none'">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <span style="font-size: 10px; color: #64748b; font-weight: 700; text-transform: uppercase;">ID de Chat / Grupo</span>
+                        <input type="text" id="tg-chat-id" placeholder="ID del Chat..." style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 12px; color: #fff; font-size: 12px; width: 100%; box-sizing: border-box; font-family: 'Roboto Mono', monospace; transition: all 0.2s;" onfocus="this.style.borderColor='#38bdf8'; this.style.boxShadow='0 0 10px rgba(56, 189, 248, 0.2)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.boxShadow='none'">
+                    </div>
+                </div>
+                
+                <button onclick="saveTelegramSettings()" style="
+                    background: linear-gradient(90deg, #38bdf8 0%, #0ea5e9 100%); 
+                    color: #0f172a; 
+                    border: none; 
+                    border-radius: 10px; 
+                    padding: 14px; 
+                    font-size: 12px; 
+                    font-weight: 900; 
+                    cursor: pointer; 
+                    transition: all 0.3s;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 10px;
+                    box-shadow: 0 4px 15px rgba(56, 189, 248, 0.4);
+                " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(56, 189, 248, 0.6)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 15px rgba(56, 189, 248, 0.4)'">
+                    💾 GUARDAR ALERTAS
+                </button>
+            </div>
+
+            <!-- CEREBRO IA (Multi-Provider NEW) -->
+            <div style="
+                margin-top: 20px;
+                padding: 20px; 
+                background: linear-gradient(135deg, rgba(88, 28, 135, 0.2) 0%, rgba(15, 23, 42, 0.8) 100%); 
+                border: 1px solid rgba(139, 92, 246, 0.3); 
+                border-radius: 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 15px;
+            ">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-size: 12px; color: #a78bfa; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 18px;">🧠</span> CEREBRO IA (ORÁCULO)
+                    </span>
+                    <select id="ai-provider-select" onchange="updateAIInputVisibility()" style="background: rgba(0,0,0,0.5); border: 1px solid rgba(139, 92, 246, 0.3); color: white; border-radius: 8px; padding: 4px 10px; font-size: 11px; cursor: pointer;">
+                        <option value="gemini">Google Gemini (Nube)</option>
+                        <option value="groq">Groq Llama 3 (Velocidad)</option>
+                        <option value="ollama">Ollama Local (Privado/Gratis)</option>
+                    </select>
+                </div>
+                
+                <div id="ai-creds-container" style="display: grid; grid-template-columns: 1fr; gap: 15px;">
+                    <!-- Configuración para Gemini -->
+                    <div id="setup-gemini" style="display: flex; flex-direction: column; gap: 6px;">
+                        <span style="font-size: 10px; color: #94a3b8; font-weight: 700;">GEMINI API KEY</span>
+                        <input type="password" id="gemini-key" placeholder="Pega tu clave Gemini..." style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 12px; color: #fff; font-size: 12px; width: 100%; box-sizing: border-box;">
+                    </div>
+                    <!-- Configuración para Groq -->
+                    <div id="setup-groq" style="display: none; flex-direction: column; gap: 6px;">
+                        <span style="font-size: 10px; color: #94a3b8; font-weight: 700;">GROQ API KEY</span>
+                        <input type="password" id="groq-key" placeholder="Pega tu clave Groq..." style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 12px; color: #fff; font-size: 12px; width: 100%; box-sizing: border-box;">
+                    </div>
+                    <!-- Info para Ollama -->
+                    <div id="setup-ollama" style="display: none; padding: 10px; background: rgba(16, 185, 129, 0.05); border-radius: 8px; border: 1px dashed rgba(16, 185, 129, 0.3);">
+                        <p style="margin: 0; font-size: 11px; color: #10b981; line-height: 1.4;">
+                            ✅ <b>Modo Local Activado:</b> Asegúrate de tener Ollama corriendo en este PC con el modelo <b>llama3</b> descargado (`ollama run llama3`).
+                        </p>
+                    </div>
+                </div>
+                
+                <button onclick="saveAISettings()" style="
+                    background: linear-gradient(90deg, #8b5cf6 0%, #7c3aed 100%); 
+                    color: white; border: none; border-radius: 10px; padding: 14px; font-size: 12px; font-weight: 900; cursor: pointer; transition: all 0.3s;
+                ">
+                    💾 ACTUALIZAR CEREBRO IA
+                </button>
+
+                <!-- NEW: INTERRUPTORES GLOBALES DE IA -->
+                <div style="
+                    margin-top: 10px;
+                    padding-top: 15px;
+                    border-top: 1px solid rgba(139, 92, 246, 0.2);
+                    display: grid;
+                    grid-template-columns: 1fr 1fr 1fr;
+                    gap: 10px;
+                ">
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                        <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">GEMINI</span>
+                        <label class="switch">
+                            <input type="checkbox" id="global-toggle-gemini" onchange="toggleGlobalAI('gemini', this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                        <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">GROQ</span>
+                        <label class="switch">
+                            <input type="checkbox" id="global-toggle-groq" onchange="toggleGlobalAI('groq', this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                        <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">OLLAMA</span>
+                        <label class="switch">
+                            <input type="checkbox" id="global-toggle-ollama" onchange="toggleGlobalAI('ollama', this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <p style="text-align: center; font-size: 9px; color: #64748b; margin: 0;">Interruptores maestros para activar/apagar proveedores.</p>
+            </div>
+
+            <div style="margin-top: 25px; display: flex; justify-content: center;">
+                <button onclick="closeConfigModal()" style="
+                    background: transparent; 
+                    color: #94a3b8; 
+                    border: 1px solid rgba(148, 163, 184, 0.3); 
+                    padding: 10px 40px; 
+                    border-radius: 12px; 
+                    font-size: 12px; 
+                    font-weight: 700; 
+                    cursor: pointer; 
+                    transition: all 0.2s;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                " onmouseover="this.style.backgroundColor='rgba(255,255,255,0.05)'; this.style.color='#f8fafc'; this.style.borderColor='rgba(255,255,255,0.2)'" onmouseout="this.style.backgroundColor='transparent'; this.style.color='#94a3b8'; this.style.borderColor='rgba(148, 163, 184, 0.3)'">
+                    Cerrar Panel Maestro
+                </button>
             </div>
         </div>
     </div>
@@ -930,7 +1238,7 @@
             document.getElementById('strategy-inspector-modal').style.display = 'none';
         }
 
-        window.showStrategyInspector = function(symbol, forceType = null) {
+        window.showStrategyInspector = async function(symbol, forceType = null) {
             const data = window.dashboardData;
             if (!data || !data.regimes) return;
             
@@ -938,10 +1246,10 @@
             if (!asset) return;
             const tech = asset.tech_data || {};
             
-            // 1. Fetch latest details (Added timestamp for cache busting)
-            fetch(`/api/chart/${symbol}?tf=M5&t=${Date.now()}`)
-                .then(r => r.json())
-                .then(res => {
+            try {
+                // 1. Fetch latest details (Added timestamp for cache busting)
+                const response = await fetch(`/api/chart/${symbol}?tf=M5&t=${Date.now()}`);
+                const res = await response.json();
                     const analysis = res.analysis || {};
                     const tech_meta = analysis.strat_status || {};
                     const levels_data = analysis.all_levels_data || [];
@@ -953,11 +1261,10 @@
                     // Determine which logic to show
                     const isManualSource = (forceType === 'MANUAL');
                     let scoreToDisplay = isManualSource ? manualScore : autoScore;
-                    let stratName = isManualSource ? "Estrategia Maestra (Canales)" : (analysis.best_auto_strat || "PST Strategy Hub");
+                    let stratName = analysis.active_strategy || (isManualSource ? "Estrategia Maestra (Canales)" : (analysis.best_auto_strat || "PST Strategy Hub"));
                     
-                    if (!stratName || stratName === "None" || stratName === "null" || stratName === "undefined") {
-                        stratName = isManualSource ? "Estrategia Maestra" : "PST Strategy Hub";
-                    }
+                    // Normalize Naming
+                    if (stratName === "PST-Channel-Master") stratName = "Estrategia Maestra (Canales)";
 
                     let factors = analysis.factors || {}; 
                     
@@ -1032,15 +1339,15 @@
                     document.getElementById('inspector-score').innerText = scoreToDisplay;
                     
                     // NEW: Show Dashboard Score for comparison (Transparency)
-                    const subLabel = document.createElement('div');
-                    subLabel.id = 'inspector-subscore';
-                    subLabel.style.cssText = "font-size: 9px; color: #64748b; margin-top: 2px;";
-                    subLabel.innerHTML = `ANTERIOR: ${dashScore}`;
+                    // const subLabel = document.createElement('div');
+                    // subLabel.id = 'inspector-subscore';
+                    // subLabel.style.cssText = "font-size: 9px; color: #64748b; margin-top: 2px;";
+                    // subLabel.innerHTML = `ANTERIOR: ${dashScore}`;
                     
-                    const scoreContainer = document.getElementById('inspector-score').parentElement;
-                    const oldSub = document.getElementById('inspector-subscore');
-                    if (oldSub) oldSub.remove();
-                    scoreContainer.appendChild(subLabel);
+                    // const scoreContainer = document.getElementById('inspector-score').parentElement;
+                    // const oldSub = document.getElementById('inspector-subscore');
+                    // if (oldSub) oldSub.remove();
+                    // scoreContainer.appendChild(subLabel);
 
                     const circle = document.getElementById('score-circle-path');
                     circle.setAttribute('stroke-dasharray', `${scoreToDisplay}, 100`);
@@ -1134,10 +1441,12 @@
                                 
                                 const badge = document.createElement('div');
                                 badge.className = 'premium-card';
+                                badge.style.padding = '10px';
+                                badge.style.minWidth = '55px';
                                 badge.style.boxShadow = `0 4px 12px ${glow}`;
                                 badge.innerHTML = `
-                                    <span style="font-size: 8px; color: #64748b; font-weight: 800; text-transform: uppercase;">RSI ${intv.k}</span>
-                                    <div style="font-size: 16px; font-weight: 800; color: ${textColor}; margin: 2px 0;">${intv.v}</div>
+                                    <span style="font-size: 8px; color: #64748b; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">${intv.k}</span>
+                                    <div style="font-size: 14px; font-weight: 800; color: ${textColor}; margin: 1px 0;">${intv.v}</div>
                                     <span style="font-size: 10px;">${icon}</span>
                                 `;
                                 metricsContainer.appendChild(badge);
@@ -1151,10 +1460,11 @@
                                 if (m.k.includes('Regimen')) icon = '🧭';
                                 
                                 const badge = document.createElement('div');
-                                badge.className = 'premium-card';
+                                badge.style.padding = '10px';
+                                badge.style.minWidth = '55px';
                                 badge.innerHTML = `
                                     <span style="font-size: 8px; color: #64748b; font-weight: 800; text-transform: uppercase;">${m.k}</span>
-                                    <div style="font-size: 14px; font-weight: 800; color: #fff; margin: 2px 0;">${m.v}</div>
+                                    <div style="font-size: 13px; font-weight: 800; color: #fff; margin: 1px 0;">${m.v}</div>
                                     <span style="font-size: 10px;">${icon}</span>
                                 `;
                                 metricsContainer.appendChild(badge);
@@ -1172,89 +1482,215 @@
                              });
                         }
 
-                            // SECTION C: GROUPED STRATEGIES LIST
-                            let visibleKeyStrategies = 0;
-                            let strategiesHtml = "";
-                            let inactiveStratsList = [];
+                            // INLINE STYLES FOR IRONCLAD RENDERING
+                            const STYLE_CONTAINER = "display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 12px; overflow-x: auto; background: transparent;";
+                            const STYLE_BTN_base = "position: relative; cursor: pointer; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; padding: 8px 16px; border-radius: 999px; font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 8px; white-space: nowrap; transition: all 0.2s;";
+                            const STYLE_BTN_active = "background: rgba(59, 130, 246, 0.2); border-color: #3b82f6; color: #fff; box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);";
+                            const STYLE_CONTENT_base = "display: none; animation: fadeIn 0.3s ease-out;";
+                            const STYLE_CONTENT_active = "display: block;";
 
+                            let tabsHtml = `<div id="pst-tabs-container-unique" style="${STYLE_CONTAINER}">`;
+                            let contentHtml = `<div id="pst-content-container-unique">`;
+
+                            let firstStratId = null;
+                            let bestStratId = null;
+                            let bestScore = -1;
+                            
                             if (analysis.grouped_strategies && analysis.grouped_strategies.length > 0) {
-                                analysis.grouped_strategies.forEach(strat => {
-                                    const isMaestra = strat.name.includes('Maestra') || strat.name.includes('Canales');
-                                    
-                                    // STRICT FILTERING: 
-                                    // - Manual Modal: Show ONLY Maestra
-                                    // - Auto Modal: Show ONLY everything ELSE (EMA, RSI, etc.)
-                                    const shouldShow = isManualSource ? isMaestra : true;
+                                analysis.grouped_strategies.forEach((strat, idx) => {
+                                    const isMaestra = strat.name.includes('Maestra') || strat.name.includes('Canales') || strat.name.includes('Channel');
+                                    // SHOW ALL STRATEGIES regardless of source mode to allow full visibility
+                                    const shouldShow = true; 
                                     
                                     if (shouldShow) {
-                                        // Use score > 0 logic for styling, but show key strats even if 0
-                                        const displayAsActive = true; // Always show in their respective modal now
+                                        const stratId = `strat-tab-${idx}`;
+                                        if (!firstStratId) firstStratId = stratId;
+                                        if (strat.score > bestScore) { bestScore = strat.score; bestStratId = stratId; }
                                         
-                                        if (displayAsActive) {
-                                            visibleKeyStrategies++;
-                                            let stratColor = '#475569'; // Default Grayish for 0 score
-                                            let barColor = 'rgba(71, 85, 105, 0.1)';
-                                            
-                                            if (strat.score >= 70) { 
-                                                if (strat.status === 'Filtros Bloquean') {
-                                                    stratColor = '#f59e0b'; // Gold/Yellow for blocking
-                                                    barColor = 'rgba(245, 158, 11, 0.1)';
-                                                } else {
-                                                    stratColor = '#4ade80'; 
-                                                    barColor = 'rgba(74, 222, 128, 0.2)';
-                                                }
-                                            }
-                                            else if (strat.score >= 40) { stratColor = '#f59e0b'; barColor = 'rgba(245, 158, 11, 0.2)'; }
-                                            else if (strat.score > 0) { stratColor = '#ef4444'; barColor = 'rgba(239, 68, 68, 0.2)'; }
+                                        let stratColor = '#475569';
+                                        if (strat.score >= 70) stratColor = '#4ade80';
+                                        else if (strat.score >= 40) stratColor = '#f59e0b';
+                                        else if (strat.score > 0) stratColor = '#ef4444';
+                                        
+                                        // TAB BUTTON WITH INLINE STYLES
+                                        tabsHtml += `
+                                            <button 
+                                                id="btn-${stratId}"
+                                                onclick="window.switchStratTab('${stratId}', this)"
+                                                style="${STYLE_BTN_base}"
+                                                data-base-style="${STYLE_BTN_base}"
+                                                data-active-style="${STYLE_BTN_active}"
+                                            >
+                                                ${strat.name} 
+                                                <span style="padding: 2px 6px; border-radius: 6px; font-size: 10px; font-weight: 800; background: rgba(0,0,0,0.4); min-width: 20px; text-align: center; color:${stratColor}">${strat.score}</span>
+                                            </button>
+                                        `;
+                                        
+                                        // CONTENT PANEL
+                                        let factorsHtml = '';
+                                        if (strat.factors && strat.factors.length > 0) {
+                                            // SORT REMOVED: Respecting backend layout order for M5/M15 priority
+                                            /*
+                                            strat.factors.sort((a, b) => {
+                                                const getScore = (str) => {
+                                                    const match = str.match(/\(([+-]?\d+)\)/);
+                                                    return match ? Math.abs(parseInt(match[1])) : 0;
+                                                };
+                                                return getScore(b.v) - getScore(a.v);
+                                            });
+                                            */
 
-                                            strategiesHtml += `
-                                                <div class="insight-row" style="border-left-color: ${stratColor}; background: linear-gradient(90deg, ${barColor} 0%, rgba(0,0,0,0) 100%); margin-top: 8px;">
-                                                    <span class="insight-label" style="color: #fff; font-size: 12px;">🚀 ${strat.name}</span>
-                                                    <span class="insight-value" style="color: ${stratColor};">${strat.score}/100</span>
+                                            strat.factors.forEach(f => {
+                                                const label = f.k;
+                                                let valColor = '#94a3b8';
+                                                let valText = f.v;
+                                                if (valText.includes('(+0)')) valColor = '#64748b'; // Soft for neutral
+                                                else if (valText.includes('(+')) valColor = '#4ade80'; 
+                                                if (valText.includes('(-')) valColor = '#ef4444';
+
+                                                const isAI = strat.name.includes('AI-Oracle');
+                                                const isVerdict = label.includes('Veredicto') || label.includes('Verdic');
+                                                
+                                                let rowBg = 'rgba(255,255,255,0.015)';
+                                                let borderStyle = '1px solid rgba(255,255,255,0.04)';
+                                                let labelColor = '#64748b';
+                                                
+                                                if (isAI && isVerdict) {
+                                                    rowBg = 'linear-gradient(90deg, rgba(168, 85, 247, 0.1) 0%, rgba(88, 28, 135, 0.1) 100%)';
+                                                    borderStyle = '1px solid rgba(168, 85, 247, 0.2)';
+                                                    labelColor = '#a855f7';
+                                                } else if (valText.includes('(+30)') || valText.includes('(+60)')) {
+                                                    rowBg = 'rgba(74, 222, 128, 0.05)';
+                                                } else if (valText.includes('(-30)') || valText.includes('(-60)')) {
+                                                    rowBg = 'rgba(239, 68, 68, 0.05)';
+                                                }
+
+                                                let gridSpan = (isAI && isVerdict) ? 'grid-column: 1 / -1;' : '';
+                                                let waitingAnim = (valText.includes('espera') || valText.includes('Cooldown')) ? 'animation: pulse 2s infinite;' : '';
+
+                                                factorsHtml += `
+                                                    <div style="
+                                                        ${gridSpan}
+                                                        background: ${rowBg}; 
+                                                        border-radius: 12px; 
+                                                        padding: 12px 16px; 
+                                                        display: flex; 
+                                                        flex-direction: column; 
+                                                        gap: 6px; 
+                                                        border: ${borderStyle}; 
+                                                        min-width: 0;
+                                                        box-shadow: inset 0 0 10px rgba(0,0,0,0.15);
+                                                        ${waitingAnim}
+                                                    ">
+                                                        <span style="color: ${labelColor}; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px;">
+                                                            ${isAI && isVerdict ? '🤖 VEREDICTO INSTITUCIONAL' : label}
+                                                        </span>
+                                                        <span style="color: ${valColor}; font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 12px; line-height: 1.5; word-break: break-word;">
+                                                            ${valText}
+                                                        </span>
+                                                    </div>
+                                                `;
+                                            });
+                                        } else {
+                                            factorsHtml = `<div style="padding: 20px; text-align: center; color: #64748b; font-style: italic;">Sin factores relevantes.</div>`;
+                                        }
+
+                                        // MOD: MODO SNIPER - Botón Forzar IA (FOOTER - OUTSIDE LOOP)
+                                        let aiFooterHtml = '';
+                                        if (strat.name.includes('AI-Oracle')) {
+                                            let provider = 'gemini';
+                                            if (strat.name.includes('[GROQ]')) provider = 'groq';
+                                            else if (strat.name.includes('[OLLAMA]')) provider = 'ollama';
+
+                                            const isAnalyzing = strat.status && strat.status.includes('⏳');
+                                            
+                                            let btnState = isAnalyzing ? 'disabled' : '';
+                                            let btnText = isAnalyzing ? `<span>⏳ ANALIZANDO... (Espere)</span>` : `<span>🔄 ACTUALIZAR (Re-Analyze) [${provider.toUpperCase()}]</span>`;
+                                            let btnStyle = isAnalyzing ? 
+                                                "width: 100%; padding: 12px; background: rgba(255,255,255,0.05); color: #94a3b8; border: 1px dashed rgba(255,255,255,0.2); border-radius: 8px; cursor: not-allowed; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px;" : 
+                                                "width: 100%; padding: 12px; background: linear-gradient(135deg, #1e1b4b, #4338ca); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px;";
+
+                                            // Trigger Auto-Polling via hidden image onload if analyzing
+                                            let pollingPixel = isAnalyzing ? `<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" onload="if(window.startAIPolling) window.startAIPolling('${symbol}', '${provider}')" style="display:none;" />` : '';
+
+                                            aiFooterHtml = `
+                                                <div style="grid-column: 1 / -1; margin-top: 15px; text-align: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+                                                    <button onclick="window.forceAnalyzeIA('${symbol}', '${provider}')" id="btn-force-ia-${provider}" ${btnState} style="${btnStyle}">
+                                                        ${btnText}
+                                                    </button>
+                                                    ${pollingPixel}
+                                                    <p style="font-size: 9px; color: #64748b; margin-top: 6px; font-style: italic;">Benchmark: Compara este veredicto con otros proveedores.</p>
                                                 </div>
                                             `;
-
-                                            if (strat.factors && strat.factors.length > 0) {
-                                                strat.factors.forEach(f => {
-                                                    const label = f.k;
-                                                    let valColor = '#94a3b8';
-                                                    if (f.v.includes('(+')) valColor = '#4ade80'; 
-                                                    if (f.v.includes('(-')) valColor = '#ef4444'; 
-                                                    if (f.v.includes('Bull')) valColor = '#4ade80';
-                                                    if (f.v.includes('Bear')) valColor = '#ef4444';
-                                                    
-                                                    strategiesHtml += `
-                                                        <div style="padding: 4px 14px; display: flex; justify-content: space-between; font-size: 11px; border-bottom: 1px solid rgba(255,255,255,0.02);">
-                                                            <span style="color: #cbd5e1;"><span style="color: #475569;">↳</span> ${label}</span>
-                                                            <span style="color: ${valColor}; font-family: monospace;">${f.v}</span>
-                                                        </div>
-                                                    `;
-                                                });
-                                            }
-                                        } else {
-                                            inactiveStratsList.push({ k: strat.name, v: "0/100 (Neutral)" });
                                         }
+
+                                                contentHtml += `
+                                            <div id="${stratId}" style="${STYLE_CONTENT_base}">
+                                                <div style="
+                                                    display: grid !important; 
+                                                    grid-template-columns: repeat(2, 1fr) !important; 
+                                                    gap: 8px !important; 
+                                                    background: rgba(0,0,0,0.3); 
+                                                    border-radius: 16px; 
+                                                    border: 1px solid rgba(255,255,255,0.06); 
+                                                    padding: 12px; 
+                                                    max-height: 520px; 
+                                                    overflow-y: auto; 
+                                                    align-content: start;
+                                                    scrollbar-width: thin; 
+                                                    scrollbar-color: #38bdf8 transparent;
+                                                ">
+                                                    ${factorsHtml}
+                                                    ${aiFooterHtml}
+                                                </div>
+                                                <!-- Risk Management (Ph2) -->
+                                                <div id="risk-${stratId}" style="margin-top: 15px; padding: 12px; background: rgba(59, 130, 246, 0.05); border: 1px dashed rgba(59, 130, 246, 0.2); border-radius: 12px; display: none;">
+                                                    <div style="font-size: 10px; color: #64748b; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 800;">🛡️ Gestión de Riesgo Sugerida (ATR)</div>
+                                                    <div style="display: flex; gap: 20px;">
+                                                        <div style="display: flex; flex-direction: column;">
+                                                            <span style="color: #64748b; font-size: 9px;">Dist. Stop Loss</span>
+                                                            <span id="sl-${stratId}" style="color: #ef4444; font-weight: 800; font-size: 14px; font-family: monospace;">--</span>
+                                                        </div>
+                                                        <div style="display: flex; flex-direction: column;">
+                                                            <span style="color: #64748b; font-size: 9px;">Dist. Take Profit</span>
+                                                            <span id="tp-${stratId}" style="color: #10b981; font-weight: 800; font-size: 14px; font-family: monospace;">--</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        `;
                                     }
                                 });
                             }
                             
-                             if (strategiesHtml) {
-                                  html += `<div style="padding: 15px 0 5px 0; color: #f59e0b; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">🧠 Estrategia Activa</div>`;
-                                  html += strategiesHtml;
-                             }
+                            tabsHtml += `</div>`;
+                            contentHtml += `</div>`;
+                            
+                            html += tabsHtml + contentHtml;
 
-                        // SECTION D: INACTIVE STRATEGIES
-                        if (inactiveStratsList.length > 0) {
-                             html += `<div style="padding: 15px 0 5px 0; color: #475569; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">💤 Inactivas (Score 0)</div>`;
-                             inactiveStratsList.forEach(strat => {
-                                  html += `
-                                    <div class="insight-row" style="border-left-color: #475569; opacity: 0.6;">
-                                        <span class="insight-label" style="color: #475569;">${strat.k}</span>
-                                        <span class="insight-value" style="color: #475569;">${strat.v}</span>
-                                    </div>
-                                  `;
-                             });
-                        }
+                                     // Auto-select tab logic setup (runs after render)
+                                    setTimeout(() => {
+                                        const target = bestStratId || firstStratId;
+                                        if (target) {
+                                            const btn = document.getElementById(`btn-${target}`);
+                                            if(btn) window.switchStratTab(target, btn);
+                                        }
+                                        
+                                        // POPULATE RISK DATA (Ph2)
+                                        if (analysis.grouped_strategies) {
+                                            analysis.grouped_strategies.forEach((strat, idx) => {
+                                                const stratId = `strat-tab-${idx}`;
+                                                const riskDiv = document.getElementById(`risk-${stratId}`);
+                                                if (strat.risk_reco && strat.risk_reco.sl_dist > 0) {
+                                                    riskDiv.style.display = 'block';
+                                                    document.getElementById(`sl-${stratId}`).innerText = strat.risk_reco.sl_dist;
+                                                    document.getElementById(`tp-${stratId}`).innerText = strat.risk_reco.tp_dist;
+                                                }
+                                            });
+                                        }
+                                    }, 100);
+
+                        // SECTION D: INACTIVE STRATEGIES REMOVED (Clean UI)
                         
                         // Replace the entire table body content with our new div-based html
                         // We target the parent of inspector-table-body to replace the table itself if needed
@@ -1262,19 +1698,66 @@
                         const insightsContainer = document.getElementById('inspector-insights-container');
                         insightsContainer.innerHTML = html;
                         
-                        const footerNote = document.createElement('div');
-                        footerNote.style.cssText = "padding-top: 20px; text-align: center; color: #475569; font-size: 9px; font-style: italic; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 10px;";
-                        footerNote.innerHTML = `⚠️ NOTA: Este análisis se recalcula en tiempo real. La puntuación puede variar respecto al momento del disparo debido a la volatilidad actual del mercado.`;
-                        insightsContainer.appendChild(footerNote);
+                        
                     }
                     
                     // FORCE RE-RENDER DASHBOARD CARD IF POSSIBLE
                     // This makes the card update visually while the modal is open or just after
                     if (typeof renderDashboardUI === 'function') renderDashboardUI(window.dashboardData);
 
-                    document.getElementById('strategy-inspector-modal').style.display = 'flex'; // FLEX para centrar
-                });
+                    const modal = document.getElementById('strategy-inspector-modal');
+                    modal.style.display = 'flex'; // FLEX para centrar
+                    
+                    // CLEANUP: Romove stray headers if present
+                    const strayHeaders = modal.querySelectorAll('h4, .section-header');
+                    strayHeaders.forEach(h => {
+                        if (h.innerText.includes('Desglose de Factores') || h.innerText.includes('Desglose de Puntuación')) {
+                            h.style.display = 'none';
+                        }
+                    });
+            } catch (error) {
+                console.error('❌ Error loading modal data:', error);
+                alert('Error al cargar los datos del análisis. Por favor, inténtalo de nuevo.');
+            }
         };
+
+        // GLOBAL SWITCHER WITH INLINE STYLE MANAGMENT
+        window.switchStratTab = function(stratId, btnElement) {
+            console.log("🖱️ Switching to tab:", stratId);
+            
+            // 1. Get container context to avoid global query selector issues
+            const container = document.getElementById('pst-tabs-container-unique');
+            if(!container) return;
+            const contentContainer = document.getElementById('pst-content-container-unique');
+
+            // 2. Reset ALL buttons in this container
+            const allBtns = container.querySelectorAll('button');
+            allBtns.forEach(b => {
+                const baseStyle = b.getAttribute('data-base-style');
+                b.style.cssText = baseStyle; // Revert to base
+            });
+
+            // 3. Hide ALL content
+            if(contentContainer) {
+                 Array.from(contentContainer.children).forEach(c => {
+                     c.style.display = 'none';
+                 });
+            }
+
+            // 4. Activate Target
+            if(btnElement) {
+                const baseStyle = btnElement.getAttribute('data-base-style');
+                const activeStyle = btnElement.getAttribute('data-active-style');
+                btnElement.style.cssText = baseStyle + activeStyle; // Merge styles
+            }
+
+            const content = document.getElementById(stratId);
+            if(content) {
+                content.style.display = 'block';
+                content.style.animation = 'fadeIn 0.3s ease-out';
+            }
+        };
+
         console.log("✅ showStrategyInspector function registered.");
     // Merged Script Block
         let currentTradingMode = 'AUTO';
@@ -1496,10 +1979,41 @@
 
                                     ${dirHtml ? dirHtml.replace('margin-left: auto;', 'margin-right: 4px;') : ''}
 
-                                    <span style="color: ${barColor}; font-weight: bold;">${score}/100</span>
+                                    <span style="color: ${score >= 60 ? '#10b981' : (score >= 30 ? '#f59e0b' : '#ef4444')}; font-weight: bold;">${score}</span>
                                 </div>
-                                <div style="height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin-top: 4px;">
-                                    <div style="height: 100%; width: ${score}%; background: ${barColor}; transition: width 0.5s;"></div>
+                                
+                                <!-- BI-DIRECTIONAL BAR (Center Zero) -->
+                                <div style="height: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; position: relative; margin-top: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
+                                    <!-- Center Marker -->
+                                    <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,0.1); transform: translateX(-50%); z-index: 1;"></div>
+                                    
+                                    <!-- Dynamic Bar -->
+                                    ${(() => {
+                                        let dir = tech.strat_status?.direction || 0;
+                                        // Fallback
+                                        if (dir === 0) {
+                                            const sDesc = (r.manual_action || tech.signal_direction || '').toUpperCase();
+                                            // PRIORIDAD: No usar 'LOWER' para rojo si el contexto es de compra
+                                            if (sDesc.includes('BUY') || sDesc.includes('LONG') || sDesc.includes('UPPER')) dir = 1;
+                                            else if (sDesc.includes('SELL') || sDesc.includes('SHORT') || sDesc.includes('LOWER')) dir = -1;
+                                        }
+                                        
+                                        const halfWidth = Math.min(score, 100) / 2;
+                                        let style = "";
+                                        
+                                        if (dir === 1) {
+                                            // Long: Center -> Right
+                                            style = `left: 50%; width: ${halfWidth}%; background: linear-gradient(90deg, #10b981, #34d399);`;
+                                        } else if (dir === -1) {
+                                            // Short: Center <- Left
+                                            // right boundary is 50%. width grows left.
+                                            // left = 50% - width%
+                                            style = `left: ${50 - halfWidth}%; width: ${halfWidth}%; background: linear-gradient(90deg, #f87171, #ef4444);`;
+                                        } else {
+                                            style = `left: 49%; width: 2%; background: #64748b; opacity: 0.5;`;
+                                        }
+                                        return `<div style="height: 100%; position: absolute; top: 0; transition: all 0.5s; ${style} z-index: 2; border-radius: 2px;"></div>`;
+                                    })()}
                                 </div>
                             </div>
                         `;
@@ -1522,8 +2036,8 @@
                     }
 
                     return `
-                        <div class="symbol-card" style="position: relative; opacity: ${r.market_open ? '1' : '0.6'}; ${cardStyle}">
-                            ${!r.tech_data.market_open ? '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 5; border-radius: 12px; backdrop-filter: grayscale(100%);"></div>' : ''}
+                        <div class="symbol-card" style="position: relative; opacity: ${r.market_open ? '1' : '1'}; ${cardStyle}">
+                            ${!r.tech_data.market_open ? '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 5; border-radius: 12px; backdrop-filter: grayscale(100%); pointer-events: none;"></div>' : ''}
                             
                             <!-- HEADER -->
                             <div class="card-header" style="position: relative; z-index: 6; height: 35px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
@@ -1577,9 +2091,10 @@
                                 <div style="margin-bottom: 10px;">
                                     <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 3px; color: #94a3b8; align-items: center;">
                                         <div style="display: flex; align-items: center; gap: 5px;">
-                                            <span style="font-weight: bold; color: #fff;">${r.manual_strat_name || 'Strategy Score'}</span>
+                                            <span style="font-weight: bold; color: #fff;">${r.winning_strategy || r.manual_strat_name || 'PST Strategy'}</span>
+                                            <button onclick="event.stopPropagation(); openStrategyConfig('${r.symbol}')" style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.1); color: #cbd5e1; cursor: pointer; padding: 1px 6px; border-radius: 4px; font-size: 10px; margin-right: 4px; display: inline-flex; align-items: center;" title="Configurar Estrategias">⚙️</button>
                                             <div class="tooltip" onclick="event.stopPropagation()">
-                                                <span style="opacity: 0.7; font-size: 12px;">ℹ️</span>
+                                                <span style="opacity: 0.7; font-size: 12px; cursor: pointer;">ℹ️</span>
                                                 <div class="tooltiptext">
                                                     <div class="tooltip-header">${r.manual_strat_name || 'Estrategia'}</div>
                                                     <div style="margin-bottom: 8px; font-size: 10px; color: #cbd5e1;">${r.manual_strat_desc || 'Analizando mercado...'}</div>
@@ -1588,16 +2103,112 @@
                                                     <div class="tooltip-row"><span>Estado:</span> <span style="color: #cbd5e1; text-align: right;">${r.manual_desc || 'N/A'}</span></div>
                                                     <div class="tooltip-row"><span>Acción:</span> <span style="font-weight: bold; color: ${r.manual_action && (r.manual_action.includes('BUY') || r.manual_action.includes('UPPER'))?'#4ade80':'#f87171'}">${r.manual_action || 'WAIT'}</span></div>
                                                     <div class="tooltip-row"><span>Score:</span> <span style="font-weight: bold;">${r.manual_score || 0}/100</span></div>
+                                                    
+                                                    <!-- STRATEGY SELECTOR UI (NEW V3.3) -->
+                                                    <div class="tooltip-header" style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 5px;">Configuración Estrategias</div>
+                                                    <div id="strat-config-${r.symbol.replace('.','-')}" style="margin-top: 5px;">
+                                                        <div style="text-align:center; color:#64748b; font-size:9px;">Cargando...</div>
+                                                    </div>
+                                                    <!-- Trigger loading on hover/click -->
+                                                    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" 
+                                                         onload="loadSymbolStrategies('${r.symbol}', 'strat-config-${r.symbol.replace('.','-')}')" 
+                                                         style="display:none;" />
                                                 </div>
                                             </div>
                                         </div>
 
                                         <button onclick="showStrategyInspector('${r.symbol}', '${(r.winning_strategy && r.winning_strategy.includes('Maestra')) ? 'MANUAL' : 'AUTO'}')" style="padding: 2px 6px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; border-radius: 4px; font-size: 9px; cursor: pointer; font-weight: bold;">📏 ANALIZAR</button>
                                         
-                                        <span style="color: ${r.manual_score >= 70 ? '#22c55e' : r.manual_score >= 40 ? '#eab308' : '#64748b'}; font-weight: bold;">${r.manual_score || 0}/100</span>
+                                        <span style="color: ${r.manual_score >= 55 ? '#22c55e' : r.manual_score <= 45 ? '#ef4444' : '#94a3b8'}; font-weight: bold;">${r.manual_score || 0}/100</span>
                                     </div>
-                                    <div style="height: 8px; background: rgba(0,0,0,0.3); border-radius: 4px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.05);">
-                                        <div style="width: ${r.manual_score || 0}%; background: ${r.manual_score >= 70 ? 'linear-gradient(90deg, #22c55e, #4ade80)' : (r.manual_score >= 40 ? 'linear-gradient(90deg, #eab308, #fbbf24)' : 'linear-gradient(90deg, #ef4444, #f87171)')}; height: 100%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);"></div>
+                                    <div style="height: 14px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; position: relative; border: 1px solid rgba(255,255,255,0.1);" data-ver="5.0-BIAS">
+                                        <!-- CENTER MARKER -->
+                                        <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.4); transform: translateX(-50%); z-index: 2;"></div>
+                                        
+                                        <!-- BAR LOGIC -->
+                                        ${(() => {
+                                            const score = r.manual_score || 0; 
+                                            // LOGIC V5: BIAS IS KING (User Request)
+                                            // Direction (Color/Side) is determined by BOT BIAS (EMA Alignment / Action), NOT SCORE.
+                                            // Score determines MAGNITUDE (Width) only.
+                                            
+                                            // 1. DETERMINE BIAS (Direction)
+                                            // 1. DETERMINE BIAS (Direction)
+                                            let isBullish = true; 
+                                            let biasFound = false;
+
+                                            // A. PRIORITY: Strategy Intent (direction field)
+                                            if (r.direction !== undefined && r.direction !== 0) {
+                                                if (r.direction === 1) {
+                                                    isBullish = true;
+                                                    biasFound = true;
+                                                } else if (r.direction === -1) {
+                                                    isBullish = false;
+                                                    biasFound = true;
+                                                }
+                                            }
+                                            
+                                            // A2. ROBUST FALLBACK: Scan factors for intent keywords
+                                            if (!biasFound && r.factors) {
+                                                const factorsStr = JSON.stringify(r.factors).toUpperCase();
+                                                const statusStr = (r.manual_desc || "").toUpperCase();
+                                                if (factorsStr.includes('LONG') || factorsStr.includes('BUY') || statusStr.includes('ALCISTA')) {
+                                                    isBullish = true;
+                                                    biasFound = true;
+                                                } else if (factorsStr.includes('SHORT') || factorsStr.includes('SELL') || statusStr.includes('BAJISTA')) {
+                                                    isBullish = false;
+                                                    biasFound = true;
+                                                }
+                                            }
+
+                                            // B. Explicit Action?
+                                            if (!biasFound && r.manual_action && (r.manual_action.includes('SELL') || r.manual_action.includes('DOWN') || r.manual_action.includes('SHORT'))) {
+                                                isBullish = false;
+                                                biasFound = true;
+                                            } else if (!biasFound && r.manual_action && (r.manual_action.includes('BUY') || r.manual_action.includes('UP') || r.manual_action.includes('LONG'))) {
+                                                isBullish = true;
+                                                biasFound = true;
+                                            }
+
+                                            // C. If no explicit action, check TREND/EMA (Fallback)
+                                            if (!biasFound && tech && tech.ema_alignment) {
+                                                if (tech.ema_alignment.includes('BEAR') || tech.ema_alignment.includes('SHORT')) {
+                                                    isBullish = false;
+                                                    biasFound = true;
+                                                } else if (tech.ema_alignment.includes('BULL') || tech.ema_alignment.includes('LONG')) {
+                                                    isBullish = true;
+                                                    biasFound = true;
+                                                }
+                                            }
+                                            
+                                            // D. Score Fallback
+                                            if (!biasFound) {
+                                                if (score <= 45) isBullish = false;
+                                            }
+                                            
+                                            // 2. DETERMINE MAGNITUDE (Width)
+                                            // Direct Percentage mapping: 100 Score = 50% Width (Full Side)
+                                            const visualWidth = (score / 100) * 50; 
+                                            
+                                            let left = 50;
+                                            let color = '#64748b';
+                                            
+                                            if (isBullish) {
+                                                // Right Side (Green)
+                                                left = 50;
+                                                // Keep green gradient always if bullish bias, regardless of score
+                                                color = 'linear-gradient(90deg, #10b981, #34d399)';
+                                                if(score >= 70) color = 'linear-gradient(90deg, #22c55e, #4ade80)'; // Bright green for high score
+                                            } else {
+                                                // Left Side (Red)
+                                                left = 50 - visualWidth;
+                                                // Keep red gradient always if bearish bias
+                                                color = 'linear-gradient(90deg, #ef4444, #f87171)';
+                                                if(score >= 70) color = 'linear-gradient(90deg, #dc2626, #ef4444)'; // Darker red for high confidence short? Or keep bright red.
+                                            }
+                                            
+                                            return `<div style="position: absolute; left: ${left}%; width: ${visualWidth}%; background: ${color}; height: 100%; transition: all 0.5s ease; border-radius: 2px;"></div>`;
+                                        })()}
                                     </div>
                                 </div>
 
@@ -1763,6 +2374,93 @@
             updateDashboard(); // Forzar refresco visual inmediato
         }
 
+        // NEW V3.3: Load Strategy Toggles
+        async function loadSymbolStrategies(symbol, containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            // Evitar recarga si ya está poblado (opcional, pero mejor refrescar por si cambia)
+            // if (container.getAttribute('data-loaded') === 'true') return;
+
+            try {
+                const res = await fetch(`/api/config/strategies/${symbol}`);
+                const config = await res.json();
+                
+                // Mapeo amigable para el selector de estrategias
+                const STRAT_NAMES = {
+                    "PSTEMAFlow": "Flujo EMA",
+                    "PSTMeanReversion": "Reversión Media",
+                    "PSTChannelMaster": "Canales Maestros",
+                    "PSTAIOracle_gemini": "🤖 IA Gemini (Cloud)",
+                    "PSTAIOracle_groq": "🚀 IA Groq (Súper Sónica)",
+                    "PSTAIOracle_ollama": "🏠 IA Ollama (Local/Gratis)"
+                };
+                
+                // Lista de estrategias conocidas para este símbolo
+                const knownStrats = [
+                    "PSTEMAFlow", 
+                    "PSTMeanReversion", 
+                    "PSTChannelMaster",
+                    "PSTAIOracle_gemini", 
+                    "PSTAIOracle_groq", 
+                    "PSTAIOracle_ollama"
+                ];
+                
+                let html = '';
+                knownStrats.forEach(strat => {
+                    const isActive = config.hasOwnProperty(strat) ? config[strat] : true;
+                    const chkId = `chk-${symbol}-${strat}`.replace('.','-');
+                    
+                    html += `
+                        <div class="strat-switch-row" style="margin-bottom: 12px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 10px;">
+                            <div style="display: flex; flex-direction: column;">
+                                <span style="font-size: 11px; color: #fff; font-weight: bold;">${STRAT_NAMES[strat] || strat}</span>
+                                <span style="font-size: 9px; color: #64748b;">${strat.includes('AIOracle') ? 'Inteligencia Artificial' : 'Estrategia Automática'}</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="${chkId}" ${isActive ? 'checked' : ''} onchange="toggleSymbolStrat('${symbol}', '${strat}', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    `;
+                });
+                
+                container.innerHTML = html;
+                container.setAttribute('data-loaded', 'true');
+            } catch (e) {
+                container.innerHTML = '<div style="color:#ef4444; font-size:9px;">Error cargando config</div>';
+            }
+        }
+
+        async function toggleSymbolStrat(symbol, strat, isActive) {
+            try {
+                await fetch('/api/config/strategies/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol, strategy: strat, active: isActive })
+                });
+                
+                // Si es la IA principal, mostrar/ocultar el selector de proveedor
+                if (strat === 'PSTAIOracle') {
+                    const box = document.getElementById(`ai-selection-box-${symbol.replace('.','-')}`);
+                    if (box) box.style.display = isActive ? 'block' : 'none';
+                }
+                
+                console.log(`Updated ${symbol} ${strat} -> ${isActive}`);
+            } catch (e) { console.error(e); }
+        }
+
+        async function updateSymbolAIProvider(symbol, provider) {
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: `ai_provider_${symbol}`, value: provider })
+                });
+                console.log(`Updated ${symbol} AI Provider -> ${provider}`);
+            } catch (e) { console.error(e); }
+        }
+
         async function executeManualTrade(symbol, type) {
             // 1. Obtener parámetros inteligentes
             let params;
@@ -1886,10 +2584,46 @@
             }
         }
 
+        window.forceAnalyzeIA = async function(symbol, provider = 'gemini') {
+            const btn = document.getElementById(`btn-force-ia-${provider}`) || document.getElementById('btn-force-ia');
+            if(!btn) return;
+            
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            btn.innerHTML = `<span>⚡ [${provider.toUpperCase()}] ANALIZANDO...</span>`;
+            
+            try {
+                const res = await fetch(`/api/ai/force-analyze/${symbol}?provider=${provider}`, { method: 'POST' });
+                const data = await res.json();
+                
+                if (data.success) {
+                    btn.innerHTML = '<span>✅ COMPLETADO</span>';
+                    btn.style.background = 'linear-gradient(135deg, #064e3b, #059669)';
+                    // Recargar modal para ver cambios
+                    setTimeout(() => {
+                        showStrategyInspector(symbol, 'AUTO');
+                    }, 1000);
+                } else {
+                    alert(`Error [${provider.toUpperCase()}]: ` + (data.error || "Desconocido"));
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                }
+            } catch (e) {
+                alert("Error de conexión: " + e);
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.style.opacity = '1';
+            }
+        };
         let chart = null;
         let candleSeries = null;
         let emaSeries = null;
         let ema50Series = null; 
+        let bbUpperSeries = null;
+        let bbMidSeries = null;
+        let bbLowerSeries = null;
         let upperLocalSeries = null; 
         let lowerLocalSeries = null; 
         let currentSymbol = null; 
@@ -1976,12 +2710,29 @@
             const container = document.getElementById('chart-container');
             const title = document.getElementById('modal-title');
             
-            // UI Feedback
+            // 1. SHOW LOADING OVERLAY (UX FIX)
+            let overlay = document.getElementById('chart-loading-overlay');
+            if(!overlay) {
+                 overlay = document.createElement('div');
+                 overlay.id = 'chart-loading-overlay';
+                 overlay.style.cssText = "position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(17, 24, 39, 0.95); z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(2px);";
+                 // Ensure container relative positioning
+                 if(getComputedStyle(container).position === 'static') container.style.position = 'relative';
+                 container.appendChild(overlay);
+            }
+            overlay.innerHTML = `
+                <div style="font-size: 40px; margin-bottom: 20px; animation: pulse 2s infinite;">🧠</div>
+                <div style="font-size: 16px; font-weight: bold; color: #38bdf8; margin-bottom: 8px;">Analizando ${symbol}...</div>
+                <div style="font-size: 12px; color: #94a3b8; font-family: monospace;">Esperando respuesta de IA (Ollama/Groq)</div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 5px;">Esto puede tardar 10-20s. Por favor espera.</div>
+                <div style="margin-top: 20px; width: 40px; height: 40px; border: 3px solid rgba(56, 189, 248, 0.1); border-top: 3px solid #38bdf8; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+            `;
+            overlay.style.display = 'flex';
+
+            // UI Feedback (Title)
             if(chart) {
-                 // Update Title only while loading
-                 title.innerHTML = `Análisis Técnico: ${symbol} <span style="font-size: 12px; color: #64748b; margin-left:10px;">(Cargando ${tf}...)</span>`;
+                 title.innerHTML = `Análisis Técnico: ${symbol} <span style="font-size: 12px; color: #64748b; margin-left:10px;">(Conectando...)</span>`;
             } else {
-                 container.innerHTML = '<div style="color: #64748b; text-align: center; padding-top: 200px;">Generando vista técnica...</div>';
                  title.innerHTML = `Análisis Técnico: ${symbol}`;
             }
 
@@ -1993,6 +2744,9 @@
             try {
                 const res = await fetch(`/api/chart/${symbol}?tf=${tf}`);
                 const result = await res.json();
+                
+                // 2. HIDE OVERLAY
+                if(overlay) overlay.style.display = 'none';
                 
                 if (!result.data || result.data.length === 0) {
                     container.innerHTML = '<div style="color: #ef4444; text-align: center; padding-top: 200px;">Error: No hay datos disponibles.</div>';
@@ -2083,6 +2837,11 @@
                     
                     emaSeries = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, title: 'EMA 21' });
                     ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'EMA 50' });
+                    
+                    // Bollinger Bands Series
+                    bbUpperSeries = chart.addLineSeries({ color: 'rgba(56, 189, 248, 0.4)', lineWidth: 1, title: 'BB Upper', lineStyle: 2 });
+                    bbMidSeries = chart.addLineSeries({ color: 'rgba(56, 189, 248, 0.2)', lineWidth: 1, title: 'BB Mid', lineStyle: 2 });
+                    bbLowerSeries = chart.addLineSeries({ color: 'rgba(56, 189, 248, 0.4)', lineWidth: 1, title: 'BB Lower', lineStyle: 2 });
 
                     window.clickHandler = (param) => {
                             if (!param.point || !candleSeries) return;
@@ -2283,6 +3042,17 @@
                 candleSeries.setData(window.lastFormattedData);
                 emaSeries.setData(emaData);
                 ema50Series.setData(ema50Data);
+                
+                // Bollinger Bands data mapping
+                if (result.bb_upper && result.bb_upper.length > 0) {
+                    const bbUpperData = result.data.map((d, i) => ({ time: d.time_ts, value: result.bb_upper[i] })).filter(d => d.value !== null);
+                    const bbMidData = result.data.map((d, i) => ({ time: d.time_ts, value: result.bb_mid[i] })).filter(d => d.value !== null);
+                    const bbLowerData = result.data.map((d, i) => ({ time: d.time_ts, value: result.bb_lower[i] })).filter(d => d.value !== null);
+                    
+                    bbUpperSeries.setData(bbUpperData);
+                    bbMidSeries.setData(bbMidData);
+                    bbLowerSeries.setData(bbLowerData);
+                }
                 
                 // Set Data Canales
                 // Actualización de datos de Canales Automáticos eliminada
@@ -2562,6 +3332,166 @@
                         
                         // Gestión de eventos finalizada
 
+                // --- 1. SEPARAR ESTRATEGIAS ---
+                // Agrupar todas las IAs bajo "Cerebro IA"
+                console.log("🛠️ HIERARCHICAL TABS: Ejecutando lógica...", result.detailedData);
+                let aiStrats = [];
+                let otherStrats = [];
+                
+                const dData = result.detailedData || window.lastData?.detailedData || [];
+                
+                dData.forEach((s, idx) => {
+                    const isAI = s.name && (s.name.includes("IA") || s.name.includes("Oracle") || s.name.includes("AI-Oracle"));
+                    if (isAI) {
+                        aiStrats.push({ ...s, originalIdx: idx });
+                    } else {
+                        otherStrats.push({ ...s, originalIdx: idx });
+                    }
+                });
+                
+                console.log(`🛠️ IAs encontradas: ${aiStrats.length}, Otras: ${otherStrats.length}`);
+                
+                const hasAI = aiStrats.length > 0;
+                
+                // --- 2. RENDERIZAR PESTAÑAS PRINCIPALES ---
+                const selectorContainer = document.querySelector('.strat-selectors');
+                let mainTabsHTML = otherStrats.map(s => `
+                    <button class="strat-btn ${s.originalIdx === 0 && !hasAI ? 'active' : ''}" 
+                            onclick="selectStrategy(${s.originalIdx})"
+                            id="strat-btn-${s.originalIdx}">
+                        ${s.name} <span class="badge ${s.score >= 70 ? 'high' : (s.score >= 40 ? 'med' : 'low')}">${s.score}</span>
+                    </button>
+                `).join('');
+                
+                // Si hay IAs, añadir una pestaña MAESTRA "Cerebro IA"
+                if (hasAI) {
+                    // Calculamos el score máximo de las IAs para mostrarlo en la pestaña maestra
+                    const maxAIScore = Math.max(...aiStrats.map(s => s.score));
+                    mainTabsHTML += `
+                        <button class="strat-btn active" 
+                                onclick="selectStrategy('AI_MASTER')"
+                                id="strat-btn-ai-master">
+                            🤖 Cerebro IA <span class="badge ${maxAIScore >= 70 ? 'high' : (maxAIScore >= 40 ? 'med' : 'low')}">${maxAIScore}</span>
+                        </button>
+                    `;
+                }
+                selectorContainer.innerHTML = mainTabsHTML;
+                
+                // --- 3. RENDERIZAR SUB-PESTAÑAS (Solo visibles si Cerebro IA está activo) ---
+                // Crear contenedor si no existe (o limpiarlo)
+                let subTabsContainer = document.getElementById('ai-subtabs');
+                if (!subTabsContainer) {
+                    subTabsContainer = document.createElement('div');
+                    subTabsContainer.id = 'ai-subtabs';
+                    subTabsContainer.style.cssText = "display: flex; gap: 8px; margin-top: 10px; padding: 0 10px; overflow-x: auto; display: none;";
+                    // Insertar después de .strat-selectors
+                    selectorContainer.parentNode.insertBefore(subTabsContainer, selectorContainer.nextSibling);
+                }
+                
+                const aiSubTabsHTML = aiStrats.map((s, i) => {
+                    // Simplificar nombres (Case Insensitive & Clean)
+                    let lower = s.name.toLowerCase();
+                    let simpleName = s.name;
+                    
+                    if(lower.includes("groq")) simpleName = "Groq 🚀";
+                    else if(lower.includes("ollama")) simpleName = "Ollama 🏠";
+                    else if(lower.includes("gemini")) simpleName = "Gemini 🤖";
+                    else if(lower.includes("gpt")) simpleName = "GPT 🧠";
+                    else {
+                        // Fallback clean
+                        simpleName = simpleName.replace("PST-AI-Oracle", "").replace("IA ", "").replace(/[\[\]]/g, "").trim();
+                        if(!simpleName) simpleName = "IA Oracle";
+                    }
+                    
+                    return `
+                        <button class="sub-strat-btn ${i === 0 ? 'active' : ''}" 
+                                onclick="selectAggregatedTab(${s.originalIdx}, this)"
+                                data-idx="${s.originalIdx}">
+                            ${simpleName} <span class="badge ${s.score>=70?'high':(s.score>=40?'med':'low')}">${s.score}</span>
+                        </button>
+                    `;
+                }).join('');
+                subTabsContainer.innerHTML = aiSubTabsHTML;
+
+                // --- 4. RENDERER DE CONTENIDO (Missing Function Fixed) ---
+                window.renderStrategyContent = function(idx) {
+                    const strat = dData[idx];
+                    if (!strat) return;
+                    
+                    const meta = strat.metadata || {};
+                    const breakdown = meta.score_breakdown || {};
+                    const factors = meta.factors_detailed || [];
+                    
+                    // Actualizar Puntuación y Círculo
+                    const scoreEl = document.getElementById('inspector-score');
+                    if (scoreEl) {
+                        scoreEl.innerText = strat.score;
+                        const circle = document.querySelector('.score-circle');
+                        if (circle) circle.style.background = `conic-gradient(#fbbf24 ${strat.score * 3.6}deg, rgba(255,255,255,0.05) 0deg)`;
+                    }
+                    
+                    // Actualizar Veredicto
+                    const verdictEl = document.getElementById('inspector-verdict');
+                    if (verdictEl) verdictEl.innerText = meta.status || "Analizando...";
+
+                    // Actualizar Factores Detallados
+                    const factorsList = document.getElementById('inspector-factors-list');
+                    if (factorsList) {
+                        factorsList.innerHTML = factors.map(f => `
+                            <li>
+                                <span class="factor-name">${f.k}</span>
+                                <span class="factor-value">${f.v}</span>
+                                <span class="factor-points ${f.score >= 0 ? 'pos' : 'neg'}">${f.score >= 0 ? '+' : ''}${f.score}</span>
+                            </li>
+                        `).join('') || '<li>Sin datos detallados</li>';
+                    }
+                };
+                
+                // --- 5. FUNCIONES DE SELECCIÓN ---
+                
+                // Override selectStrategy para manejar el grupo IA
+                window.selectStrategy = function(idx) {
+                    // Reset Main Tabs style
+                    document.querySelectorAll('.strat-selectors .strat-btn').forEach(b => b.classList.remove('active'));
+                    
+                    if (idx === 'AI_MASTER') {
+                         document.getElementById('strat-btn-ai-master').classList.add('active');
+                         document.getElementById('ai-subtabs').style.display = 'flex';
+                         
+                         // Activar la primera sub-pestaña por defecto si ninguna está activa
+                         const firstSub = document.querySelector('.sub-strat-btn');
+                         if (firstSub) firstSub.click();
+                         return;
+                    }
+                    
+                    // Modo Normal (Otras estrategias)
+                    if (document.getElementById(`strat-btn-${idx}`)) {
+                        document.getElementById(`strat-btn-${idx}`).classList.add('active');
+                    }
+                    document.getElementById('ai-subtabs').style.display = 'none';
+                    renderStrategyContent(idx);
+                };
+                
+                window.selectAggregatedTab = function(realIdx, btnElement) {
+                    // Update Sub-tabs UI via CSS classes
+                    document.querySelectorAll('.sub-strat-btn').forEach(b => {
+                        b.classList.remove('active');
+                        // Clean legacy inline styles if any exist
+                        b.style.background = '';
+                        b.style.borderColor = '';
+                        b.style.color = '';
+                    });
+                    
+                    btnElement.classList.add('active');
+                    renderStrategyContent(realIdx);
+                };
+
+                // Default Selection
+                if (hasAI) {
+                    selectStrategy('AI_MASTER');
+                } else if (otherStrats.length > 0) {
+                    selectStrategy(otherStrats[0].originalIdx);
+                }
                         // DRAG & DROP HANDLERS (PERSISTENTES)
                         if (!window.dragInitialized) {
                             const container = document.getElementById('chart-container');
@@ -2628,12 +3558,51 @@
         // --- CONFIGURACIÓN DE SÍMBOLOS ---
         async function openConfigModal() {
             document.getElementById('config-modal').style.display = 'flex';
+            
+            // Cargar configuración de Telegram (Ph3)
+            try {
+                const tgToken = await fetch('/api/config?key=telegram_token').then(r => r.json());
+                const tgChat = await fetch('/api/config?key=telegram_chat_id').then(r => r.json());
+                const aiProvider = await fetch('/api/config?key=ai_provider').then(r => r.json());
+                const geminiKey = await fetch('/api/config?key=gemini_api_key').then(r => r.json());
+                const groqKey = await fetch('/api/config?key=groq_api_key').then(r => r.json());
+
+                if (tgToken.value) document.getElementById('tg-token').value = tgToken.value;
+                if (tgChat.value) document.getElementById('tg-chat-id').value = tgChat.value;
+                if (aiProvider.value) {
+                    document.getElementById('ai-provider-select').value = aiProvider.value;
+                    updateAIInputVisibility();
+                }
+                if (geminiKey.value) document.getElementById('gemini-key').value = geminiKey.value;
+                if (groqKey.value) document.getElementById('groq-key').value = groqKey.value;
+
+                // Load Global AI Toggles
+                const gGemini = await fetch('/api/config?key=global_ai_gemini').then(r => r.json());
+                const gGroq = await fetch('/api/config?key=global_ai_groq').then(r => r.json());
+                const gOllama = await fetch('/api/config?key=global_ai_ollama').then(r => r.json());
+                
+                document.getElementById('global-toggle-gemini').checked = (gGemini.value !== 'false');
+                document.getElementById('global-toggle-groq').checked = (gGroq.value !== 'false');
+                document.getElementById('global-toggle-ollama').checked = (gOllama.value !== 'false');
+            } catch (e) { console.error("Error loading config:", e); }
+
             const container = document.getElementById('config-symbols-container');
             container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 20px;">Cargando lista maestra...</div>';
             
             try {
                 const res = await fetch('/api/config/symbols');
-                const symbols = await res.json();
+                const data = await res.json();
+                
+                // Ensure symbols is an array (handle different response formats)
+                let symbols = data;
+                if (!Array.isArray(symbols)) {
+                    // If response is an object with 'symbols' property
+                    if (data.symbols && Array.isArray(data.symbols)) {
+                        symbols = data.symbols;
+                    } else {
+                        throw new Error('Invalid response format: symbols is not an array');
+                    }
+                }
                 
                 // Agrupar por tipo
                 const groups = {};
@@ -2883,5 +3852,248 @@
         };
 
     </script>
+
+<!-- MODAL ESTRATEGIAS -->
+<div id="strategy-config-modal" class="modal" style="display:none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.8); align-items: center; justify-content: center; backdrop-filter: blur(5px);">
+  <div class="modal-content" style="background-color: #0f172a; margin: auto; padding: 20px; border: 1px solid #334155; width: 90%; max-width: 500px; max-height: 85vh; overflow-y: auto; border-radius: 12px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);">
+     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 id="strat-modal-title" style="margin: 0; color: #f8fafc; font-size: 1.25rem;">Configuración</h2>
+        <span class="close" onclick="closeStrategyModal()" style="color: #94a3b8; float: right; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
+     </div>
+     <div id="strat-modal-body" style="color: #cbd5e1;">
+         <!-- Dinámico -->
+     </div>
+  </div>
+</div>
+
+<script>
+    // --- STRATEGY MODAL LOGIC ---
+    window.openStrategyConfig = function(symbol) {
+        const modal = document.getElementById('strategy-config-modal');
+        const title = document.getElementById('strat-modal-title');
+        const body = document.getElementById('strat-modal-body');
+        
+        title.innerText = `Estrategias: ${symbol}`;
+        modal.style.display = 'flex';
+        
+        body.innerHTML = `<div id="config-strategies-container-${symbol}" style="min-height: 100px;">Cargando configuración...</div>`;
+        
+        loadSymbolStrategies(symbol, `config-strategies-container-${symbol}`);
+    };
+
+    window.closeStrategyModal = function() {
+        document.getElementById('strategy-config-modal').style.display = 'none';
+    };
+    
+    // Close clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('strategy-config-modal');
+        if (event.target == modal) {
+            modal.style.display = "none";
+        }
+    };
+
+        window.updateAIInputVisibility = function() {
+            const provider = document.getElementById('ai-provider-select').value;
+            document.getElementById('setup-gemini').style.display = (provider === 'gemini') ? 'flex' : 'none';
+            document.getElementById('setup-groq').style.display = (provider === 'groq') ? 'flex' : 'none';
+            document.getElementById('setup-ollama').style.display = (provider === 'ollama') ? 'block' : 'none';
+        };
+
+        window.saveAISettings = async function() {
+            const provider = document.getElementById('ai-provider-select').value;
+            const geminiKey = document.getElementById('gemini-key').value;
+            const groqKey = document.getElementById('groq-key').value;
+
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: 'ai_provider', value: provider })
+                });
+                if (geminiKey) await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: 'gemini_api_key', value: geminiKey })
+                });
+                if (groqKey) await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: 'groq_api_key', value: groqKey })
+                });
+
+                alert("✅ Cerebro IA actualizado correctamente.");
+            } catch (e) {
+                alert("❌ Error al guardar configuración de IA.");
+            }
+        };
+
+        window.toggleGlobalAI = async function(provider, isActive) {
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: `global_ai_${provider}`, value: isActive.toString() })
+                });
+                console.log(`Global AI ${provider} -> ${isActive}`);
+            } catch (e) { console.error(e); }
+        };
+
+        window.saveTelegramSettings = async function() {
+        const token = document.getElementById('tg-token').value;
+        const chat = document.getElementById('tg-chat-id').value;
+        
+        try {
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: 'tg_token', value: token })
+            });
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: 'tg_chat_id', value: chat })
+            });
+            alert("✅ Configuración de Telegram guardada correctamente.");
+        } catch (e) {
+            console.error("Error saving TG config:", e);
+            alert("❌ Error al guardar configuración.");
+        }
+    };
+
+    // --- AI POLL SYSTEM (Auto-Refresh when Analysis Done) ---
+    window.aiPolls = {};
+    window.startAIPolling = function(symbol, provider) {
+         const key = `${symbol}_${provider}`;
+         // Clear existing if any (restart safe)
+         if (window.aiPolls[key]) clearInterval(window.aiPolls[key]);
+         
+         console.log(`📡 Iniciando sondeo auto-refresco para ${key}...`);
+         const btnId = `btn-force-ia-${provider}`;
+         
+         window.aiPolls[key] = setInterval(async () => {
+              try {
+                   // Check if modal still open, else stop
+                    const modal = document.getElementById('strat-modal');
+                    if(!modal || modal.style.display === 'none') {
+                        clearInterval(window.aiPolls[key]);
+                        delete window.aiPolls[key];
+                        return;
+                   }
+
+                   const res = await fetch(`/api/chart/${symbol}`);
+                   if (!res.ok) return;
+                   const data = await res.json();
+                   
+                   // Check status in detailedData
+                   const strat = (data.detailedData || []).find(s => {
+                       const name = (s.name || '').toUpperCase();
+                       return name.includes("IA") && 
+                              (name.includes(provider.toUpperCase()) || name.includes("ORACLE"));
+                   });
+                   
+                   // If status does NOT contain hourglass ⏳, it means it's done (or failed/manual req)
+                   if (strat && !strat.status.includes('⏳')) {
+                        console.log("✅ Análisis IA Completado. Refrescando UI...");
+                        clearInterval(window.aiPolls[key]);
+                        delete window.aiPolls[key];
+                        
+                        // Refresh logic
+                        if (typeof loadChartData === 'function') {
+                             loadChartData(symbol); 
+                             // NOTE: This will re-render and re-select AI tab if it's the default
+                        }
+                   }
+              } catch (e) { console.error("Poll Error", e); }
+         }, 2500);
+    };
+
+    window.saveGeminiSettings = async function() {
+        const key = document.getElementById('gemini-key').value;
+        if (!key) { alert("Introduce una API Key válida."); return; }
+        
+        try {
+            const res = await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: 'gemini_api_key', value: key })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert("✅ Cerebro IA Activado. El Oráculo empezará a analizar en el siguiente ciclo.");
+            } else { alert("Error: " + data.error); }
+        } catch (e) { alert("Error de conexión."); }
+    };
+
+    // AI Polling Function - Auto-refresh modal when analysis completes
+    window.startAIPolling = function(symbol, provider) {
+        const pollKey = `${symbol}_${provider}`;
+        
+        // Prevent duplicate polling
+        if (window.aiModalPolls && window.aiModalPolls[pollKey]) {
+            console.log(`⏭️ Polling already active for ${pollKey}`);
+            return;
+        }
+        
+        if (!window.aiModalPolls) window.aiModalPolls = {};
+        
+        console.log(`🔄 Starting AI modal polling for ${symbol} (${provider})`);
+        
+        let pollCount = 0;
+        const maxPolls = 60; // Max 2 minutes (60 * 2s = 120s)
+        
+        window.aiModalPolls[pollKey] = setInterval(async () => {
+            pollCount++;
+            
+            try {
+                // Check if modal is still open
+                const modal = document.getElementById('analysisModal');
+                if (!modal || modal.style.display === 'none') {
+                    console.log(`⏹️ Modal closed, stopping polling for ${pollKey}`);
+                    clearInterval(window.aiModalPolls[pollKey]);
+                    delete window.aiModalPolls[pollKey];
+                    return;
+                }
+                
+                // Stop after max polls
+                if (pollCount >= maxPolls) {
+                    console.log(`⏱️ Max polling time reached for ${pollKey}`);
+                    clearInterval(window.aiModalPolls[pollKey]);
+                    delete window.aiModalPolls[pollKey];
+                    return;
+                }
+                
+                // Fetch latest data
+                const response = await fetch(`/api/data/${symbol}`);
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                
+                // Find AI strategy
+                const aiStrategy = data.strategies?.find(s => 
+                    s.name.includes('AI-Oracle') && s.name.includes(provider.toUpperCase())
+                );
+                
+                if (!aiStrategy) return;
+                
+                // Check if analysis completed (no longer "⏳")
+                if (!aiStrategy.status.includes('⏳')) {
+                    console.log(`✅ AI analysis completed for ${pollKey}, refreshing modal`);
+                    
+                    // Stop polling
+                    clearInterval(window.aiModalPolls[pollKey]);
+                    delete window.aiModalPolls[pollKey];
+                    
+                    // Reload chart data to refresh modal content
+                    if (typeof loadChartData === 'function') {
+                        loadChartData(symbol);
+                    }
+                }
+            } catch (error) {
+                console.error(`❌ Polling error for ${pollKey}:`, error);
+            }
+        }, 2000); // Poll every 2 seconds
+    };
+</script>
 </body>
 </html>

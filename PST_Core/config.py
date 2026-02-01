@@ -5,7 +5,7 @@
 # TRADING RISK PARAMETERS (FTMO Friendly)
 MAX_RISK_PCT = 1.5           # Riesgo máximo en caso de SL
 MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día
-MAX_POSITION_COST = 3000     # Costo máximo de entrada por operación (Cap de exposición)
+MAX_POSITION_COST_PCT = 25    # Costo máximo de entrada por operación (% del balance)
 
 # DINAMIC PROTECTION (ATR MULTIPLIERS)
 BE_ATR_MULTIPLIER = 2.0      # Activar Breakeven a 2.0 ATR
@@ -19,3 +19,6 @@ DEFAULT_TP_PCT = 0.02        # 2% (Legacy/Manual)
 DEFAULT_SL_PCT = 0.01        # 1% (Legacy/Manual)
 
 TIMEFRAME_DEFAULT = 5        # M5 base
+
+# ACTIVOS 24/7 (CRIPTO)
+CRYPTO_KEYWORDS = ["BTC", "ETH", "ADA", "SOL", "DOT", "LNK", "LTC", "UNI", "XLM", "XRP", "MATIC", "AVAX"]

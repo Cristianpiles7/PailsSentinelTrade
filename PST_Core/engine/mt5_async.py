@@ -23,6 +23,7 @@ async def fetch_rates_async(symbol: str, timeframe: int, count: int) -> Optional
     # Mapeo de entero a constante de MT5
     tf_map = {
         1: mt5.TIMEFRAME_M1,
+        3: mt5.TIMEFRAME_M3,
         5: mt5.TIMEFRAME_M5,
         15: mt5.TIMEFRAME_M15,
         30: mt5.TIMEFRAME_M30,
@@ -75,11 +76,13 @@ async def get_mtf_data_async(symbol: str):
     # H1: Tendencia Principal
     # H4: Macro / Filtro Mayor
     tasks = [
-        fetch_rates_async(symbol, 1, 100),   # M1 (Scalp Vol - 100 velas)
-        fetch_rates_async(symbol, 5, 200),   # M5 (Trigger - 200 para EMAs/RSI locales)
-        fetch_rates_async(symbol, 15, 200),  # M15 (Tactical)
-        fetch_rates_async(symbol, 60, 500),  # H1 (Trend - 500 para mayor estabilidad)
-        fetch_rates_async(symbol, 240, 500)  # H4 (Macro)
+        fetch_rates_async(symbol, 1, 100),   # M1
+        fetch_rates_async(symbol, 3, 100),   # M3 (NEW)
+        fetch_rates_async(symbol, 5, 200),   # M5
+        fetch_rates_async(symbol, 15, 200),  # M15
+        fetch_rates_async(symbol, 30, 200),  # M30 (NEW)
+        fetch_rates_async(symbol, 60, 500),  # H1
+        fetch_rates_async(symbol, 240, 500)  # H4
     ]
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -94,9 +97,11 @@ async def get_mtf_data_async(symbol: str):
             
     return {
         "m1": clean_results[0],
-        "m5": clean_results[1],
-        "m15": clean_results[2],
-        "h1": clean_results[3],
-        "h4": clean_results[4]
+        "m3": clean_results[1],
+        "m5": clean_results[2],
+        "m15": clean_results[3],
+        "m30": clean_results[4],
+        "h1": clean_results[5],
+        "h4": clean_results[6]
     }
 

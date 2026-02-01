@@ -4,6 +4,7 @@ import numpy as np
 class RegimeMode:
     TREND = "TREND"
     RANGE = "RANGE"
+    RANGING = "RANGE" # Alias para compatibilidad
     VOLATILE = "VOLATILE"  # Alta volatilidad pero sin dirección (Caos)
     UNKNOWN = "UNKNOWN"
 

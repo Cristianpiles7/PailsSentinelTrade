@@ -1,0 +1,28 @@
+
+    async def get_symbol_strategies(self, symbol) -> dict:
+        """Obtiene el mapa de estrategias activas/inactivas para un símbolo. {StrategyName: bool}"""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("SELECT strategy_name, is_active FROM symbol_strategies WHERE symbol = ?", (symbol,)) as cursor:
+                    rows = await cursor.fetchall()
+                    return {r['strategy_name']: bool(r['is_active']) for r in rows}
+        except Exception as e:
+            logger.error(f"❌ Error getting strategies for {symbol}: {e}")
+            return {}
+
+    async def set_symbol_strategy(self, symbol, strategy_name, is_active):
+        """Activa o desactiva una estrategia específica para un símbolo."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                val = 1 if is_active else 0
+                await db.execute("""
+                    INSERT INTO symbol_strategies (symbol, strategy_name, is_active)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(symbol, strategy_name) DO UPDATE SET is_active=excluded.is_active
+                """, (symbol, strategy_name, val))
+                await db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error setting strategy {strategy_name} for {symbol}: {e}")
+            return False
