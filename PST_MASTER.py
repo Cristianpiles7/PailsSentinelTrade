@@ -25,6 +25,11 @@ if __name__ == "__main__":
     print("💎 PAILS SENTINEL TRADE - UNIFIED MASTER LAUNCHER 💎")
     print("="*50 + "\n")
 
+    # Inicializar Base de Datos antes de lanzar procesos
+    from PST_Core.models.database import PSTDatabase
+    import asyncio
+    asyncio.run(PSTDatabase().initialize())
+
     # Crear procesos independientes
     bot_process = multiprocessing.Process(target=run_bot)
     dashboard_process = multiprocessing.Process(target=run_dashboard)

@@ -2,15 +2,16 @@
 # Configuration constants for PailsSentinelTrade
 
 # TRADING RISK PARAMETERS (FTMO Friendly)
-# TRADING RISK PARAMETERS (FTMO Friendly)
-MAX_RISK_PCT = 1.5           # Riesgo máximo en caso de SL
-MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día
-MAX_POSITION_COST_PCT = 25    # Costo máximo de entrada por operación (% del balance)
+# TRADING RISK PARAMETERS (Dynamic & Conservative)
+MAX_RISK_PCT = 0.25          # Riesgo base por operación (0.25%)
+MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día (FTMO Safe)
+DAILY_LOSS_EXIT_USD = 400    # STOP DIARIO CRÍTICO ($: Cierre total a los $400 de pérdida)
+# MAX_POSITION_COST_PCT = 25  # REMOVED: Usaremos Cubetas de Margen Dinámicas
 
 # DINAMIC PROTECTION (ATR MULTIPLIERS)
 BE_ATR_MULTIPLIER = 2.0      # Activar Breakeven a 2.0 ATR
-TRAIL_ATR_MULTIPLIER = 3.0   # Trailing Stop a 3.0 ATR de distancia
-SL_ATR_MULTIPLIER = 3.0      # Multiplicador ATR para Stop Loss
+TRAIL_ATR_MULTIPLIER = 2.5   # Trailing Stop a 2.5 ATR de distancia (Más ceñido)
+SL_ATR_MULTIPLIER = 2.5      # Multiplicador ATR para Stop Loss (Ratio R:R mejorado)
 TP_ATR_MULTIPLIER = 6.0      # Multiplicador ATR para Take Profit (Ratio 1:2)
 
 # TRADING DEFAULT PARAMS
@@ -22,3 +23,13 @@ TIMEFRAME_DEFAULT = 5        # M5 base
 
 # ACTIVOS 24/7 (CRIPTO)
 CRYPTO_KEYWORDS = ["BTC", "ETH", "ADA", "SOL", "DOT", "LNK", "LTC", "UNI", "XLM", "XRP", "MATIC", "AVAX"]
+# STRATEGY MANAGEMENT
+# Estrategias activas globalmente (Nombres internos estándar)
+ENABLED_STRATEGIES = [
+    "PST-EMA-Flow",
+    "PST-Channel-Master",
+    "PST-Mean-Reversion",
+    "PST-AI-Oracle-Gemini",
+    "PST-AI-Oracle-Groq",
+    "PST-AI-Oracle-Ollama"
+]

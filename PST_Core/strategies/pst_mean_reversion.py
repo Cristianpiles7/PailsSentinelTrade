@@ -6,7 +6,14 @@ from datetime import datetime, timezone
 from ..models.classifier import RegimeMode
 from ..utils.tech_utils import get_asset_class
 
-# Helper for momentum/volume metrics
+def get_safe(series, default=0.0):
+    """Auxiliar para extraer valores de forma segura de una Serie de pandas."""
+    try:
+        if series is None or len(series) == 0: return default
+        val = series.iloc[-1]
+        return float(val) if not pd.isna(val) else default
+    except: return default
+
 def get_mtr_data(df_in, tf_minutes=5):
     if df_in is None or len(df_in) < 20: return None
     try:
@@ -27,6 +34,7 @@ class PSTMeanReversion:
     async def calculate_signal(self, data_input, current_regime, user_levels=None):
         """
         Calcula señales de reversión a la media basadas en Bollinger Bands (2.5 dev) + RSI.
+        Implementa un TP AGRESIVO que se cierra ligeramente antes de la media para asegurar el beneficio.
         """
         # 1. Adaptador de Datos
         df = None
@@ -124,8 +132,13 @@ class PSTMeanReversion:
         signal_type = "NEUTRAL"
         
         # --- 4.1 FILTRO MAESTRO: ADX (BLOQUEO) ---
-        is_adx_safe = adx_val < P_ADX_MAX
-        if not is_adx_safe:
+        # Si ADX < 25 -> Ideal para rangos.
+        # Si ADX > 50 -> Bloqueo total (Tendencia imparable).
+        # Si 25 < ADX < 50 -> Entrar con cuidado (solo si hay agotamiento extremo).
+        is_adx_extreme = adx_val > P_ADX_MAX
+        is_adx_high = adx_val > 30
+        
+        if is_adx_extreme:
              factor_groups["ENTORNO"] = {"k": "Filtro ADX", "v": f"Tendencia Fuerte ({adx_val:.1f})", "score": -100}
              return self._build_result(0, list(filter(None, factor_groups.values())), "Bloqueado por Tendencia")
 
@@ -238,14 +251,100 @@ class PSTMeanReversion:
 
         # --- VALIDACION FINAL ---
         final_score = min(100, score)
+
+        # Cálculo de TP Agresivo (Busca el objetivo más cercano que esté ADELANTE del precio)
+        # Para BUY: objetivos > close. Para SELL: objetivos < close.
+        ema21_val = get_safe(ta.ema(df['close'], length=21))
+        ema50_val = get_safe(ta.ema(df['close'], length=50))
+        
+        potential_targets = []
+        if signal_type == "BUY":
+            if bb_mid > close: potential_targets.append(bb_mid)
+            if ema21_val > close: potential_targets.append(ema21_val)
+            if ema50_val > close: potential_targets.append(ema50_val)
+            
+            if not potential_targets:
+                # Si no hay objetivos técnicos claros arriba, usamos un objetivo conservador de 1.5 ATR
+                atr_val = get_safe(ta.atr(df['high'], df['low'], df['close'], length=14))
+                best_init_target = close + (atr_val * 1.5)
+            else:
+                best_init_target = min(potential_targets)
+                
+            # TP Agresivos: 10% antes del objetivo
+            dist = abs(best_init_target - close)
+            target_tp = best_init_target - (dist * 0.10)
+            
+        elif signal_type == "SELL":
+            if bb_mid < close: potential_targets.append(bb_mid)
+            if ema21_val < close: potential_targets.append(ema21_val)
+            if ema50_val < close: potential_targets.append(ema50_val)
+            
+            if not potential_targets:
+                atr_val = get_safe(ta.atr(df['high'], df['low'], df['close'], length=14))
+                best_init_target = close - (atr_val * 1.5)
+            else:
+                best_init_target = max(potential_targets)
+                
+            # TP Agresivos: 10% antes del objetivo (Ej: 30.0 + 0.1 = 30.1)
+            dist = abs(best_init_target - close)
+            target_tp = best_init_target + (dist * 0.10)
+        else:
+            target_tp = 0
+
         if final_score >= 80:
              factor_groups["ESTADO"]["v"] = "Oportunidad Confirmada"
-             return self._build_result(final_score, factors_final, f"Reversión {signal_type}", entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1)
+             return self._build_result(final_score, factors_final, f"Reversión {signal_type}", entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
         elif final_score >= 50:
              factor_groups["ESTADO"]["v"] = "Vigilando Extremo"
-             return self._build_result(final_score, factors_final, "Posible Reversión", entry_signal="NEUTRAL", direction=1 if signal_type == "BUY" else -1)
+             return self._build_result(final_score, factors_final, "Posible Reversión", entry_signal="NEUTRAL", direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
         else:
              return self._build_result(0, factors_final, "Rango Neutral", direction=0)
+
+    def get_dynamic_targets(self, df, direction):
+        """
+        Calcula el objetivo dinámico (BBM o EMAs) para una posición abierta.
+        Busca el objetivo más cercano (agresivo) entre BBM, EMA21 y EMA50.
+        Aplica un margen de seguridad del 10%.
+        """
+        if df is None or len(df) < 50: return None
+        
+        current_price = df['close'].iloc[-1]
+        
+        # 1. BBM (Media de Bollinger)
+        bbands = ta.bbands(df['close'], length=20, std=2.5)
+        bb_mid = bbands.iloc[-1, 1] if bbands is not None else None
+        
+        # 2. EMAs
+        ema21 = get_safe(ta.ema(df['close'], length=21), default=None)
+        ema50 = get_safe(ta.ema(df['close'], length=50), default=None)
+        
+        # Filtrar objetivos válidos según la dirección (siempre ADELANTE del precio)
+        targets = []
+        if direction == 1: # BUY (Objetivos por encima del precio)
+            if bb_mid and bb_mid > current_price: targets.append(bb_mid)
+            if ema21 and ema21 > current_price: targets.append(ema21)
+            if ema50 and ema50 > current_price: targets.append(ema50)
+        else: # SELL (Objetivos por debajo del precio)
+            if bb_mid and bb_mid < current_price: targets.append(bb_mid)
+            if ema21 and ema21 < current_price: targets.append(ema21)
+            if ema50 and ema50 < current_price: targets.append(ema50)
+            
+        if not targets:
+            # Si ya cruzamos todos los objetivos, devolvemos el precio actual 
+            # (el executor decidirá si cierra con el margen de 2 puntos)
+            return None
+            
+        # Elegimos el objetivo más cercano (el más agresivo)
+        if direction == 1:
+            best_target = min(targets) # El más bajo de los que están arriba
+        else:
+            best_target = max(targets) # El más alto de los que están abajo
+            
+        # Ajuste agresivo: Salir un 10% antes del objetivo
+        dist = abs(best_target - current_price)
+        margin = dist * 0.10
+        
+        return (best_target - margin) if direction == 1 else (best_target + margin)
 
 
     def _build_neutral_result(self, reason):
@@ -263,11 +362,12 @@ class PSTMeanReversion:
             "score": 0
         }
 
-    def _build_result(self, score, factors, status_msg, entry_signal="NEUTRAL", direction=0):
+    def _build_result(self, score, factors, status_msg, entry_signal="NEUTRAL", direction=0, tp_price=0):
         entry = 1 if entry_signal == "BUY" else (-1 if entry_signal == "SELL" else 0)
         return {
             "entry": entry,
             "atr": 0, # No recalculamos ATR aqui, lo hace el orchestrator
+            "tp_price": tp_price, # NEW: Objetivo técnico específico
             "metadata": {
                 "strategy": self.STRATEGY_NAME,
                 "score": score,
@@ -275,7 +375,8 @@ class PSTMeanReversion:
                 "score_breakdown": {"Estado": status_msg},
                 "factors_detailed": factors,
                 "can_entry": entry != 0,
-                "direction": direction
+                "direction": direction,
+                "tp_target": tp_price # Para mostrar en dashboard
             },
             "score": score
         }

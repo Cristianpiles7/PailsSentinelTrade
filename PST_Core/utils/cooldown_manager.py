@@ -21,7 +21,18 @@ class CooldownManager:
         """Registra una pérdida y bloquea el símbolo por X minutos."""
         deadline = datetime.now() + timedelta(minutes=duration_minutes)
         self.cooldowns[symbol] = deadline
-        logger.warning(f"❄️ COOLDOWN: {symbol} bloqueado hasta {deadline.strftime('%H:%M')} tras Stop Loss.")
+        logger.warning(f"❄️ COOLDOWN (PÉRDIDA): {symbol} bloqueado hasta {deadline.strftime('%H:%M')} tras Stop Loss.")
+
+    def register_trade_finish(self, symbol: str, duration_minutes=30):
+        """Registra el fin de cualquier trade para evitar re-entradas inmediatas (Hyper-trading fix)."""
+        deadline = datetime.now() + timedelta(minutes=duration_minutes)
+        # Solo sobreescribimos si el nuevo bloqueo es mayor al existente (ej: no quitar un cooldown de 1h por uno de 15m)
+        if symbol in self.cooldowns:
+            if deadline < self.cooldowns[symbol]:
+                return
+        
+        self.cooldowns[symbol] = deadline
+        logger.info(f"❄️ HISTÉRESIS: {symbol} bloqueado hasta {deadline.strftime('%H:%M')} para evitar operativa circular (Ping-Pong).")
 
     def is_blocked(self, symbol: str) -> tuple[bool, str]:
         """Retorna (True, Mensaje) si está bloqueado."""

@@ -9,29 +9,68 @@ from ..utils.tech_utils import get_asset_class
 
 # Helper for momentum metrics (Module Level to avoid scoping issues)
 def get_mtr_data(df_in, tf_minutes=5):
-    if df_in is None or len(df_in) < 20: return None
+    if df_in is None or len(df_in) < 14: return None
     try:
-        _rsi = ta.rsi(df_in['close'], length=14).iloc[-1]
-        _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-1]
+        # DEFENSIVE: Ensure numeric and handle NaNs
+        df_clean = df_in[['high', 'low', 'close', 'tick_volume']].tail(60).copy()
+        df_clean = df_clean.ffill().fillna(0)
         
-        # VOLUME LOGIC
-        _v = df_in['tick_volume'].iloc[-1] if 'tick_volume' in df_in else 0
-        _v_ma = ta.sma(df_in['tick_volume'], length=20).iloc[-1] if 'tick_volume' in df_in else 1
+        if len(df_clean) < 14: return None
+
+        # 1. RSI (Standard)
+        _rsi_s = ta.rsi(df_clean['close'], length=14)
+        _rsi = _rsi_s.iloc[-1] if _rsi_s is not None and not _rsi_s.empty else 50
         
-        # PRO-RATA PROJECTION (for current candle)
-        if hasattr(df_in, 'index') and isinstance(df_in.index, pd.DatetimeIndex):
-             last_time = df_in.index[-1]
-             now_utc = datetime.now(timezone.utc)
-             elapsed_sec = (now_utc - last_time).total_seconds()
-             
-             # If we are within the candle duration
-             if 0 < elapsed_sec < (tf_minutes * 60):
-                  ratio = (tf_minutes * 60) / elapsed_sec
-                  # Cap projection at 3x current volume to avoid early noise
-                  _v = _v * min(3.0, ratio)
+        # 2. ADX (Robust)
+        _adx_df = ta.adx(df_clean['high'], df_clean['low'], df_clean['close'], length=14)
+        _adx = 0
+        if _adx_df is not None and not _adx_df.empty:
+             # Find the ADX column regardless of exact name (ADX_14, ADX_20 etc)
+             adx_cols = [c for c in _adx_df.columns if 'ADX' in c]
+             if adx_cols:
+                  _adx = _adx_df[adx_cols[0]].iloc[-1]
         
-        return {"rsi": _rsi, "adx": _adx, "vol_rel": _v / _v_ma if _v_ma > 0 else 0}
-    except: return None
+        if pd.isna(_adx): _adx = 0
+
+        # 3. VOLUME LOGIC (FAIRNESS)
+        # Use the LAST COMPLETED candle for ground truth instead of the current one
+        # Current candle volume is unfair in the first minutes.
+        if len(df_in) < 2: return {"rsi": _rsi, "adx": _adx, "vol_rel": 0}
+        
+        v_prev = df_in['tick_volume'].iloc[-2] # Finished candle
+        v_ma = ta.sma(df_in['tick_volume'], length=20)
+        v_ma_val = v_ma.iloc[-2] if v_ma is not None and len(v_ma) > 1 else 1
+        
+        # Check current candle too (for spikes)
+        v_curr = df_in['tick_volume'].iloc[-1]
+        v_curr_rel = v_curr / v_ma_val if v_ma_val > 0 else 0
+        
+        # If current volume is already high, use that. Otherwise use previous to avoid "start-of-candle" penalty.
+        final_vol_rel = max(v_curr_rel, v_prev / v_ma_val if v_ma_val > 0 else 0)
+        
+        # 4. Bollinger Bands (Overextension Detection)
+        bb = ta.bbands(df_clean['close'], length=20, std=2)
+        _bb_u = 0; _bb_m = 0; _bb_l = 0
+        if bb is not None and not bb.empty:
+            # Column names vary: BBU_20_2.0, BBM_20_2.0, BBL_20_2.0
+            u_cols = [c for c in bb.columns if 'BBU' in c]
+            m_cols = [c for c in bb.columns if 'BBM' in c]
+            l_cols = [c for c in bb.columns if 'BBL' in c]
+            if u_cols: _bb_u = bb[u_cols[0]].iloc[-1]
+            if m_cols: _bb_m = bb[m_cols[0]].iloc[-1]
+            if l_cols: _bb_l = bb[l_cols[0]].iloc[-1]
+
+        return {
+            "rsi": round(float(_rsi), 1), 
+            "adx": round(float(_adx), 1), 
+            "vol_rel": round(float(final_vol_rel), 2),
+            "bb_u": round(float(_bb_u), 5),
+            "bb_m": round(float(_bb_m), 5),
+            "bb_l": round(float(_bb_l), 5)
+        }
+    except Exception as e:
+        logger.debug(f"Error in get_mtr_data: {e}")
+        return None
 
 logger = logging.getLogger("PST-EMA-Flow")
 
@@ -71,7 +110,10 @@ class PSTEMAFlow:
         elif asset_class == "METAL":
             P_ATR_MARGIN = 0.20  # Gold wicks are deadly, require 20% breakout
         elif asset_class == "CRYPTO":
-            pass # Use defaults (Scalping friendly)
+            P_ADX_THR = 35       # Crypto needs clear trend (volatile noise)
+            P_ATR_MARGIN = 0.35  # Require deeper breakout to avoid whipsaws
+            P_VOL_MULT = 1.8     # Volume burst must be significant
+            P_H1_PENALTY = 25    # Respect H1 trend strictly
             
         if df is None or len(df) < 55:
             return {
@@ -144,6 +186,7 @@ class PSTEMAFlow:
         bull_base = 0
         bear_base = 0
         breakdown = {}
+        internal_gate_failed = False # Base state
         
         # Consistent UI Grouping
         # Keys: ESTADO, ESTRUCTURA, SETUP, FUERZA, VOLUMEN, MOMENTO, VALIDACION, ADVERTENCIAS
@@ -170,8 +213,8 @@ class PSTEMAFlow:
         # CONFIG: [Timeframe Name, Current DF, EMAs (21,50), Window Size]
         # User Req: "Esperar a que entre volumen". We extend window to catch breaks up to 12 bars ago (1h).
         tf_configs = [
-            ("M5", df, ema21_s, ema50_s, 12), 
-            ("M15", df_m15, m15_ema21_s, m15_ema50_s, 5) 
+            ("M5", df, ema21_s, ema50_s, 3), # User Req: Compacted from 5 to 3 (Anti-Late)
+            ("M15", df_m15, m15_ema21_s, m15_ema50_s, 3) # Compacted from 5 to 3
         ]
 
         for tf_name, tf_df, tf_ema21, tf_ema50, window in tf_configs:
@@ -199,21 +242,25 @@ class PSTEMAFlow:
                 # A. BASE SETUP POINTS
                 # If we find a setup, we start at 45 points (Alerta).
                 tf_mult = 1.2 if tf_name == "M15" else 1.0
-                # User Req: Slower decay to allow waiting for volume (i * 3 instead of 8)
-                action_pts = max(0, 45 - (i * 3)) * tf_mult
+                # User New Req: Strict timing. -10 pts per candle.
+                action_pts = max(0, 45 - (i * 10)) * tf_mult
                 
-                # B. MOMENTUM IGNITION (User Req)
-                # If confirmation arrived within the window, restore base points to 45
-                if has_momentum_ignition:
+                # B. MOMENTUM IGNITION (User Req) - DISABLED for M5 to avoid late entries
+                if has_momentum_ignition and tf_name == "M15":
                     action_pts = 45 * tf_mult
                 
-                # C. OVEREXTENSION FILTER
+                # C. OVEREXTENSION FILTER (Anti-Late Entry)
                 dist_ema50 = abs(c_close - c_ema50)
-                max_dist = current_atr * 3.0
+                # User Req: Tightened from 1.5 ATR to 1.2 ATR
+                max_dist = current_atr * 1.2 
                 if dist_ema50 > max_dist:
                     action_pts = 0 # Too far, opportunity lost
                 
-                cross_pts = max(0, 45 - (i * 5)) * tf_mult
+                # D. FRESHNESS PENALTY (Strict Immediate Signals)
+                if i > 1: # More than 1 bar of delay
+                    action_pts -= (i * 15)
+                
+                cross_pts = max(0, 45 - (i * 15)) * tf_mult
                 
                 # Event storage (for logging/detailed view)
                 base_event = None
@@ -235,7 +282,19 @@ class PSTEMAFlow:
                 body_ratio = body_size / full_range
                 
                 avg_body = tf_df['close'].diff().abs().iloc[idx-5:idx].mean() if len(tf_df) > 10 else 0
-                is_strong_candle = body_ratio > 0.6 and body_size > avg_body
+                
+                # --- MEJORA 1: FILTRO DINÁMICO DE VOLATILIDAD (ATR) ---
+                # La vela de señal debe tener 'intención', es decir, su cuerpo debe ser relevante comparado con el ATR actual.
+                # Threshold: Cuerpo > 60% del ATR actual (o del promedio local si ATR no disponible)
+                atr_ref = current_atr if tf_name == "M5" else (current_atr * 2) # Aproximate ATR for M15
+                min_body_size = atr_ref * 0.6 
+                
+                # Si el ATR es 0 (error de datos), usamos el promedio de las ultimas 5 velas
+                if min_body_size == 0: min_body_size = avg_body * 1.1
+
+                # Requisito de Cuerpo Sólido (Ratio Cuerpo/Rango > 60% para Crypto)
+                min_body_ratio = 0.6 if asset_class == "CRYPTO" else 0.5
+                is_strong_candle = body_size > min_body_size and body_ratio > min_body_ratio
                 
                 # --- NEW TRUTH TABLE LOGIC MAP (User Approved) ---
                 
@@ -248,62 +307,62 @@ class PSTEMAFlow:
                 origin_5_close = tf_df['close'].iloc[max(0, idx-5)]
                 origin_5_ema21 = tf_ema21.iloc[max(0, idx-5)]
                 
-                # 1. EMA50 Setup (TYPE A - Reversal / Bounce)
+                # 1. EMA50 Setup (TYPE A - Reversal / Breakout)
                 is_breaking_ema50_up = p_close < p_ema50 and c_close > (p_ema50 + min_break_dist)
                 is_breaking_ema50_down = p_close > p_ema50 and c_close < (p_ema50 - min_break_dist)
-                
-                # NEW: Wick Bounce EMA50
-                is_bouncing_ema50_up = is_bull_trend and c_low <= (c_ema50 + (current_atr * 0.1)) and c_close > c_ema50
-                is_bouncing_ema50_down = is_bear_trend and c_high >= (c_ema50 - (current_atr * 0.1)) and c_close < c_ema50
 
-                # 2. EMA21 Setup (TYPE B - Continuation / Bounce)
+                # 2. EMA21 Setup (TYPE B - Continuation / Breakout)
                 is_breaking_ema21_up = p_close < p_ema21 and c_close > (p_ema21 + min_break_dist)
                 is_breaking_ema21_down = p_close > p_ema21 and c_close < (p_ema21 - min_break_dist)
-                
-                # NEW: Wick Bounce EMA21
-                is_bouncing_ema21_up = is_bull_trend and c_low <= (c_ema21 + (current_atr * 0.1)) and c_close > c_ema21
-                is_bouncing_ema21_down = is_bear_trend and c_high >= (c_ema21 - (current_atr * 0.1)) and c_close < c_ema21
 
-                if (is_breaking_ema50_up or is_bouncing_ema50_up) and is_strong_candle and is_bear_trend:
+                # --- NEW: DISTANCE FROM BREAKOUT FILTER ---
+                # Check how far the current price is from the level where the breakout occurred
+                setup_level = 0
+                if is_breaking_ema50_up or is_breaking_ema50_down: setup_level = p_ema50
+                elif is_breaking_ema21_up or is_breaking_ema21_down: setup_level = p_ema21
+                
+                if setup_level > 0:
+                    curr_price_now = tf_df['close'].iloc[-1]
+                    price_gap = abs(curr_price_now - setup_level)
+                    if price_gap > (current_atr * 0.7):
+                        action_pts -= 20 # Severe penalty for chasing the price
+
+                if is_breaking_ema50_up and is_strong_candle and is_bear_trend:
                      if action_pts > bull_base:
                           bull_base = action_pts
                           if action_pts == 0:
                               base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Perdido (Sobreetendido)", "score": 0}
                           else:
-                              etype = "Giro" if is_breaking_ema50_up else "Rebote"
-                              base_event = {"k": f"{etype} EMA50 {tf_name}", "v": f"LONG Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", "score": round(bull_base)}
+                              base_event = {"k": f"Giro EMA50 {tf_name}", "v": f"LONG Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", "score": round(bull_base)}
                      if i < last_event_idx: last_event_idx = i
 
-                elif (is_breaking_ema50_down or is_bouncing_ema50_down) and is_strong_candle and is_bull_trend:
+                elif is_breaking_ema50_down and is_strong_candle and is_bull_trend:
                      if action_pts > bear_base:
                           bear_base = action_pts
                           if action_pts == 0:
                               base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Perdido (Sobreetendido)", "score": 0}
                           else:
-                              etype = "Giro" if is_breaking_ema50_down else "Rebote"
-                              base_event = {"k": f"{etype} EMA50 {tf_name}", "v": f"SHORT Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", "score": round(bear_base)}
+                              base_event = {"k": f"Giro EMA50 {tf_name}", "v": f"SHORT Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", "score": round(bear_base)}
                      if i < last_event_idx: last_event_idx = i
 
-                elif (is_breaking_ema21_up or is_bouncing_ema21_up) and is_strong_candle and action_pts > 0:
+                elif is_breaking_ema21_up and is_strong_candle and action_pts > 0:
                      # BUY SIGNAL
                      if is_bull_trend and origin_5_close < origin_5_ema21:
                           # TYPE B: Trend Resumption
                           pts = action_pts - 10
                           if pts > bull_base:
                               bull_base = pts
-                              etype = "Ruptura" if is_breaking_ema21_up else "Rebote"
-                              base_event = {"k": f"{etype} EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bull_base)}
+                              base_event = {"k": f"Breakout EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bull_base)}
                           if i < last_event_idx: last_event_idx = i
 
-                elif (is_breaking_ema21_down or is_bouncing_ema21_down) and is_strong_candle and action_pts > 0:
+                elif is_breaking_ema21_down and is_strong_candle and action_pts > 0:
                      # SELL SIGNAL
                      if is_bear_trend and origin_5_close > origin_5_ema21:
                           # TYPE B: Trend Resumption
                           pts = action_pts - 10
                           if pts > bear_base:
                               bear_base = pts
-                              etype = "Ruptura" if is_breaking_ema21_down else "Rebote"
-                              base_event = {"k": f"{etype} EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bear_base)}
+                              base_event = {"k": f"Breakout EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bear_base)}
                           if i < last_event_idx: last_event_idx = i
 
                 
@@ -343,43 +402,72 @@ class PSTEMAFlow:
         mtr_m15 = get_mtr_data(df_m15, tf_minutes=15)
         mtr_h1 = get_mtr_data(data_input.get('h1'), tf_minutes=60) if isinstance(data_input, dict) else None
         
-        # --- MTF MOMENTUM (ADX DYNAMIC) ---
+        # --- MTF MOMENTUM (ADX DYNAMIC V2) ---
         adx_pts = 0
         adx_desc = []
-        if mtr_m5: adx_desc.append(f"M5:{mtr_m5['adx']:.1f}")
+        m5_adx = mtr_m5['adx'] if mtr_m5 else 0
+        if mtr_m5: adx_desc.append(f"M5:{m5_adx:.1f}")
         if mtr_m15: adx_desc.append(f"M15:{mtr_m15['adx']:.1f}")
-        if mtr_h1: adx_desc.append(f"H1:{mtr_h1['adx']:.1f}")
+        if mtr_h1: adx_desc.append(f"H1:{mtr_h1['h1']:.1f}" if 'h1' in mtr_h1 else f"H1:{mtr_h1['adx']:.1f}")
         
-        if mtr_m5 and mtr_m5['adx'] >= P_ADX_THR: adx_pts += 30
-        if mtr_m15 and mtr_m15['adx'] >= 20: adx_pts += 15
-        if mtr_h1 and mtr_h1['adx'] >= 20: adx_pts += 10
-        if mtr_m1 and mtr_m1['adx'] >= 30: adx_pts += 5
+        # A. M5 Sliding Scale
+        if m5_adx < 15: adx_pts -= 20 # Bloqueo por falta de tendencia
+        elif 15 <= m5_adx < 21: adx_pts -= 10 # Debilidad
+        elif 21 <= m5_adx < 26: adx_pts += 5  # Aceptable
+        elif 26 <= m5_adx < 35: adx_pts += 20 # Bueno
+        else: adx_pts += 35 # Muy fuerte
+
+        # B. Macro Context Bonus
+        if mtr_m15 and mtr_m15['adx'] >= 25: adx_pts += 10
+        if mtr_h1 and mtr_h1['adx'] >= 25: adx_pts += 15
+
+        adx_status = "Fuerte" if adx_pts >= 25 else ("Baja" if adx_pts < 0 else "Neutral")
+        if m5_adx < 15: adx_status = "CRÍTICO (<15)"
 
         factor_groups["FUERZA"] = {
             "k": "Fuerza MTF (ADX)", 
-            "v": f"{'OK' if adx_pts >= 30 else 'Baja'} ({' | '.join(adx_desc)})", 
+            "v": f"{adx_status} ({' | '.join(adx_desc)})", 
             "score": adx_pts
         }
 
-        adx_gate = adx_pts >= 30
-        
-        # --- MTF VOLUME (DYNAMIC) ---
+        # GUARD: Hard ADX Gate (Strict Trend Requirement)
+        adx_gate = m5_adx >= (P_ADX_THR - 5) 
+        if not adx_gate:
+            internal_gate_failed = True
+            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO ADX", "v": f"Tendencia insuficiente ({m5_adx:.1f} < {P_ADX_THR-5})", "score": -20})
+
+        # --- MTF VOLUME (DYNAMIC V2) ---
         vol_pts = 0
         vol_desc = []
-        if mtr_m5: vol_desc.append(f"M5:{mtr_m5['vol_rel']:.1f}x")
+        m5_vol = mtr_m5['vol_rel'] if mtr_m5 else 0
+        if mtr_m5: vol_desc.append(f"M5:{m5_vol:.1f}x")
         if mtr_m15: vol_desc.append(f"M15:{mtr_m15['vol_rel']:.1f}x")
         
-        if mtr_m5 and mtr_m5['vol_rel'] >= P_VOL_MULT: vol_pts += 30
-        if mtr_m15 and mtr_m15['vol_rel'] >= 1.2: vol_pts += 20
-        if mtr_h1 and mtr_h1['vol_rel'] >= 1.1: vol_pts += 10
+        # A. M5 Sliding Scale
+        if m5_vol < 0.6: vol_pts -= 15 # Bloqueo por mercado muerto
+        elif 0.6 <= m5_vol < 0.9: vol_pts -= 5
+        elif 0.9 <= m5_vol < 1.3: vol_pts += 5
+        elif m5_vol >= 1.3: vol_pts += 20
+
+        # B. Institutional Burst Bonus (Macro)
+        h1_vol = mtr_h1['vol_rel'] if mtr_h1 else 0
+        if h1_vol >= 1.5: vol_pts += 15 # H1 fuerte compensa M5 debil
+        if mtr_m15 and mtr_m15['vol_rel'] >= 1.5: vol_pts += 10
+
+        vol_status = "Alto" if vol_pts >= 20 else ("Bajo" if vol_pts < 0 else "Normal")
+        if m5_vol < 0.6: vol_status = "MUERTO (<0.6x)"
 
         factor_groups["VOLUMEN"] = {
             "k": "Volumen MTF", 
-            "v": f"{'Alto' if vol_pts >= 30 else 'Neutro'} ({' | '.join(vol_desc)})", 
+            "v": f"{vol_status} ({' | '.join(vol_desc)})", 
             "score": vol_pts
         }
 
-        vol_gate = vol_pts >= 10
+        # GUARD: Hard Volume Gate (Strict Liquidity Requirement)
+        vol_gate = m5_vol >= 0.8 or h1_vol >= 1.5 
+        if not vol_gate:
+            internal_gate_failed = True
+            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO VOLUMEN", "v": f"Sin interés inst. ({m5_vol:.1f}x)", "score": -20})
 
         # --- PRELIMINARY SCORE CALCULATION ---
         bull_score = bull_base
@@ -387,7 +475,6 @@ class PSTEMAFlow:
         net_score = 0
         direction = 0 
         is_passive = False
-        internal_gate_failed = False # Safe Initialization
         
         if bull_score > bear_score:
             net_score = bull_score
@@ -456,7 +543,7 @@ class PSTEMAFlow:
                 net_score -= penalty
                 factor_groups["VALIDACION"].append({"k": "Volumen Estructural", "v": "Neutro", "score": -penalty})
 
-        # 2. SLOPE FILTER
+        # 2a. SLOPE FILTER
         ema50_slope = (ema50_s.iloc[-1] - ema50_s.iloc[-6]) / ema50_s.iloc[-6] * 100 if len(ema50_s) > 6 else 0
         if abs(ema50_slope) < 0.005: 
              penalty = 10 if is_passive else 15
@@ -464,6 +551,26 @@ class PSTEMAFlow:
              net_score -= penalty
         else:
              factor_groups["ADVERTENCIAS"].append({"k": "Curvatura EMA50", "v": "Pendiente OK", "score": 0})
+
+        # --- MEJORA 2: DETECCIÓN DE "SANDWICH" (ZONA DE TRAMPA) ---
+        # Si tenemos EMA200, verificar si estamos atrapados entre EMA50 y EMA200
+        if len(df) > 200:
+             try:
+                 ema200_val = ta.ema(df['close'], length=200).iloc[-1]
+                 c_close = df['close'].iloc[-1]
+                 c_ema50 = ema50_s.iloc[-1]
+                 
+                 # Definir Zona Sucia: Precio entre EMA50 y EMA200
+                 in_sandwich = (c_close > min(c_ema50, ema200_val)) and (c_close < max(c_ema50, ema200_val))
+                 # Solo es grave si están cerca (compresión)
+                 dist_emas = abs(c_ema50 - ema200_val)
+                 is_compressed = dist_emas < (current_atr * 3)
+                 
+                 if in_sandwich and is_compressed:
+                     trap_penalty = 30
+                     net_score -= trap_penalty
+                     factor_groups["VALIDACION"].append({"k": "Zona de Trampa", "v": "Sandwich EMA50/200", "score": -trap_penalty})
+             except: pass
 
         # 3. HTF ALIGNMENT (M15)
         if direction == 1 and htf_filter == -1:
@@ -488,9 +595,20 @@ class PSTEMAFlow:
                  if is_type_a_reversal:
                      factor_groups["VALIDACION"].append({"k": "Fricción H1 (Filtro)", "v": "Ignorada (Giro Tipo A)", "score": 0})
                  else:
-                     penalty_h1 = P_H1_PENALTY
-                     net_score -= penalty_h1
-                     factor_groups["VALIDACION"].append({"k": "Fricción H1 (Filtro)", "v": "Contratendencia", "score": -penalty_h1})
+                      penalty_h1 = P_H1_PENALTY
+                      net_score -= penalty_h1
+                      factor_groups["VALIDACION"].append({"k": "Fricción H1 (Filtro)", "v": "Contratendencia", "score": -penalty_h1})
+
+        # 4b. VOLUME CONFIRMATION (Institutional Backing)
+        # User Req: Crisis WR Fix - Require at least 1.2 relative volume
+        vol_rel = mtr_m5['vol_rel'] if mtr_m5 else 0
+        if vol_rel < 1.2:
+            vol_penalty = 20
+            net_score -= vol_penalty
+            factor_groups["MOMENTO"].append({"k": "Volumen Pobre", "v": f"Relativo ({vol_rel:.2f} < 1.2)", "score": -vol_penalty})
+        else:
+            net_score += 10
+            factor_groups["MOMENTO"].append({"k": "Volumen Confirmado", "v": f"Relativo ({vol_rel:.2f})", "score": 10})
 
         # 5. FRESHNESS
         if not is_passive and last_event_idx == 0: 
@@ -500,19 +618,19 @@ class PSTEMAFlow:
         # 6. RSI MOMENTUM
         curr_rsi = mtr_m5['rsi'] if mtr_m5 else 50
         if direction == 1:
-             if 50 < curr_rsi < 75: 
+             if 50 < curr_rsi < 65:  # Tightened from 75 to 65
                  net_score += 15
                  factor_groups["MOMENTO"].append({"k": "Impulso RSI", "v": f"Alcista ({curr_rsi:.1f})", "score": 15})
              else:
-                 factor_groups["MOMENTO"].append({"k": "Zona RSI", "v": f"No óptima ({curr_rsi:.1f})", "score": -10})
-                 net_score -= 10
+                 factor_groups["MOMENTO"].append({"k": "Zona RSI", "v": f"Agotamiento/Debilidad ({curr_rsi:.1f})", "score": -15})
+                 net_score -= 15
         elif direction == -1:
-             if 25 < curr_rsi < 50: 
+             if 35 < curr_rsi < 50: # Tightened from 25 to 35
                  net_score += 15
                  factor_groups["MOMENTO"].append({"k": "Impulso RSI", "v": f"Bajista ({curr_rsi:.1f})", "score": 15})
              else:
-                 factor_groups["MOMENTO"].append({"k": "Zona RSI", "v": f"No óptima ({curr_rsi:.1f})", "score": -10})
-                 net_score -= 10
+                 factor_groups["MOMENTO"].append({"k": "Zona RSI", "v": f"Agotamiento/Debilidad ({curr_rsi:.1f})", "score": -15})
+                 net_score -= 15
 
         # 7. PRICE VS EMAS (VALIDATION)
         latest_c = df['close'].iloc[-1]
@@ -537,8 +655,15 @@ class PSTEMAFlow:
             dist_ema50 = (latest_c - latest_ema50) / latest_ema50 * 100
             if dist_ema50 > 1.0:
                 internal_gate_failed = True
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso", "v": "Sobre-extendido", "score": -40})
+                factor_groups["ADVERTENCIAS"].append({"k": "Exceso", "v": "Sobre-extendido (EMA)", "score": -40})
                 net_score -= 40
+            
+            # --- NEW: Bollinger Overextension (GOOG Fix) ---
+            bb_u = mtr_m5.get('bb_u', 0) if mtr_m5 else 0
+            if bb_u > 0 and latest_c >= bb_u:
+                internal_gate_failed = True # No bloquea pero penaliza fuertemente para evitar tops
+                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": "Agotamiento (Techo BB)", "score": -35})
+                net_score -= 35
         elif direction == -1:
             fail_ema21 = latest_c >= latest_ema21
             fail_ema50 = (latest_ema50 < latest_ema21) and (latest_c >= latest_ema50)
@@ -554,14 +679,55 @@ class PSTEMAFlow:
             dist_ema50 = (latest_ema50 - latest_c) / latest_ema50 * 100
             if dist_ema50 > 1.0:
                 internal_gate_failed = True
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso", "v": "Sobre-extendido", "score": -40})
+                factor_groups["ADVERTENCIAS"].append({"k": "Exceso", "v": "Sobre-extendido (EMA)", "score": -40})
                 net_score -= 40
+
+            # --- NEW: Bollinger Overextension (GOOG Fix) ---
+            bb_l = mtr_m5.get('bb_l', 0) if mtr_m5 else 0
+            if bb_l > 0 and latest_c <= bb_l:
+                internal_gate_failed = True
+                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": "Agotamiento (Suelo BB)", "score": -35})
+                net_score -= 35
 
         # --- FINAL DECISION ---
         score = min(100, max(0, round(net_score)))
         entry = 0
         THRESHOLD = 75 
         
+        # --- NEW: HARD EXHAUSTION FILTERS (Anti-Chasing & Hard RSI) ---
+        # User Req: Bloqueo rígido para evitar entradas tardías (late-entries).
+        curr_rsi = mtr_m5['rsi'] if mtr_m5 else 50
+        latest_c = df['close'].iloc[-1]
+        latest_ema21 = ema21_s.iloc[-1]
+        dist_ema21 = abs(latest_c - latest_ema21)
+        
+        # Filtro 1: RSI Extremo (Hard Block)
+        rsi_exhausted = (direction == 1 and curr_rsi > 70) or (direction == -1 and curr_rsi < 30)
+        
+        # Filtro 2: Anti-Chasing (Distancia excesiva a la media rápida)
+        # Si el precio se ha alejado demasiado (>1.2 ATR), el movimiento ya está maduro.
+        is_chasing = dist_ema21 > (current_atr * 1.2)
+        
+        if direction != 0:
+            if rsi_exhausted:
+                internal_gate_failed = True
+                cause = "RSI > 70" if direction == 1 else "RSI < 30"
+                factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO RSI", "v": f"Agotamiento ({cause})", "score": -50})
+            
+            if is_chasing:
+                internal_gate_failed = True
+                factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO CHASING", "v": f"Lejos de EMA21 ({dist_ema21/current_atr:.1f} ATR)", "score": -50})
+
+        # --- NEW: VISUAL SCORE CAPPING ---
+        # Si el bot decide NO entrar por filtros de seguridad (Pasivo o Gates), 
+        # limitamos el score a 65 para que se vea amarillo en el dashboard y no confunda al usuario.
+        if is_passive or internal_gate_failed:
+            # User Req: If blocked/passive, score must be < 80 and clearly not trade. 
+            # We use 65 to keep it in the "Warning/Yellow" zone but below the 75 threshold.
+            if score >= 70:
+                score = 65
+                logger.debug(f"⚖️ [VISUAL CAP] {symbol} score limitado de {net_score:.1f} a 65 (Bloqueo por Filtros).")
+
         # ENTRY RULES: Score >= 75 AND not passive AND gates passed
         if score >= THRESHOLD and not is_passive and not internal_gate_failed:
             entry = direction
@@ -616,6 +782,8 @@ class PSTEMAFlow:
             "ema50": round(latest_ema50, 2),
             "adx": round(mtr_m5['adx'] if mtr_m5 else 0, 1),
             "rsi": round(curr_rsi, 1),
+            "bb_u": round(mtr_m5.get('bb_u', 0) if mtr_m5 else 0, 2),
+            "bb_l": round(mtr_m5.get('bb_l', 0) if mtr_m5 else 0, 2),
             "status": "Esperando Setup (Pasivo)" if is_passive else ("Setup Activo" if entry != 0 else "Filtros fallidos"),
             "direction": direction
         }
@@ -630,22 +798,46 @@ class PSTEMAFlow:
     def check_exit_signal(self, df, position_type):
         """
         Detecta si la tesis de tendencia se ha invalidado.
-        Si BUY: Cerrar si precio cierra por debajo de EMA21.
-        Si SELL: Cerrar si precio cierra por encima de EMA21.
+        Nueva Lógica V7: Cierre por EMA50 + Confirmación de Volumen y ADX (User Req).
         """
-        if df is None or len(df) < 2: return False
+        if df is None or len(df) < 50: return False # Necesitamos datos para EMA50
         
         c_close = df['close'].iloc[-1]
-        ema21_s = ta.ema(df['close'], length=21)
-        if ema21_s is None: return False
         
-        c_ema21 = ema21_s.iloc[-1]
+        # 1. EMAs50 (Resistencia/Soporte Dinámico Institucional)
+        ema50_s = ta.ema(df['close'], length=50)
+        if ema50_s is None: return False
+        c_ema50 = ema50_s.iloc[-1]
         
-        if position_type == "BUY" and c_close < c_ema21:
-            logger.info("🛑 [EXIT] Cierre por debajo de EMA21 (Tendencia Invalidada)")
-            return True
-        elif position_type == "SELL" and c_close > c_ema21:
-            logger.info("🛑 [EXIT] Cierre por encima de EMA21 (Tendencia Invalidada)")
-            return True
-            
+        # 2. ADX Direction (Tendencia perdiendo fuerza o girando)
+        try:
+            adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+            adx_curr = adx_df['ADX_14'].iloc[-1]
+            adx_prev = adx_df['ADX_14'].iloc[-2]
+            is_adx_falling = adx_curr < adx_prev
+        except:
+            is_adx_falling = False # Fallback conservador
+            adx_curr = 0
+        
+        # 3. Volume Confirmation
+        vol_s = df['tick_volume'] if 'tick_volume' in df else pd.Series([0]*len(df))
+        vol_ma_s = ta.sma(vol_s, length=20)
+        vol_curr = vol_s.iloc[-1]
+        vol_ma = vol_ma_s.iloc[-1] if vol_ma_s is not None else 0
+        is_high_vol = vol_curr > vol_ma
+        
+        # Lógica de Salida Robusta: Ruptura EMA50 Y Confirmación (Vol + ADX)
+        # Para índices, añadimos un buffer de 1.5 puntos para evitar cierres por ruido prematuro.
+        is_index = "EU50" in getattr(df, 'symbol', "") or "US500" in getattr(df, 'symbol', "")
+        buffer = 1.5 if is_index else 0
+        
+        if position_type == "BUY":
+            if c_close < (c_ema50 - buffer) and is_high_vol and is_adx_falling:
+                logger.info(f"🛑 [EXIT BUY] Ruptura EMA50 con Vol ({vol_curr/vol_ma:.1f}x) y ADX Bajista. (Buffer: {buffer})")
+                return True
+        elif position_type == "SELL":
+            if c_close > (c_ema50 + buffer) and is_high_vol and is_adx_falling:
+                logger.info(f"🛑 [EXIT SELL] Recuperación EMA50 con Vol ({vol_curr/vol_ma:.1f}x) y ADX Bajista. (Buffer: {buffer})")
+                return True
+                
         return False

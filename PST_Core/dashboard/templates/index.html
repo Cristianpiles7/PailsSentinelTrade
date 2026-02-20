@@ -868,8 +868,8 @@
 
     <!-- CHART MODAL (LIGHTWEIGHT CHARTS) -->
     <div id="chart-modal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; background-color: rgba(0,0,0,0.9); justify-content: center; align-items: center;">
-        <div class="modal-content" style="width: 98%; max-width: none; height: 90vh; display: flex; flex-direction: column; background: #111827; border: 1px solid #334155;">
-            <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding: 15px; display: flex; justify-content: space-between; align-items: center;">
+        <div class="modal-content" style="width: 98%; max-width: none; height: 95vh; display: flex; flex-direction: column; background: #111827; border: 1px solid #334155; overflow: hidden; border-radius: 8px;">
+            <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding: 15px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
                 <div style="display: flex; align-items: center; gap: 15px;">
                     <h2 id="modal-title" style="margin: 0; font-size: 18px; display: flex; align-items: center;">Análisis Técnico</h2>
                     <!-- Timeframe Toolbar -->
@@ -967,41 +967,71 @@
                     color: #ccfbf1;
                     box-shadow: 0 4px 6px -1px rgba(15, 118, 110, 0.3);
                 }
+
+                /* MODAL STRATEGY TABS */
+                .modal-tab-btn {
+                    background: rgba(255,255,255,0.03);
+                    color: #94a3b8;
+                    border: 1px solid rgba(255,255,255,0.05);
+                    padding: 8px 16px;
+                    border-radius: 8px;
+                    font-size: 10px;
+                    font-weight: 800;
+                    letter-spacing: 0.5px;
+                    cursor: pointer;
+                    white-space: nowrap;
+                    display: flex;
+                    align-items: center;
+                    transition: all 0.2s ease-in-out;
+                }
+                .modal-tab-btn:hover {
+                    background: rgba(255,255,255,0.08);
+                    transform: translateY(-1px);
+                }
+                .modal-tab-btn.active {
+                    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+                    color: #fff;
+                    border-color: rgba(59,130,246,0.6);
+                    box-shadow: 0 4px 15px rgba(37,99,235,0.3);
+                    transform: translateY(-1px);
+                }
             </style>
-            <div class="modal-body" style="flex-grow: 1; padding: 0; position: relative; display: flex; flex-direction: column;">
-                <div id="chart-container" style="width: 100%; flex-grow: 1;"></div>
-                <div id="chart-hud" class="chart-hud">
-                    <div class="hud-group" style="min-width: 120px;">
-                        <span class="hud-label" id="hud-lbl-up">Ref Res (Auto):</span>
-                        <span id="hud-dist-up" style="color: #ef4444; font-weight: bold; font-family: 'Roboto Mono', monospace;">--- %</span>
-                    </div>
-                    <div class="hud-group" style="min-width: 120px;">
-                        <span class="hud-label" id="hud-lbl-low">Ref Sup (Auto):</span>
-                        <span id="hud-dist-low" style="color: #10b981; font-weight: bold; font-family: 'Roboto Mono', monospace;">--- %</span>
-                    </div>
-                    <div class="hud-group">
-                        <span class="hud-label">Score:</span>
-                        <span id="hud-score-val" class="hud-score">0</span>
-                    </div>
-                     <div class="hud-group" style="border-left: 1px solid rgba(255,255,255,0.1); padding-left: 15px;">
-                        <span id="hud-signal-badge" style="padding: 3px 10px; border-radius: 4px; font-weight: bold; font-size: 13px; background: rgba(255,255,255,0.05); color: #94a3b8; letter-spacing: 0.5px;">WAIT</span>
-                         <span id="drawing-indicator" style="display: none; margin-left:10px; color: #f59e0b; font-weight: 800; animation: pulse 1s infinite;">✍️ DIBUJANDO...</span>
-                    </div>
+            <div class="modal-body" style="flex-grow: 1; padding: 0; position: relative; display: flex; flex-direction: column; overflow: hidden;">
+                <!-- SECTION A: CHART + MTF SIDEBAR -->
+                <div style="display: flex; height: 54%; flex-shrink: 0; border-bottom: 1px solid rgba(255,255,255,0.1); background: #0b0f1a;">
+                    <div id="chart-container" style="flex-grow: 1; height: 100%;"></div>
+                    
+                    <!-- NEW MTF SIDEBAR -->
+                    <div id="mtf-sidebar" style="width: 200px; background: #0f172a; border-left: 1px solid rgba(255,255,255,0.1); padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3b82f6 transparent;">
+                        <div style="font-size: 9px; color: #38bdf8; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid rgba(56, 189, 248, 0.2); padding-bottom: 4px; display: flex; align-items: center; gap: 5px;">
+                            <span>📊 MULTI-TIMEFRAME</span>
+                            <span style="background: rgba(56, 189, 248, 0.1); color: #38bdf8; padding: 1px 4px; border-radius: 3px; font-size: 8px;">LIVE</span>
+                        </div>
+                        <div id="mtf-metrics-container" style="display: flex; flex-direction: column; gap: 6px;">
+                            <!-- Injected by loadChartData -->
+                             <div style="padding: 10px; text-align: center; color: #475569; font-size: 10px;">Cargando MTF...</div>
+                        </div>
                     </div>
                 </div>
                 
-                <!-- NEW LEVELS LIST INTEGRATED INTO FOOTER -->
-                <div id="levels-list-container" style="background: #0f172a; border-top: 1px solid rgba(255,255,255,0.1); padding: 5px 15px;">
-                    <div style="font-size: 10px; color: #64748b; margin-bottom: 3px; font-weight: bold; text-transform: uppercase;">Detalle de Niveles Activos:</div>
-                    <div id="levels-list-items" style="display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px;">
-                         <!-- Items will be injected here as spans -->
-                         <div style="color: #475569;">Esperando datos...</div>
+                <!-- SECTION B: STRATEGY DETAILS (INSPECTOR STYLE) -->
+                <div id="chart-live-stats" style="
+                    background: #0b0f1a; 
+                    flex-grow: 1;
+                    overflow-y: auto;
+                    display: flex;
+                    flex-direction: column;
+                    border-top: 1px solid rgba(255,255,255,0.1);
+                    margin-top: 12px; /* BUFFER ZONE TO AVOID AXIS OVERLAP */
+                    min-height: 0;
+                    scrollbar-width: thin;
+                ">
+                    <div style="padding: 20px; text-align: center; color: #64748b; font-size: 11px;">
+                        Cargando análisis detallado...
                     </div>
                 </div>
 
-                <!-- STRATEGY TABS (Restored) -->
-                <div class="strat-selectors" style="display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 15px; border-top: 1px solid rgba(255,255,255,0.1); background: #0f172a;"></div>
-                <div id="strat-details" style="padding: 15px; overflow-y: auto; background: #0f172a; height: 150px; border-top: 1px solid rgba(255,255,255,0.05); color: #94a3b8; font-size: 12px;"></div>
+
                 
                 <!-- MONITOR REMOVED (Previous Location) -->
                 
@@ -1158,38 +1188,59 @@
                     💾 ACTUALIZAR CEREBRO IA
                 </button>
 
-                <!-- NEW: INTERRUPTORES GLOBALES DE IA -->
-                <div style="
-                    margin-top: 10px;
-                    padding-top: 15px;
-                    border-top: 1px solid rgba(139, 92, 246, 0.2);
-                    display: grid;
-                    grid-template-columns: 1fr 1fr 1fr;
-                    gap: 10px;
-                ">
-                    <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
-                        <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">GEMINI</span>
-                        <label class="switch">
-                            <input type="checkbox" id="global-toggle-gemini" onchange="toggleGlobalAI('gemini', this.checked)">
-                            <span class="slider"></span>
-                        </label>
+                <!-- NEW: GESTIÓN GLOBAL DE ALGORITMOS -->
+                <div style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 11px; color: #94a3b8; font-weight: 900; letter-spacing: 1px;">ALGORITMOS CLÁSICOS</h4>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px;">
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                            <span style="font-size: 9px; color: #64748b; font-weight: 800;">EMA FLOW</span>
+                            <label class="switch">
+                                <input type="checkbox" id="global-toggle-EMA" onchange="toggleGlobalStrategy('PST-EMA-Flow', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                            <span style="font-size: 9px; color: #64748b; font-weight: 800;">CHANNEL</span>
+                            <label class="switch">
+                                <input type="checkbox" id="global-toggle-Channel" onchange="toggleGlobalStrategy('PST-Channel-Master', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                            <span style="font-size: 9px; color: #64748b; font-weight: 800;">MEAN REV.</span>
+                            <label class="switch">
+                                <input type="checkbox" id="global-toggle-MeanRev" onchange="toggleGlobalStrategy('PST-Mean-Reversion', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
                     </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
-                        <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">GROQ</span>
-                        <label class="switch">
-                            <input type="checkbox" id="global-toggle-groq" onchange="toggleGlobalAI('groq', this.checked)">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
-                        <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">OLLAMA</span>
-                        <label class="switch">
-                            <input type="checkbox" id="global-toggle-ollama" onchange="toggleGlobalAI('ollama', this.checked)">
-                            <span class="slider"></span>
-                        </label>
+
+                    <h4 style="margin: 0 0 10px 0; font-size: 11px; color: #94a3b8; font-weight: 900; letter-spacing: 1px;">CEREBROS IA (ORÁCULO)</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                            <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">GEMINI</span>
+                            <label class="switch">
+                                <input type="checkbox" id="global-toggle-gemini" onchange="toggleGlobalStrategy('PST-AI-Oracle-Gemini', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                            <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">GROQ</span>
+                            <label class="switch">
+                                <input type="checkbox" id="global-toggle-groq" onchange="toggleGlobalStrategy('PST-AI-Oracle-Groq', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                            <span style="font-size: 9px; color: #94a3b8; font-weight: 800;">OLLAMA</span>
+                            <label class="switch">
+                                <input type="checkbox" id="global-toggle-ollama" onchange="toggleGlobalStrategy('PST-AI-Oracle-Ollama', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
                     </div>
                 </div>
-                <p style="text-align: center; font-size: 9px; color: #64748b; margin: 0;">Interruptores maestros para activar/apagar proveedores.</p>
+                <p style="text-align: center; font-size: 8px; color: #475569; margin-top: 10px;">Los cambios se aplican globalmente a todos los símbolos activos.</p>
             </div>
 
             <div style="margin-top: 25px; display: flex; justify-content: center;">
@@ -1244,86 +1295,85 @@
             
             const asset = data.regimes.find(r => r.symbol === symbol);
             if (!asset) return;
-            const tech = asset.tech_data || {};
             
+            // 1. DATA SOURCE: Priorizar datos del Dashboard (Real-time) para evitar desincronización
+            const tech = asset.tech_data || {};
+            const analysis = tech.strat_status || {}; // En V14+ tech.strat_status tiene el JSON de la IA
+            
+            // 2. MODAL SETUP
+            document.getElementById('strategy-inspector-modal').style.display = 'flex';
+            
+            // Mostrar "Cargando" solo si no tenemos datos en memoria
+            const tbody = document.getElementById('inspector-table-body');
+            if (!analysis.score && !asset.manual_score) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: #64748b; padding: 20px;">Analizando mercado...</td></tr>';
+            }
+
             try {
-                // 1. Fetch latest details (Added timestamp for cache busting)
+                // Fetch complementario opcional (por si faltan niveles históricos en el dashboard)
+                // Pero NO bloqueamos el renderizado inicial con los datos que ya tenemos.
                 const response = await fetch(`/api/chart/${symbol}?tf=M5&t=${Date.now()}`);
                 const res = await response.json();
-                    const analysis = res.analysis || {};
-                    const tech_meta = analysis.strat_status || {};
-                    const levels_data = analysis.all_levels_data || [];
-                    
-                    const manualScore = asset.manual_score || 0;
-                    const autoScore = analysis.score || 0;
-                    const dashScore = (asset.tech_data && asset.tech_data.score) ? asset.tech_data.score : (asset.tech_data?.strat_status?.total_score || 0);
-                    
-                    // Determine which logic to show
-                    const isManualSource = (forceType === 'MANUAL');
-                    let scoreToDisplay = isManualSource ? manualScore : autoScore;
-                    let stratName = analysis.active_strategy || (isManualSource ? "Estrategia Maestra (Canales)" : (analysis.best_auto_strat || "PST Strategy Hub"));
-                    
-                    // Normalize Naming
-                    if (stratName === "PST-Channel-Master") stratName = "Estrategia Maestra (Canales)";
+                const apiAnalysis = res.analysis || {};
+                const levels_data = apiAnalysis.all_levels_data || [];
+                
+                const manualScore = asset.manual_score || 0;
+                const autoScore = analysis.score || apiAnalysis.score || 0;
+                
+                // Determine which logic to show
+                const isManualSource = (forceType === 'MANUAL');
+                let scoreToDisplay = isManualSource ? manualScore : autoScore;
+                let stratName = analysis.active_strategy || tech.active_strategy || (isManualSource ? "Estrategia Maestra (Canales)" : (apiAnalysis.best_auto_strat || "PST Strategy Hub"));
+                
+                // Normalize Naming
+                if (stratName === "PST-Channel-Master") stratName = "Estrategia Maestra (Canales)";
 
-                    let factors = analysis.factors || {}; 
-                    
-                    // --- ENRIQUECIMIENTO TÉCNICO UNIFICADO ---
-                    // Siempre intentamos sacar datos técnicos si la estrategia Maestra (o cualquier otra) los provee en score_breakdown
-                    const hasTechBreakdown = analysis.score_breakdown && (analysis.score_breakdown.RSI || analysis.score_breakdown.Vol || analysis.score_breakdown.Flow);
-                    if (hasTechBreakdown) {
-                        factors["RSI"] = analysis.score_breakdown.RSI || analysis.rsi_mtf?.m5 || "N/A";
-                        factors["Volumen"] = analysis.score_breakdown.Vol || "N/A";
-                        factors["Flow"] = analysis.score_breakdown.Flow || "N/A";
-                    }
-
-                    if (isManualSource) {
-                        // scoreToDisplay already set to manualScore
-                        stratName = "Estrategia Maestra (Canales)"; 
-                        
-                        // Search for the level we are inspecting
-                        const manualLevels = levels_data.filter(l => l.source === 'MANUAL');
-                        if (manualLevels.length > 0) {
-                            manualLevels.sort((a,b) => {
-                                if ((a.strat_score||0) !== (b.strat_score||0)) return (b.strat_score||0) - (a.strat_score||0);
-                                return Math.abs(a.dist||99) - Math.abs(b.dist||99);
-                            });
-                            
-                            const bestManual = manualLevels[0];
-                            
-                            // Añadir detalles específicos del nivel al objeto factors
-                            factors["Nivel Clave"] = analysis.score_breakdown?.Nivel || `${bestManual.type} @ ${bestManual.price}`;
-                            factors["Acción"] = analysis.score_breakdown?.Acción || bestManual.action_reco;
-                            
-                            if (bestManual.validation && bestManual.validation !== "Standard") {
-                                factors["Validación"] = bestManual.validation;
-                            }
-                            
-                            scoreToDisplay = bestManual.strat_score || 0;
+                // FACTORES: Combinar Dashboard (Reciente) con API (Histórico)
+                let factors = {};
+                
+                // V15 HUMAN READABLE SUPPORT:
+                // Si la IA devolvió 'key_factors' as list of strings, los convertimos a dict
+                if (analysis.key_factors && Array.isArray(analysis.key_factors)) {
+                    analysis.key_factors.forEach(f => {
+                        const parts = f.split(':');
+                        if (parts.length >= 2) {
+                            factors[parts[0].trim()] = parts.slice(1).join(':').trim();
                         } else {
-                            factors = { "Estado": "Sin niveles manuales activos" };
+                            factors["INFO"] = f;
                         }
-                    } else {
-                        // Auto Strategy Logic
-                        if (tech.active_strategy && tech.active_strategy !== 'None') stratName = tech.active_strategy;
-                        else if (asset.tech_data && asset.tech_data.active_strategy) stratName = asset.tech_data.active_strategy;
-                        
-                        // Si es la Maestra la activa, asegurar que mostramos sus factores principales en el resumen
-                        if (stratName.includes("Maestra") || stratName.includes("Canales")) {
-                             if (analysis.score_breakdown?.Acción) factors["Acción"] = analysis.score_breakdown.Acción;
-                             if (analysis.score_breakdown?.Nivel) factors["Nivel Clave"] = analysis.score_breakdown.Nivel;
-                        }
+                    });
+                } else {
+                    factors = { ...analysis.factors, ...(apiAnalysis.factors || {}) };
+                }
+                
+                // RAZONAMIENTO (Reasoning V15)
+                if (analysis.reasoning) {
+                    factors["VEREDICTO"] = analysis.reasoning;
+                } else if (apiAnalysis.reasoning) {
+                    factors["VEREDICTO"] = apiAnalysis.reasoning;
+                }
 
-                        if (Object.keys(factors).length === 0) {
-                             if (analysis.score > 0) factors["Nota"] = "Análisis completo en logs";
-                             else factors["Estado"] = "Sin señal clara";
-                        }
-                    }
+                // --- ENRIQUECIMIENTO TÉCNICO UNIFICADO ---
+                if (analysis.score_breakdown || apiAnalysis.score_breakdown) {
+                    const brk = analysis.score_breakdown || apiAnalysis.score_breakdown;
+                    if (brk.RSI) factors["RSI"] = brk.RSI;
+                    if (brk.Vol) factors["Volumen"] = brk.Vol;
+                }
 
-                    // FINAL CLEANUP of stratName
-                    if (!stratName || stratName === "None" || stratName === "null" || stratName === "undefined" || stratName === "(None)") {
-                        stratName = isManualSource ? "Estrategia Maestra (Canales)" : "PST Strategy Hub";
+                if (isManualSource) {
+                    stratName = "Estrategia Maestra (Canales)"; 
+                    const manualLevels = levels_data.filter(l => l.source === 'MANUAL');
+                    if (manualLevels.length > 0) {
+                        manualLevels.sort((a,b) => (b.strat_score||0) - (a.strat_score||0));
+                        const bestManual = manualLevels[0];
+                        factors["Nivel Clave"] = `${bestManual.type} @ ${bestManual.price}`;
+                        factors["Acción"] = bestManual.action_reco;
+                        scoreToDisplay = bestManual.strat_score || 0;
                     }
+                } 
+
+                // FINAL CLEANUP of stratName
+                if (!stratName || stratName === "None") stratName = "PST AI Oracle";
 
                     // Update UI
                     document.getElementById('inspector-title').innerHTML = `
@@ -2695,43 +2745,389 @@
             document.getElementById('stats-modal').style.display = 'none';
         }
 
+
+        // --- MTF SIDEBAR UPDATE ---
+        function updateMTFSidebar(metrics) {
+            const container = document.getElementById('mtf-metrics-container');
+            if (!container || !metrics) return;
+            
+            container.innerHTML = '';
+            
+            const tfNames = {
+                'm1': '1 MIN',
+                'm5': '5 MIN',
+                'm15': '15 MIN',
+                'h1': '1 HORA'
+            };
+            
+            // Define order
+            const order = ['m1', 'm5', 'm15', 'h1'];
+            
+            order.forEach(tf => {
+                const data = metrics[tf];
+                if (!data) return;
+                
+                const row = document.createElement('div');
+                row.style.cssText = `
+                    background: rgba(255,255,255,0.02);
+                    border: 1px solid rgba(255,255,255,0.05);
+                    border-radius: 8px;
+                    padding: 8px 10px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                    transition: all 0.2s;
+                `;
+                
+                let rsiColor = '#94a3b8'; // Neutral
+                if (data.rsi >= 70) rsiColor = '#ef4444'; // Red (OB)
+                else if (data.rsi <= 30) rsiColor = '#22c55e'; // Green (OS)
+                else if (data.rsi > 50) rsiColor = '#38bdf8'; // Slight Bull
+                else if (data.rsi < 50) rsiColor = '#f59e0b'; // Slight Bear
+                
+                let volColor = data.vol_rel >= 1.5 ? '#38bdf8' : '#64748b';
+                let adxColor = data.adx >= 25 ? '#a855f7' : '#64748b';
+
+                row.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                        <span style="font-size: 10px; font-weight: 800; color: #cbd5e1;">${tfNames[tf]}</span>
+                        <span style="font-size: 11px; font-weight: bold; color: ${rsiColor}; font-family: 'Roboto Mono', monospace;">RSI ${data.rsi}</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <div style="display: flex; align-items: center; gap: 4px; flex-grow: 1;">
+                            <span style="font-size: 8px; color: #64748b; font-weight: 800;">VOL</span>
+                            <span style="font-size: 10px; color: ${volColor}; font-weight: bold;">${data.vol_rel}x</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                            <span style="font-size: 8px; color: #64748b; font-weight: 800;">ADX</span>
+                            <span style="font-size: 10px; color: ${adxColor}; font-weight: bold;">${data.adx}</span>
+                        </div>
+                    </div>
+                    <div style="height: 3px; background: rgba(0,0,0,0.3); border-radius: 1px; overflow: hidden; margin-top: 2px; border: 1px solid rgba(255,255,255,0.03);">
+                        <div style="width: ${data.rsi}%; height: 100%; background: ${rsiColor}; box-shadow: 0 0 5px ${rsiColor}40;"></div>
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+        }
+
+        // --- LIVE STATS UPDATE (Chart Modal) ---
+        async function updateChartStats(data) {
+            const container = document.getElementById('chart-live-stats');
+            if (!container || !data || !data.analysis) return;
+
+            // Reuse the Inspector rendering logic via a temporary structure or direct rendering
+            // For stability, we will duplicate the "Analysis Tabs" rendering here but target the #chart-live-stats
+            
+            const analysis = data.analysis;
+            const groups = data.grouped_strategies || {};
+            
+            // 1. CLEAR & SETUP
+            container.innerHTML = '';
+            
+            // NORMALIZE DATA: If we have detailedData (Array) but no groups, use it.
+            let styles = [];
+            if (Object.keys(groups).length > 0) {
+                styles = Object.keys(groups).filter(k => k !== 'null' && k !== 'undefined');
+            } else if (data.detailedData && Array.isArray(data.detailedData)) {
+                // FALLBACK: DetailedData Array -> Create Pseudo Groups
+                // This handles the case where backend sends flat array but frontend expects groups
+                console.log("🛠️ Using DetailedData fallback for Tabs");
+                data.detailedData.forEach(s => {
+                    // Group logic could go here, or just 1 strat per tab
+                    // For now, let's just make each strategy its own tab or group by timeframes if possible
+                    // But to be safe, let's just use the NAME as the key
+                    const key = s.name || `Strat ${s.originalIdx}`;
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(s);
+                    styles.push(key);
+                });
+            }
+
+            // 2. HEADER: Tabs
+            const tabsContainer = document.createElement('div');
+            tabsContainer.className = 'pst-tabs-container';
+            tabsContainer.style.cssText = `
+                background: rgba(11, 15, 26, 0.98);
+                backdrop-filter: blur(12px);
+                padding: 12px 16px;
+                border-bottom: 2px solid rgba(255,255,255,0.03);
+                border-top: 1px solid rgba(255,255,255,0.05);
+                position: sticky;
+                top: 0;
+                z-index: 10;
+                display: flex;
+                gap: 12px;
+                overflow-x: auto;
+                scrollbar-width: none;
+                box-shadow: 0 -4px 15px rgba(0,0,0,0.4);
+            `;
+            
+            let activeTab = window.currentChartTab || styles[0];
+            if (!styles.includes(activeTab)) activeTab = styles[0];
+            
+            if (styles.length > 0) {
+                 styles.forEach(style => {
+                    const btn = document.createElement('button');
+                    const isActive = style === activeTab;
+                    
+                    const groupStrats = groups[style] || [];
+                    const firstStrat = groupStrats[0];
+                    let scoreHtml = '';
+                    
+                    if (firstStrat && firstStrat.score !== undefined) {
+                        let sColor = '#64748b'; // Default
+                        if (firstStrat.score >= 70) sColor = '#10b981'; // Green
+                        else if (firstStrat.score >= 40) sColor = '#f59e0b'; // Orange
+                        else if (firstStrat.score > 0) sColor = '#38bdf8'; // Blue
+                        
+                        scoreHtml = `<span style="background: ${sColor}20; color: ${sColor}; padding: 2px 6px; border-radius: 6px; font-size: 10px; margin-left: 8px; font-weight: 900; border: 1px solid ${sColor}40;">${firstStrat.score}</span>`;
+                    }
+
+                    btn.innerHTML = `<span style="opacity: ${isActive ? 1 : 0.6};">${style.replace(/_/g, ' ').toUpperCase()}</span>${scoreHtml}`;
+                    
+                    btn.onclick = (e) => {
+                        e.stopPropagation();
+                        window.currentChartTab = style;
+                        updateChartStats(data);
+                    };
+                    
+                    btn.className = `modal-tab-btn ${isActive ? 'active' : ''}`;
+
+                    tabsContainer.appendChild(btn);
+                });
+                container.appendChild(tabsContainer);
+            }
+            
+            // 3. CONTENT: Strategies for Active Tab
+            const contentContainer = document.createElement('div');
+            contentContainer.style.padding = '16px';
+            
+            if (activeTab && groups[activeTab]) {
+                groups[activeTab].forEach(strat => {
+                    const strategyCard = document.createElement('div');
+                    strategyCard.style.cssText = `
+                        background: #1e293b;
+                        border: 1px solid rgba(255,255,255,0.08);
+                        border-radius: 12px;
+                        padding: 12px;
+                        margin-bottom: 16px;
+                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                    `;
+                    
+                    // Header
+                    // ... (keep existing header logical logic, just refine styles if needed) ...
+                    // Headers removed for compactness
+                    
+                    // Factors Grid
+                    const grid = document.createElement('div');
+                    // WIDER CARDS & BIGGER GAP
+                    grid.style.cssText = "display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;";
+                    
+                    if (strat.factors) {
+                        let factorsToRender = [];
+                        
+                        if (Array.isArray(strat.factors)) {
+                             factorsToRender = strat.factors.map(f => ({ key: f.k || f.name || '?', val: f.v || f.value || f.score }));
+                        } else {
+                             Object.entries(strat.factors).forEach(([k, v]) => {
+                                 factorsToRender.push({ key: k, val: v });
+                             });
+                        }
+                        
+                        // SPECIAL AI LAYOUT: Extract Verdict & Filter Redundant
+                        let aiVerdict = null;
+                        if (strat.name && (strat.name.includes('AI') || strat.name.includes('Gemini') || strat.name.includes('Llama') || strat.name.includes('Oracle'))) {
+                            // 1. Extract Verdict first
+                            const verdictIndex = factorsToRender.findIndex(f => f.key.toUpperCase().includes('VEREDICTO') || f.key.toUpperCase().includes('VERDICT'));
+                            if (verdictIndex !== -1) {
+                                aiVerdict = factorsToRender.splice(verdictIndex, 1)[0];
+                            }
+
+                            // 2. Filter out Redundant/Technical fields
+                            factorsToRender = factorsToRender.filter(f => {
+                                const k = f.key.toUpperCase();
+                                // REMOVE: Same as Verdict/Reasoning
+                                if (k.includes('REASONING') || k.includes('RAZONAMIENTO') || k.includes('KEY FACTORS')) return false;
+                                // REMOVE: Technical fields not useful for humans (already in score/buttons)
+                                if (k.includes('DIRECTION') || k.includes('ACTION STATUS')) return false;
+                                return true;
+                            });
+                        }
+
+                        // RENDER VERDICT (Full Width)
+                        if (aiVerdict) {
+                            const verdictDiv = document.createElement('div');
+                            
+                            // 1. Determine Colors based on Score
+                            let vColor = '#e2e8f0'; // Default Neutral (Gray-White)
+                            let vBorder = '#3b82f6'; // Default Blue
+                            let vBg = 'rgba(59,130,246,0.15)'; // Default Blue Tint
+
+                            const sScore = parseInt(strat.score) || 0;
+                            const sDir = parseInt(strat.direction) || 0;
+
+                            if (sScore >= 60) {
+                                if (sDir === -1) {
+                                    // HIGH CONFIDENCE SELL -> RED
+                                    vColor = '#f87171';
+                                    vBorder = '#ef4444';
+                                    vBg = 'rgba(239, 68, 68, 0.15)';
+                                } else if (sDir === 1) {
+                                    // HIGH CONFIDENCE BUY -> GREEN
+                                    vColor = '#4ade80';
+                                    vBorder = '#22c55e';
+                                    vBg = 'rgba(34, 197, 94, 0.15)';
+                                } else {
+                                    // HIGH SCORE BUT NO DIRECTION -> NEUTRAL/WARNING (Yellow)
+                                    vColor = '#fbbf24';
+                                    vBorder = '#f59e0b';
+                                    vBg = 'rgba(245, 158, 11, 0.15)';
+                                }
+                            } else if (sScore <= 40) {
+                                // LOW SCORE -> DANGER RED
+                                vColor = '#fca5a5'; 
+                                vBorder = '#ef4444';
+                                vBg = 'rgba(239, 68, 68, 0.10)';
+                            }
+
+                            // 2. Apply Styles
+                            verdictDiv.style.cssText = `
+                                background: linear-gradient(90deg, ${vBg} 0%, rgba(15,23,42,0) 100%);
+                                border-left: 4px solid ${vBorder};
+                                padding: 12px 16px;
+                                margin-bottom: 16px;
+                                border-radius: 4px;
+                            `;
+                            
+                            // 3. Set Content
+                            verdictDiv.innerHTML = `
+                                <div style="color: ${vBorder}; font-size: 11px; font-weight: 800; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 0.5px;">${aiVerdict.key}</div>
+                                <div style="color: ${vColor}; font-size: 14px; font-weight: 500; line-height: 1.5; font-family: 'JetBrains Mono', monospace;">${aiVerdict.val}</div>
+                            `;
+                            strategyCard.appendChild(verdictDiv);
+                        }
+                        
+                        factorsToRender.forEach(({key, val}) => {
+                            if(val === null || val === undefined) return;
+                            
+                            const row = document.createElement('div');
+                            row.style.cssText = `
+                                background: rgba(0,0,0,0.25);
+                                border-radius: 8px;
+                                padding: 10px 14px;
+                                border: 1px solid rgba(255,255,255,0.05);
+                                display: flex;
+                                flex-direction: column;
+                                gap: 4px;
+                            `;
+                            
+                            let valStr = String(val);
+                            if (typeof val === 'object') valStr = JSON.stringify(val); 
+                            
+                            let valColor = '#cbd5e1'; 
+                            if (typeof val === 'number') valStr = val.toFixed(4);
+                            
+                            // 1. Keyword Color Coding
+                            if (String(val).match(/(BULL|COMPRA|True|ALCISTA|LONG)/i)) valColor = '#4ade80';
+                            if (String(val).match(/(BEAR|VENTA|False|BAJISTA|SHORT)/i)) valColor = '#f87171';
+                            
+                            // 2. Score-Based Color Coding (Overrides if specific score found)
+                            // Looks for patterns like "(+36)" or "(-10)". Uses the LAST match if multiple exist.
+                            const scoreMatches = [...valStr.matchAll(/\(([+-]?\d+)\)/g)];
+                            if (scoreMatches.length > 0) {
+                                const lastMatch = scoreMatches[scoreMatches.length - 1];
+                                const score = parseInt(lastMatch[1], 10);
+                                if (score > 0) valColor = '#4ade80'; 
+                                if (score < 0) valColor = '#f87171'; 
+                                if (score === 0) valColor = '#94a3b8'; 
+                            }
+                            
+                            // INCREASED FONT SIZES
+                            row.innerHTML = `
+                                <span style="color: #94a3b8; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${key}</span>
+                                <span style="color: ${valColor}; font-size: 13px; font-weight: 700; font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; word-break: break-word; line-height: 1.4;">${valStr}</span>
+                            `;
+                            grid.appendChild(row);
+                        });
+                    }
+                    strategyCard.appendChild(grid);
+                    
+                    // AI Re-Analyze Button (Specific to AI)
+                    if (strat.name && (strat.name.includes('AI') || strat.name.includes('Gemini') || strat.name.includes('Llama'))) {
+                         const btnDiv = document.createElement('div');
+                         btnDiv.style.marginTop = '15px';
+                         btnDiv.innerHTML = `
+                             <button onclick="forceAnalyzeIA('${data.symbol}', 'gemini')" style="width: 100%; background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%); border: none; padding: 10px; border-radius: 8px; color: white; font-weight: bold; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                <span>✨</span> RE-ANALIZAR AHORA
+                             </button>
+                         `;
+                         strategyCard.appendChild(btnDiv);
+                    }
+
+                    contentContainer.appendChild(strategyCard);
+                });
+            } else {
+                contentContainer.innerHTML = '<div style="text-align: center; color: #64748b; padding: 20px;">Selecciona una estrategia arriba.</div>';
+            }
+            container.appendChild(contentContainer);
+        }
+
         // Wrapper to open default M5
         async function openChart(symbol) {
             currentSymbol = symbol;
             const modal = document.getElementById('chart-modal');
             modal.style.display = 'flex';
             await loadChartData(symbol, 'M5');
+            
+            // START AUTO-REFRESH LOOP
+            if (window.chartInterval) clearInterval(window.chartInterval);
+            window.chartInterval = setInterval(() => {
+                if (document.getElementById('chart-modal').style.display !== 'none') {
+                    // Optimized refresh: Just reload data & stats, don't rebuild chart if possible
+                    loadChartData(currentSymbol, currentTF, true); // true = isUpdate
+                } else {
+                    clearInterval(window.chartInterval);
+                }
+            }, 2500); // 2.5s Refresh Rate
         }
-
-
-        // Configuración de canales automáticos eliminada (Análisis 100% manual)
         
-        async function loadChartData(symbol, tf) {
+        function closeModal() {
+            document.getElementById('chart-modal').style.display = 'none';
+            if (window.chartInterval) clearInterval(window.chartInterval); // STOP REFRESH
+            if (chart) {
+                try { chart.remove(); } catch(e) {}
+                chart = null;
+            }
+        }
+        
+        async function loadChartData(symbol, tf, isUpdate = false) {
+            // ... (Existing start of function) ...
             const container = document.getElementById('chart-container');
             const title = document.getElementById('modal-title');
             
-            // 1. SHOW LOADING OVERLAY (UX FIX)
+            // 1. SHOW LOADING OVERLAY (UX FIX) - Only if not auto-refreshing (chart exists)
             let overlay = document.getElementById('chart-loading-overlay');
-            if(!overlay) {
+            if(!chart && !overlay) {
                  overlay = document.createElement('div');
                  overlay.id = 'chart-loading-overlay';
                  overlay.style.cssText = "position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(17, 24, 39, 0.95); z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(2px);";
-                 // Ensure container relative positioning
                  if(getComputedStyle(container).position === 'static') container.style.position = 'relative';
                  container.appendChild(overlay);
+                 
+                overlay.innerHTML = `
+                    <div style="font-size: 40px; margin-bottom: 20px; animation: pulse 2s infinite;">🧠</div>
+                    <div style="font-size: 16px; font-weight: bold; color: #38bdf8; margin-bottom: 8px;">Analizando ${symbol}...</div>
+                    <div style="font-size: 12px; color: #94a3b8; font-family: monospace;">Esperando respuesta de IA (Ollama/Groq)</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 5px;">Esto puede tardar 10-20s. Por favor espera.</div>
+                    <div style="margin-top: 20px; width: 40px; height: 40px; border: 3px solid rgba(56, 189, 248, 0.1); border-top: 3px solid #38bdf8; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                `;
+                overlay.style.display = 'flex';
             }
-            overlay.innerHTML = `
-                <div style="font-size: 40px; margin-bottom: 20px; animation: pulse 2s infinite;">🧠</div>
-                <div style="font-size: 16px; font-weight: bold; color: #38bdf8; margin-bottom: 8px;">Analizando ${symbol}...</div>
-                <div style="font-size: 12px; color: #94a3b8; font-family: monospace;">Esperando respuesta de IA (Ollama/Groq)</div>
-                <div style="font-size: 11px; color: #64748b; margin-top: 5px;">Esto puede tardar 10-20s. Por favor espera.</div>
-                <div style="margin-top: 20px; width: 40px; height: 40px; border: 3px solid rgba(56, 189, 248, 0.1); border-top: 3px solid #38bdf8; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
-            `;
-            overlay.style.display = 'flex';
 
             // UI Feedback (Title)
             if(chart) {
-                 title.innerHTML = `Análisis Técnico: ${symbol} <span style="font-size: 12px; color: #64748b; margin-left:10px;">(Conectando...)</span>`;
+                 // title.innerHTML = ... (Optional: Don't flicker title on refresh)
             } else {
                  title.innerHTML = `Análisis Técnico: ${symbol}`;
             }
@@ -2749,9 +3145,14 @@
                 if(overlay) overlay.style.display = 'none';
                 
                 if (!result.data || result.data.length === 0) {
-                    container.innerHTML = '<div style="color: #ef4444; text-align: center; padding-top: 200px;">Error: No hay datos disponibles.</div>';
-                    return;
+                     if(!chart) container.innerHTML = '<div style="color: #ef4444; text-align: center; padding-top: 200px;">Error: No hay datos disponibles.</div>';
+                     return;
                 }
+                
+                // --- NEW CODE: UPDATE LIVE STATS & SIDEBAR ---
+                updateChartStats(result); 
+                updateMTFSidebar(result.mtf_metrics);
+                // -----------------------------------
                 
                 // Save for Editing
                 window.lastStatusData = result;
@@ -2760,12 +3161,29 @@
                      container.innerHTML = ''; 
                      const chartOptions = {
                         width: container.clientWidth || 940,
-                        height: 480,
-                        layout: { background: { type: 'solid', color: '#111827' }, textColor: '#94a3b8' },
+                        height: container.clientHeight || 480,
+                        layout: { 
+                            background: { type: 'solid', color: '#0b0f1a' }, 
+                            textColor: '#94a3b8',
+                            padding: { bottom: 20 } // SPACE FOR AXIS
+                        },
                         grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
                         timeScale: { timeVisible: true, rightOffset: 20 }
                     };
                     chart = LightweightCharts.createChart(container, chartOptions);
+                    
+                    // RESIZE OBSERVER: Ensure chart always fits its container
+                    const resizeObserver = new ResizeObserver(entries => {
+                        if (chart && entries[0].contentRect) {
+                            const { width, height } = entries[0].contentRect;
+                            chart.resize(width, height);
+                        }
+                    });
+                    resizeObserver.observe(container);
+                    // ... (Listeners and Series Creation) ...
+                    
+
+
                     
                     // --- ONE-TIME EVENT SUBSCRIPTIONS ---
                     // --- SINGLE CONSOLIDATED CLICK HANDLER ---
@@ -2981,11 +3399,13 @@
                 }
                 
                 // Update Title... (Omitted for brevity, assume same)
+                // Update Title & PnL
                 let pnlHtml = '';
                 if (result.trade && result.trade.profit !== undefined) {
                      const color = result.trade.profit >= 0 ? 'var(--trend)' : '#ef4444';
                      pnlHtml = `<span id="modal-pnl" style="font-size: 14px; margin-left: 15px; color: ${color}; font-weight: bold;">(${result.trade.profit >= 0 ? '+' : ''}${result.trade.profit.toFixed(2)})</span>`;
                 }
+
                 lastAnalysisResult = result.analysis;
                 currentTF = tf;
                 
@@ -3057,53 +3477,60 @@
                 // Set Data Canales
                 // Actualización de datos de Canales Automáticos eliminada
                 
-                // --- APLICAR ZOOM PREDETERMINADO (Basado en TF para mostrar ~24h) ---
-                const tfCounts = { 'M1': 1440, 'M5': 288, 'M15': 96, 'M30': 48, 'H1': 24, 'H4': 42, 'D1': 30 };
-                const visibleCount = tfCounts[tf] || 100;
+                // --- APLICAR ZOOM PREDETERMINADO (SOLO EN CARGA INICIAL) ---
+                if (!isUpdate) {
+                    const tfCounts = { 'M1': 50, 'M5': 60, 'M15': 60, 'M30': 45, 'H1': 35, 'H4': 35, 'D1': 25 };
+                    const visibleCount = tfCounts[tf] || 50;
 
-                requestAnimationFrame(() => {
-                    const totalCandles = formattedData.length;
-                    if (totalCandles > 0) {
-                        try {
-                            // En lugar de setVisibleRange (que anula el offset), usamos scrollToRealTime
-                            // chart.timeScale().scrollToRealTime();
-                            
-                            // Ajuste: Para que se vea el histórico deseado Y el hueco a la derecha:
-                            // Ponemos el rango pero desplazado
-                            const range = {
-                                from: formattedData[Math.max(0, totalCandles - visibleCount)].time,
-                                to: formattedData[totalCandles - 1].time + (20 * tfSec) // Añadir el tiempo del offset al rango visual
-                            };
-                            chart.timeScale().setVisibleRange(range);
-                        } catch(e) { console.error("Error setting visible range:", e); }
-                    }
-                });
+                    // Usamos setTimeout para dar tiempo al motor de Lightweight Charts a procesar el setData
+                    setTimeout(() => {
+                        const totalCandles = formattedData.length;
+                        if (totalCandles > 0 && chart) {
+                            try {
+                                const lastCandle = formattedData[totalCandles - 1];
+                                const firstVisible = formattedData[Math.max(0, totalCandles - visibleCount)];
+                                
+                                chart.timeScale().setVisibleRange({
+                                    from: firstVisible.time,
+                                    to: lastCandle.time + (20 * tfSec) // Espacio a la derecha para ver el futuro
+                                });
+                            } catch(e) { console.error("Error setting visible range:", e); }
+                        }
+                    }, 100); 
+                }
 
                 // --- LOAD & APPLY CHANNEL CONFIG FOR VISIBILITY ---
 
 
                 // Análisis manual activo
 
-                // --- UPDATE HUD (Horizontal Bottom Bar) ---
-                const hud = document.getElementById('chart-hud');
-                if (result.analysis) {
-                    hud.style.display = 'flex';
-                    const monitor = document.getElementById('levels-monitor');
+                // --- DEPRECATED HUD UPDATER REMOVED ---
+                if (false && result.analysis) {
+                    if (hud) {
+                        try {
+                            hud.style.display = 'flex';
+                            const monitor = document.getElementById('levels-monitor');
+                            
+                            const meta = result.analysis || {};
+                            
+                            const srcUp = meta.source_upper === 'MANUAL' ? 'MAN (M)' : 'AUTO';
+                            const srcLow = meta.source_lower === 'MANUAL' ? 'MAN (M)' : 'AUTO';
+                            
+                            const lblUp = document.getElementById('hud-lbl-up');
+                            if(lblUp) lblUp.innerText = `Ref Res [${srcUp}]`;
+                            
+                            const lblLow = document.getElementById('hud-lbl-low');
+                            if(lblLow) lblLow.innerText = `Ref Sup [${srcLow}]`;
+                        } catch(e) { console.warn("HUD Update Skipped", e); }
+                    }
                     
                     const meta = result.analysis || {};
-                    console.log("HUD UPDATE DEBUG - Result:", result, "Meta:", meta, "Levels:", meta.all_levels_data);
-                    
-                    const srcUp = meta.source_upper === 'MANUAL' ? 'MAN (M)' : 'AUTO';
-                    const srcLow = meta.source_lower === 'MANUAL' ? 'MAN (M)' : 'AUTO';
-                    
-                    document.getElementById('hud-lbl-up').innerText = `Ref Res [${srcUp}]`;
-                    document.getElementById('hud-lbl-low').innerText = `Ref Sup [${srcLow}]`;
                     
                     // ... Existing HUD Code ...
                     
-                    // --- UPDATE FOOTER LIST ---
-                    const listContainer = document.getElementById('levels-list-container');
+                    // Legacy HUD elements removed
                     const itemsContainer = document.getElementById('levels-list-items');
+                    if (itemsContainer) {
                     
                     if (meta.all_levels_data && meta.all_levels_data.length > 0) {
                         itemsContainer.innerHTML = meta.all_levels_data.map(l => {
@@ -3159,28 +3586,34 @@
                         itemsContainer.innerHTML = '<div style="color: #475569; font-style: italic;">Sin niveles activos.</div>';
                     }
                     
-                    document.getElementById('hud-dist-up').innerText = result.analysis.dist_up_pct ? result.analysis.dist_up_pct.toFixed(2) + '%' : '---%';
-                    document.getElementById('hud-dist-low').innerText = result.analysis.dist_low_pct ? result.analysis.dist_low_pct.toFixed(2) + '%' : '---%';
+                    const distUpEl = document.getElementById('hud-dist-up');
+                    if (distUpEl) distUpEl.innerText = result.analysis.dist_up_pct ? result.analysis.dist_up_pct.toFixed(2) + '%' : '---%';
+                    
+                    const distLowEl = document.getElementById('hud-dist-low');
+                    if (distLowEl) distLowEl.innerText = result.analysis.dist_low_pct ? result.analysis.dist_low_pct.toFixed(2) + '%' : '---%';
                     
                     const score = result.analysis.score || 0;
                     const scoreEl = document.getElementById('hud-score-val');
-                    scoreEl.innerText = score;
-                    scoreEl.style.color = score >= 70 ? 'var(--trend)' : (score >= 40 ? 'var(--volatile)' : '#94a3b8');
+                    if (scoreEl) {
+                        scoreEl.innerText = score;
+                        scoreEl.style.color = score >= 70 ? 'var(--trend)' : (score >= 40 ? 'var(--volatile)' : '#94a3b8');
+                    }
                     
                     // SIGNAL BADGE
                     const signalBadge = document.getElementById('hud-signal-badge');
-                    const signalType = result.analysis.type || 'None';
-                    
-                    let badgeText = "WAIT";
-                    let badgeColor = "#94a3b8";
-                    let badgeBg = "rgba(255,255,255,0.05)";
-                    
-                    if (signalType.includes("BULL") || (result.analysis.entry > 0)) {
-                        badgeText = "BUY SIGNAL";
-                        badgeColor = "#22c55e"; // Green
-                        badgeBg = "rgba(34, 197, 94, 0.2)";
-                    } else if (signalType.includes("BEAR") || (result.analysis.entry < 0)) {
-                         badgeText = "SELL SIGNAL";
+                    if (signalBadge) {
+                        const signalType = result.analysis.type || 'None';
+                        
+                        let badgeText = "WAIT";
+                        let badgeColor = "#94a3b8";
+                        let badgeBg = "rgba(255,255,255,0.05)";
+                        
+                        if (signalType.includes("BULL") || (result.analysis.entry > 0)) {
+                            badgeText = "BUY SIGNAL";
+                            badgeColor = "#22c55e"; // Green
+                            badgeBg = "rgba(34, 197, 94, 0.2)";
+                        } else if (signalType.includes("BEAR") || (result.analysis.entry < 0)) {
+                            badgeText = "SELL SIGNAL";
                         badgeColor = "#ef4444"; // Red
                         badgeBg = "rgba(239, 68, 68, 0.2)";
                     }
@@ -3189,9 +3622,9 @@
                     signalBadge.style.color = badgeColor;
                     signalBadge.style.background = badgeBg;
 
+                        }
+                    }
                     window.lastStatusData = result;
-                } else {
-                    try { document.getElementById('chart-hud').style.display = 'none'; } catch(e){}
                 }
 
                 if (candleSeries) {
@@ -3219,9 +3652,6 @@
                 }
 
 
-                chart.timeScale().fitContent();
-
-                chart.timeScale().fitContent();
 
                 // 3. Renderizar Niveles Manuales Guardados
                 fetch(`/api/levels/${symbol}`)
@@ -3332,166 +3762,12 @@
                         
                         // Gestión de eventos finalizada
 
-                // --- 1. SEPARAR ESTRATEGIAS ---
-                // Agrupar todas las IAs bajo "Cerebro IA"
-                console.log("🛠️ HIERARCHICAL TABS: Ejecutando lógica...", result.detailedData);
-                let aiStrats = [];
-                let otherStrats = [];
-                
-                const dData = result.detailedData || window.lastData?.detailedData || [];
-                
-                dData.forEach((s, idx) => {
-                    const isAI = s.name && (s.name.includes("IA") || s.name.includes("Oracle") || s.name.includes("AI-Oracle"));
-                    if (isAI) {
-                        aiStrats.push({ ...s, originalIdx: idx });
-                    } else {
-                        otherStrats.push({ ...s, originalIdx: idx });
-                    }
-                });
-                
-                console.log(`🛠️ IAs encontradas: ${aiStrats.length}, Otras: ${otherStrats.length}`);
-                
-                const hasAI = aiStrats.length > 0;
-                
-                // --- 2. RENDERIZAR PESTAÑAS PRINCIPALES ---
-                const selectorContainer = document.querySelector('.strat-selectors');
-                let mainTabsHTML = otherStrats.map(s => `
-                    <button class="strat-btn ${s.originalIdx === 0 && !hasAI ? 'active' : ''}" 
-                            onclick="selectStrategy(${s.originalIdx})"
-                            id="strat-btn-${s.originalIdx}">
-                        ${s.name} <span class="badge ${s.score >= 70 ? 'high' : (s.score >= 40 ? 'med' : 'low')}">${s.score}</span>
-                    </button>
-                `).join('');
-                
-                // Si hay IAs, añadir una pestaña MAESTRA "Cerebro IA"
-                if (hasAI) {
-                    // Calculamos el score máximo de las IAs para mostrarlo en la pestaña maestra
-                    const maxAIScore = Math.max(...aiStrats.map(s => s.score));
-                    mainTabsHTML += `
-                        <button class="strat-btn active" 
-                                onclick="selectStrategy('AI_MASTER')"
-                                id="strat-btn-ai-master">
-                            🤖 Cerebro IA <span class="badge ${maxAIScore >= 70 ? 'high' : (maxAIScore >= 40 ? 'med' : 'low')}">${maxAIScore}</span>
-                        </button>
-                    `;
-                }
-                selectorContainer.innerHTML = mainTabsHTML;
-                
-                // --- 3. RENDERIZAR SUB-PESTAÑAS (Solo visibles si Cerebro IA está activo) ---
-                // Crear contenedor si no existe (o limpiarlo)
-                let subTabsContainer = document.getElementById('ai-subtabs');
-                if (!subTabsContainer) {
-                    subTabsContainer = document.createElement('div');
-                    subTabsContainer.id = 'ai-subtabs';
-                    subTabsContainer.style.cssText = "display: flex; gap: 8px; margin-top: 10px; padding: 0 10px; overflow-x: auto; display: none;";
-                    // Insertar después de .strat-selectors
-                    selectorContainer.parentNode.insertBefore(subTabsContainer, selectorContainer.nextSibling);
-                }
-                
-                const aiSubTabsHTML = aiStrats.map((s, i) => {
-                    // Simplificar nombres (Case Insensitive & Clean)
-                    let lower = s.name.toLowerCase();
-                    let simpleName = s.name;
-                    
-                    if(lower.includes("groq")) simpleName = "Groq 🚀";
-                    else if(lower.includes("ollama")) simpleName = "Ollama 🏠";
-                    else if(lower.includes("gemini")) simpleName = "Gemini 🤖";
-                    else if(lower.includes("gpt")) simpleName = "GPT 🧠";
-                    else {
-                        // Fallback clean
-                        simpleName = simpleName.replace("PST-AI-Oracle", "").replace("IA ", "").replace(/[\[\]]/g, "").trim();
-                        if(!simpleName) simpleName = "IA Oracle";
-                    }
-                    
-                    return `
-                        <button class="sub-strat-btn ${i === 0 ? 'active' : ''}" 
-                                onclick="selectAggregatedTab(${s.originalIdx}, this)"
-                                data-idx="${s.originalIdx}">
-                            ${simpleName} <span class="badge ${s.score>=70?'high':(s.score>=40?'med':'low')}">${s.score}</span>
-                        </button>
-                    `;
-                }).join('');
-                subTabsContainer.innerHTML = aiSubTabsHTML;
+                // --- LEGACY STRATEGY RENDER REMOVED ---
 
-                // --- 4. RENDERER DE CONTENIDO (Missing Function Fixed) ---
-                window.renderStrategyContent = function(idx) {
-                    const strat = dData[idx];
-                    if (!strat) return;
-                    
-                    const meta = strat.metadata || {};
-                    const breakdown = meta.score_breakdown || {};
-                    const factors = meta.factors_detailed || [];
-                    
-                    // Actualizar Puntuación y Círculo
-                    const scoreEl = document.getElementById('inspector-score');
-                    if (scoreEl) {
-                        scoreEl.innerText = strat.score;
-                        const circle = document.querySelector('.score-circle');
-                        if (circle) circle.style.background = `conic-gradient(#fbbf24 ${strat.score * 3.6}deg, rgba(255,255,255,0.05) 0deg)`;
-                    }
-                    
-                    // Actualizar Veredicto
-                    const verdictEl = document.getElementById('inspector-verdict');
-                    if (verdictEl) verdictEl.innerText = meta.status || "Analizando...";
+                
 
-                    // Actualizar Factores Detallados
-                    const factorsList = document.getElementById('inspector-factors-list');
-                    if (factorsList) {
-                        factorsList.innerHTML = factors.map(f => `
-                            <li>
-                                <span class="factor-name">${f.k}</span>
-                                <span class="factor-value">${f.v}</span>
-                                <span class="factor-points ${f.score >= 0 ? 'pos' : 'neg'}">${f.score >= 0 ? '+' : ''}${f.score}</span>
-                            </li>
-                        `).join('') || '<li>Sin datos detallados</li>';
-                    }
-                };
-                
-                // --- 5. FUNCIONES DE SELECCIÓN ---
-                
-                // Override selectStrategy para manejar el grupo IA
-                window.selectStrategy = function(idx) {
-                    // Reset Main Tabs style
-                    document.querySelectorAll('.strat-selectors .strat-btn').forEach(b => b.classList.remove('active'));
-                    
-                    if (idx === 'AI_MASTER') {
-                         document.getElementById('strat-btn-ai-master').classList.add('active');
-                         document.getElementById('ai-subtabs').style.display = 'flex';
-                         
-                         // Activar la primera sub-pestaña por defecto si ninguna está activa
-                         const firstSub = document.querySelector('.sub-strat-btn');
-                         if (firstSub) firstSub.click();
-                         return;
-                    }
-                    
-                    // Modo Normal (Otras estrategias)
-                    if (document.getElementById(`strat-btn-${idx}`)) {
-                        document.getElementById(`strat-btn-${idx}`).classList.add('active');
-                    }
-                    document.getElementById('ai-subtabs').style.display = 'none';
-                    renderStrategyContent(idx);
-                };
-                
-                window.selectAggregatedTab = function(realIdx, btnElement) {
-                    // Update Sub-tabs UI via CSS classes
-                    document.querySelectorAll('.sub-strat-btn').forEach(b => {
-                        b.classList.remove('active');
-                        // Clean legacy inline styles if any exist
-                        b.style.background = '';
-                        b.style.borderColor = '';
-                        b.style.color = '';
-                    });
-                    
-                    btnElement.classList.add('active');
-                    renderStrategyContent(realIdx);
-                };
 
-                // Default Selection
-                if (hasAI) {
-                    selectStrategy('AI_MASTER');
-                } else if (otherStrats.length > 0) {
-                    selectStrategy(otherStrats[0].originalIdx);
-                }
+
                         // DRAG & DROP HANDLERS (PERSISTENTES)
                         if (!window.dragInitialized) {
                             const container = document.getElementById('chart-container');
@@ -3576,14 +3852,22 @@
                 if (geminiKey.value) document.getElementById('gemini-key').value = geminiKey.value;
                 if (groqKey.value) document.getElementById('groq-key').value = groqKey.value;
 
-                // Load Global AI Toggles
-                const gGemini = await fetch('/api/config?key=global_ai_gemini').then(r => r.json());
-                const gGroq = await fetch('/api/config?key=global_ai_groq').then(r => r.json());
-                const gOllama = await fetch('/api/config?key=global_ai_ollama').then(r => r.json());
-                
-                document.getElementById('global-toggle-gemini').checked = (gGemini.value !== 'false');
-                document.getElementById('global-toggle-groq').checked = (gGroq.value !== 'false');
-                document.getElementById('global-toggle-ollama').checked = (gOllama.value !== 'false');
+                // Load Global Strategy Toggles
+                const strategies = [
+                    { id: 'global-toggle-EMA', key: 'enabled_PST-EMA-Flow' },
+                    { id: 'global-toggle-Channel', key: 'enabled_PST-Channel-Master' },
+                    { id: 'global-toggle-MeanRev', key: 'enabled_PST-Mean-Reversion' },
+                    { id: 'global-toggle-gemini', key: 'enabled_PST-AI-Oracle-Gemini' },
+                    { id: 'global-toggle-groq', key: 'enabled_PST-AI-Oracle-Groq' },
+                    { id: 'global-toggle-ollama', key: 'enabled_PST-AI-Oracle-Ollama' }
+                ];
+
+                for (const s of strategies) {
+                    try {
+                        const res = await fetch(`/api/config?key=${s.key}`).then(r => r.json());
+                        document.getElementById(s.id).checked = (res.value !== 'false');
+                    } catch (e) { console.error(`Error loading ${s.key}:`, e); }
+                }
             } catch (e) { console.error("Error loading config:", e); }
 
             const container = document.getElementById('config-symbols-container');
@@ -3928,14 +4212,14 @@
             }
         };
 
-        window.toggleGlobalAI = async function(provider, isActive) {
+        window.toggleGlobalStrategy = async function(strategyName, isActive) {
             try {
                 await fetch('/api/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key: `global_ai_${provider}`, value: isActive.toString() })
+                    body: JSON.stringify({ key: `enabled_${strategyName}`, value: isActive.toString() })
                 });
-                console.log(`Global AI ${provider} -> ${isActive}`);
+                console.log(`Global Strategy ${strategyName} -> ${isActive}`);
             } catch (e) { console.error(e); }
         };
 

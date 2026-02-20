@@ -258,6 +258,18 @@ class PSTDatabase:
             logger.error(f"❌ Error getting open tickets: {e}")
             return []
 
+    async def get_active_trades(self):
+        """Obtiene detalles de todos los trades que aún no tienen precio de salida."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("SELECT ticket, symbol, time_in FROM trades WHERE price_out = 0 AND ticket > 0") as cursor:
+                    rows = await cursor.fetchall()
+                    return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"❌ Error getting active trades: {e}")
+            return []
+
     async def check_trade_exists(self, ticket: int) -> bool:
         """Verifica si un trade con este ticket ya existe en la DB."""
         try:

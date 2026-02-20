@@ -30,8 +30,12 @@ import logging
 # Silence Flask Access Logs
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
+from PST_Core.models.database import PSTDatabase
+from PST_Core.config import MAX_RISK_PCT, MAX_DRAWDOWN_PCT # Importar riesgo global
 app = Flask(__name__)
-portfolio = PortfolioManager(max_risk_pct=0.5) # Riesgo manual prudente del 0.5%
+db_engine = PSTDatabase() # Motor de DB para el Dashboard
+asyncio.run(db_engine.initialize()) # Inicialización síncrona para Flask
+portfolio = PortfolioManager(db=db_engine, max_risk_pct=MAX_RISK_PCT, max_drawdown_pct=MAX_DRAWDOWN_PCT) 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "pst_trading.db")
 
 @app.after_request
@@ -199,17 +203,16 @@ def get_status():
         history = [dict(row) for row in cursor.fetchall()]
         
         # 3. Datos de la cuenta (Reales desde MT5)
-        acc = mt5.account_info()
-        if acc is None:
-            # Reintento de inicialización si se perdió conexión
-            mt5.initialize()
-            acc = mt5.account_info()
+        acc_status = asyncio.run(portfolio.get_account_status())
+        is_locked = asyncio.run(portfolio.is_daily_locked())
 
         account = {
-            "drawdown": max(0, (1 - (acc.equity / acc.balance)) * 100) if acc and acc.balance > 0 else 0,
-            "balance": acc.balance if acc else 0,
-            "equity": acc.equity if acc else 0,
-            "status": "ONLINE" if acc else "MT5 OFFLINE"
+            "drawdown": acc_status["drawdown"] if acc_status else 0,
+            "balance": acc_status["balance"] if acc_status else 0,
+            "equity": acc_status["equity"] if acc_status else 0,
+            "daily_pnl": acc_status.get("daily_pnl", 0) if acc_status else 0,
+            "is_locked": is_locked,
+            "status": "ONLINE" if acc_status else "MT5 OFFLINE"
         }
         
         # 4. Obtener Posiciones Activas reales
@@ -564,29 +567,36 @@ def get_chart_data(symbol):
              df['bb_mid'] = None
              df['bb_upper'] = None
         
-        # Calcular RSIs adicionales para el HUD (M1, M5, H1)
-        rsi_m1 = 50
-        rsi_m5 = 50
-        rsi_h1 = 50
+        # --- UNIFIED MTF METRICS (For new HUD Sidebar) ---
+        mtf_metrics = {}
+        for tf_n, tf_df in [('m1', df_m1), ('m5', df_m5_real if df_m5_real is not None else df), ('m15', df_m15), ('h1', df_h1)]:
+            if tf_df is not None and len(tf_df) > 20:
+                try:
+                    _rsi_s = ta.rsi(tf_df['close'], length=14)
+                    _rsi = _rsi_s.iloc[-1] if _rsi_s is not None else 50
+                    
+                    _adx_df = ta.adx(tf_df['high'], tf_df['low'], tf_df['close'], length=14)
+                    _adx = _adx_df['ADX_14'].iloc[-1] if _adx_df is not None else 0
+                    
+                    _v = tf_df['tick_volume'].iloc[-1] if 'tick_volume' in tf_df.columns else 0
+                    _v_ma = tf_df['tick_volume'].rolling(20).mean().iloc[-1] if 'tick_volume' in tf_df.columns else 1
+                    _v_rel = _v / _v_ma if _v_ma > 0 else 1.0
+                    
+                    mtf_metrics[tf_n] = {
+                        "rsi": float(round(_rsi, 1)),
+                        "adx": float(round(_adx, 1)),
+                        "vol_rel": float(round(_v_rel, 2))
+                    }
+                except Exception as e:
+                    logger.debug(f"Error calc MTF {tf_n}: {e}")
+                    mtf_metrics[tf_n] = {"rsi": 50, "adx": 0, "vol_rel": 1.0}
+            else:
+                mtf_metrics[tf_n] = {"rsi": 50, "adx": 0, "vol_rel": 1.0}
         
-        try:
-             # RSI M1
-             if df_m1 is not None and len(df_m1) > 20:
-                 rsi_s = ta.rsi(df_m1['close'], length=14)
-                 if rsi_s is not None: rsi_m1 = rsi_s.iloc[-1]
-                 
-             # RSI M5 (Base DF)
-             if len(df) > 20:
-                 rsi_s = ta.rsi(df['close'], length=14)
-                 if rsi_s is not None: rsi_m5 = rsi_s.iloc[-1]
-                 
-             # RSI H1
-             if df_h1 is not None and len(df_h1) > 20:
-                 rsi_s = ta.rsi(df_h1['close'], length=14)
-                 if rsi_s is not None: rsi_h1 = rsi_s.iloc[-1]
-                 
-        except Exception as e:
-            logger.debug(f"DEBUG ERROR HUD RSIs: {e}")
+        # Legacy RSI support
+        rsi_m1 = mtf_metrics['m1']['rsi']
+        rsi_m5 = mtf_metrics['m5']['rsi']
+        rsi_h1 = mtf_metrics['h1']['rsi']
         
         # logger.debug("DEBUG: Indicators OK")
         
@@ -647,86 +657,70 @@ def get_chart_data(symbol):
                 def __init__(self, mode): self.mode = mode
             regime_obj = MockRegime(mode_str) 
             
-            # --- STRATEGY CONFIGURATION (DB Driven - SYNC FIX) ---
-            # Replace asyncio.run to avoid Event Loop conflicts in Flask
-            strat_config = {}
+            # --- STRATEGY CONFIGURATION (DB Driven - Standardized Naming) ---
+            strat_config_symbol = {}
+            global_config = {}
             try:
                 conn_conf = sqlite3.connect(DB_PATH)
                 conn_conf.row_factory = sqlite3.Row
                 c_conf = conn_conf.cursor()
-                # Check for table existence first (safety)
+                
+                # 1. Cargar Configuración Global (bot_config)
+                c_conf.execute("SELECT key, value FROM bot_config")
+                for row in c_conf.fetchall():
+                    global_config[row['key']] = row['value']
+
+                # 2. Cargar Configuración por Símbolo (symbol_strategies)
                 c_conf.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symbol_strategies'")
                 if c_conf.fetchone():
                     c_conf.execute("SELECT strategy_name, is_active FROM symbol_strategies WHERE symbol = ?", (symbol,))
                     rows = c_conf.fetchall()
-                    strat_config = {row['strategy_name']: bool(row['is_active']) for row in rows}
+                    strat_config_symbol = {row['strategy_name']: bool(row['is_active']) for row in rows}
                 conn_conf.close()
             except Exception as e:
                 logger.error(f"Error loading strat config sync: {e}")
 
-            # Defaults for missing entries
-            defaults = ["PSTChannelMaster", "PSTEMAFlow", "PSTMeanReversion", "PSTAIOracle"]
-            for s in defaults:
-                if s not in strat_config:
-                    strat_config[s] = True
-            
+            # Whitelist Maestra (Nombres de config.py e index.html)
+            STRAT_LIST = [
+                "PST-EMA-Flow",
+                "PST-Channel-Master",
+                "PST-Mean-Reversion",
+                "PST-AI-Oracle-Gemini",
+                "PST-AI-Oracle-Groq",
+                "PST-AI-Oracle-Ollama"
+            ]
+
+            # Función para verificar si una estrategia está habilitada
+            def is_enabled(name):
+                # 1. Global Kill Switch (Enabled by default unless explicitly 'false')
+                is_globally_on = global_config.get(f"enabled_{name}", "true").lower() == "true"
+                # 2. Per-Symbol Override (Enabled by default unless explicitly False)
+                is_symbol_on = strat_config_symbol.get(name, True)
+                return is_globally_on and is_symbol_on
+
             # Build ACTIVE instances list
             strat_instances = []
-            if strat_config.get('PSTEMAFlow', True):
+            
+            # Estrategias Técnicas
+            if is_enabled("PST-EMA-Flow"):
                 strat_instances.append(PSTEMAFlow())
-            if strat_config.get('PSTMeanReversion', True):
+            if is_enabled("PST-Mean-Reversion"):
                 strat_instances.append(PSTMeanReversion())
             
-            # --- MOCK DB FOR AI TO AVOID ASYNCIO/THREAD CONFLICTS (Redundant removed) ---
-
-            # Pre-load config AND state for AI
-            config_map = {}
-            state_map = {}
-            try:
-                conn_conf = sqlite3.connect(DB_PATH)
-                conn_conf.row_factory = sqlite3.Row
-                c = conn_conf.cursor()
-                
-                # 1. Config
-                c.execute("SELECT key, value FROM bot_config")
-                for row in c.fetchall():
-                    config_map[row['key']] = row['value']
-                
-                # 2. AI State (Fetch relevant keys)
-                try:
-                    c.execute("SELECT symbol, analysis_json, last_call_ts FROM ai_oracle_state WHERE symbol LIKE ?", (f"{symbol}%",))
-                    for row in c.fetchall():
-                        import json
-                        try:
-                            state_map[row['symbol']] = {
-                                "analysis": json.loads(row['analysis_json']),
-                                "ts": row['last_call_ts']
-                            }
-                        except: pass
-                except Exception as ex_state:
-                     logger.error(f"Error reading AI state: {ex_state}")
-
-                conn_conf.close()
-            except Exception as e:
-                logger.error(f"Error loading config/state sync: {e}")
+            # --- MOCK DB FOR AI ---
+            mock_db = MockAsyncDB(global_config, {}, db_path=DB_PATH) # State map populated below if needed
             
-            mock_db = MockAsyncDB(config_map, state_map, db_path=DB_PATH)
-            
-            # MULTI-AI INSTANTIATION (For Tabs)
-            if strat_config.get('PSTAIOracle_gemini', True):
+            # Estrategias IA (Instancias Individuales)
+            if is_enabled("PST-AI-Oracle-Gemini"):
                 strat_instances.append(PSTAIOracle(provider_type="gemini", db=mock_db))
-            if strat_config.get('PSTAIOracle_groq', True):
+            if is_enabled("PST-AI-Oracle-Groq"):
                 strat_instances.append(PSTAIOracle(provider_type="groq", db=mock_db))
-            if strat_config.get('PSTAIOracle_ollama', True):
+            if is_enabled("PST-AI-Oracle-Ollama"):
                 strat_instances.append(PSTAIOracle(provider_type="ollama", db=mock_db))
             
-            # Fallback for old generic key compatibility
-            if not any(isinstance(s, PSTAIOracle) for s in strat_instances) and strat_config.get('PSTAIOracle', False):
-                 strat_instances.append(PSTAIOracle(db=mock_db))
-            
-            active_strats_list = [type(s).__name__.replace('PST','') for s in strat_instances]
-            if strat_config.get('PSTChannelMaster', True):
-                active_strats_list.append("ChannelMaster")
+            active_strats_list = [getattr(s, 'STRATEGY_NAME', type(s).__name__) for s in strat_instances]
+            if is_enabled("PST-Channel-Master"):
+                active_strats_list.append("PST-Channel-Master")
             
             logger.debug(f"📊 HUD Analysis for {symbol} | Mode: {mode_str} | Enabled: {active_strats_list}")
 
@@ -791,19 +785,14 @@ def get_chart_data(symbol):
             max_sub_score = 0
             # TRANSLATION MAPS (User Request for clarity)
             STRAT_TRANS = {
-                "PST-Range-Sniper": "Francotirador (Rango)",
-                "PST-Trend-Elite": "Tendencia Élite",
-                "PST-Trend-Pullback": "Tendencia (Pullback)",
-                "PST-Vol-Breakout": "Ruptura Volatilidad",
-                "PST-Session-Master": "Maestro de Sesión (ORB)",
-                "PST-Divergence": "Cazador Divergencias",
-                "PST-News-Fade": "Contra-Noticia (Fade)",
-                "PSTEMAFlow": "Flujo EMA (Tendencia)",
                 "PST-EMA-Flow": "Flujo EMA (Tendencia)",
-                "PSTRSIEquities": "RSI Equities (Multi-Asset)",
-                "PST-RSI-Equities": "RSI Equities (Multi-Asset)",
-                "PSTMeanReversion": "Reversión a la Media (Rangos)",
-                "PST-Mean-Reversion": "Reversión a la Media (Rangos)"
+                "PST-Channel-Master": "Canales Maestros (Premium)",
+                "PST-Mean-Reversion": "Reversión a la Media",
+                "PST-AI-Oracle-Gemini": "IA Gemini (Google)",
+                "PST-AI-Oracle-Groq": "IA Groq (Súper Sónica)",
+                "PST-AI-Oracle-Ollama": "IA Ollama (Local)",
+                "PSTRSIEquities": "RSI Equities",
+                "PST-RSI-Equities": "RSI Equities"
             }
             KEY_TRANS = {
                 "H1 Trend": "Tendencia H1",
@@ -859,16 +848,19 @@ def get_chart_data(symbol):
                          })
                          continue
 
-                    # INSTANT RESPONSE STRATEGY: Check cache first, spawn background if needed
-                    # This ensures modal opens instantly without waiting for AI
                     try:
-                        # Quick check: is there a recent cached result in DB?
+                        # INSTANT RESPONSE STRATEGY: Check cache first (Local instance AND Global Class Cache)
+                        # This ensures modal opens instantly without waiting for AI
                         provider_name = p_type.lower() if p_type and p_type != 'UNKNOWN' else 'unknown'
                         cache_key = f"{symbol}_{provider_name}"
                         
-                        # Check if we have fresh data in memory (from DB sync)
-                        last_analysis = getattr(s, '_shared_last_analysis', {}).get(cache_key)
-                        last_ts = getattr(s, '_shared_cooldowns', {}).get(cache_key, 0)
+                        # 1. Check if we have fresh data in memory (from DB sync or Global class cache)
+                        # We check __class__ because server.py creates NEW instances on every request
+                        global_cache = getattr(s.__class__, '_shared_last_analysis', {})
+                        global_cooldowns = getattr(s.__class__, '_shared_cooldowns', {})
+                        
+                        last_analysis = global_cache.get(cache_key)
+                        last_ts = global_cooldowns.get(cache_key, 0)
                         now_ts = datetime.now().timestamp()
                         is_fresh = (now_ts - last_ts) < 300  # 5 minutes
                         
@@ -898,7 +890,7 @@ def get_chart_data(symbol):
                                           asyncio.set_event_loop(loop)
                                           result = loop.run_until_complete(strat.calculate_signal(dat, "AUTO", user_levels=lvls, force=True))
                                           loop.close()
-                                          logger.info(f"✅ [BG-AI] {sym} completed with score {result.get('score', 0)}")
+                                        #   logger.info(f"✅ [BG-AI] {sym} completed with score {result.get('score', 0)}")
                                       except Exception as e:
                                           logger.error(f"❌ [BG-AI] {sym} error: {e}")
                                       finally:
@@ -1004,7 +996,7 @@ def get_chart_data(symbol):
             # 2. Master Strategy (Using isolated master_score and master_metadata)
             # Solo mostrar si hay niveles manuales configurados para este símbolo Y está activa
             has_manual_levels = len(user_levels) > 0
-            is_master_active = strat_config.get('PSTChannelMaster', True)
+            is_master_active = is_enabled("PST-Channel-Master")
             
             if is_master_active and (has_manual_levels or master_score > 0):
                 m_status = "¡ACCIÓN!" if master_score >= 70 else ("Vigilar" if master_score >= 40 else "Neutral")
@@ -1256,7 +1248,9 @@ def get_chart_data(symbol):
             elif isinstance(obj, float) or isinstance(obj, np.floating):
                 if math.isnan(obj) or math.isinf(obj):
                     return None
-                return obj
+                return float(obj)
+            elif isinstance(obj, (np.integer, np.unsignedinteger)):
+                return int(obj)
             elif pd.isna(obj): # Handle pandas NA/NaT/NaN
                 return None
             return obj
@@ -1278,6 +1272,7 @@ def get_chart_data(symbol):
             "analysis": strategy_analysis,
             "detailedData": grouped_strategies,
             "technical_analysis": technical_analysis,
+            "mtf_metrics": mtf_metrics,
             "trade": trade_info
         }
         

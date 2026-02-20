@@ -147,20 +147,32 @@ class PSTExecutor:
                     logger.info(f"🛡️ [BREAKEVEN] {symbol} (Ticket: {ticket}). Asegurando entrada.")
 
                 # B. LÓGICA DE TRAILING STOP (Maximizar tendencia)
-                # Si el beneficio > TRAIL_ATR_MULTIPLIER * ATR, el SL sigue al precio a TRAIL_ATR_MULTIPLIER * ATR de distancia
+                # Si el beneficio > TRAIL_ATR_MULTIPLIER * ATR, el SL sigue al precio
                 if profit_points > (atr_points * TRAIL_ATR_MULTIPLIER):
-                    trail_sl = current_price - (atr_points * TRAIL_ATR_MULTIPLIER * s_info.point) if p_type == "BUY" else current_price + (atr_points * TRAIL_ATR_MULTIPLIER * s_info.point)
+                    # --- NEW: TRAILING AGRESIVO POR ADX ---
+                    # Si la tendencia es muy fuerte (ADX > 35), pegamos el SL más al precio (1.2x ATR en vez de 3x)
+                    # Obtenemos ADX de H1 (está en el DF de mtf_data, aquí recalculamos por simplicidad o usamos el del símbolo)
+                    adx_val = 0
+                    adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
+                    if adx_df is not None:
+                        adx_val = adx_df['ADX_14'].iloc[-1]
+                    
+                    mult = TRAIL_ATR_MULTIPLIER
+                    if adx_val > 35:
+                        mult = 1.2 # Muy pegado para proteger ante giro violento
+                        logger.debug(f"⚡ [AGGRESSIVE TRAIL] {symbol} ADX: {adx_val:.1f}. Ajustando multiplicador a {mult}")
+                    
+                    trail_sl = current_price - (atr_points * mult * s_info.point) if p_type == "BUY" else current_price + (atr_points * mult * s_info.point)
                     
                     # Solo actualizamos el Trailing si mejora el SL actual
                     if p_type == "BUY" and trail_sl > new_sl:
                         new_sl = trail_sl
-                        logger.info(f"📉 [TRAILING] {symbol} (Ticket: {ticket}). Siguiendo tendencia a {new_sl:.5f}")
+                        logger.info(f"📉 [TRAILING] {symbol} (Ticket: {ticket}). Siguiendo tendencia a {new_sl:.5f} (Mult: {mult})")
                     elif p_type == "SELL" and (trail_sl < new_sl or new_sl == 0):
                         new_sl = trail_sl
-                        logger.info(f"📉 [TRAILING] {symbol} (Ticket: {ticket}). Siguiendo tendencia a {new_sl:.5f}")
+                        logger.info(f"📉 [TRAILING] {symbol} (Ticket: {ticket}). Siguiendo tendencia a {new_sl:.5f} (Mult: {mult})")
 
-                # C. LÓGICA DE SALIDA DINÁMICA (EMA-Flow V3.0)
-                # Si la tendencia se invalida (cierre al otro lado de EMA21), cerramos de inmediato.
+                # C. LÓGICA DE SALIDA DINÁMICA (Estrategias Específicas)
                 if "PST_PST-EMA-Flow" in p.comment:
                     from ..strategies.pst_ema_flow import PSTEMAFlow
                     ema_strat = PSTEMAFlow()
@@ -182,9 +194,57 @@ class PSTExecutor:
                          await send_order_async(request)
                          continue # Siguiente posición, esta ya se cerró
 
+                elif "PST_PST-Mean-Reversion" in p.comment:
+                    from ..strategies.pst_mean_reversion import PSTMeanReversion
+                    mr_strat = PSTMeanReversion()
+                    direction = 1 if p_type == "BUY" else -1
+                    new_tp = mr_strat.get_dynamic_targets(df, direction)
+                    
+                    if new_tp and abs(new_tp - p.tp) > (s_info.point * 2): # Margen de 2 puntos para evitar spam
+                        logger.info(f"🎯 [DYNAMIC TP] {symbol} (Ticket: {ticket}). Actualizando objetivo a {new_tp:.5f}")
+                        await modify_position_async(ticket, p.sl, round(new_tp, s_info.digits))
+                        # Actualizamos el objeto p para que las siguientes comparaciones sean correctas
+                        # pero como termina el loop para este p, solo hay que tenerlo en cuenta si hubiera más lógica
+
                 # 3. Ejecutar modificación si ha cambiado el SL
                 if abs(new_sl - p.sl) > s_info.point:
                     await modify_position_async(ticket, round(new_sl, s_info.digits), p.tp)
 
             except Exception as e:
                 logger.error(f"❌ Error gestionando posición {p.ticket}: {e}")
+
+    async def panic_close_all(self):
+        """Cierra todas las posiciones abiertas lo más rápido posible."""
+        positions = await get_positions_async()
+        if not positions:
+            logger.info("🛡️ [PANIC CLOSE] No hay posiciones abiertas para cerrar.")
+            return
+
+        logger.critical(f"🚨 [PANIC CLOSE] Iniciando cierre de emergencia de {len(positions)} posiciones!")
+        
+        tasks = []
+        for p in positions:
+            p_type = "BUY" if p.type == 0 else "SELL"
+            s_info = mt5.symbol_info(p.symbol)
+            if not s_info: continue
+            
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "position": p.ticket,
+                "symbol": p.symbol,
+                "volume": p.volume,
+                "type": mt5.ORDER_TYPE_SELL if p_type == "BUY" else mt5.ORDER_TYPE_BUY,
+                "price": s_info.bid if p_type == "BUY" else s_info.ask,
+                "magic": 666,
+                "comment": "PST_PanicClose",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            tasks.append(send_order_async(request))
+        
+        results = await asyncio.gather(*tasks)
+        for res in results:
+            if res.retcode != mt5.TRADE_RETCODE_DONE:
+                logger.error(f"❌ Fallo en Panic Close ticket {res.order}: {res.comment}")
+            else:
+                logger.info(f"✅ Cerrada exitosamente posición del ticket {res.order}")

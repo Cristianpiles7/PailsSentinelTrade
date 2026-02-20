@@ -9,7 +9,7 @@ class RegimeMode:
     UNKNOWN = "UNKNOWN"
 
 class RegimeClassifier:
-    def __init__(self, adx_threshold=25, volatility_window=20):
+    def __init__(self, adx_threshold=30, volatility_window=20):
         self.adx_threshold = adx_threshold
         self.vol_window = volatility_window
 

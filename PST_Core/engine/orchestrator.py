@@ -11,7 +11,7 @@ from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
 from ..strategies.pst_ai_oracle import PSTAIOracle # NEW V6.5 AI
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
-from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS
+from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES
 import pandas_ta as ta
 import pandas as pd
 from typing import List
@@ -49,21 +49,77 @@ class SymbolTask:
         self.ai_oracle_groq = PSTAIOracle(db=self.db, provider_type="groq")
         self.ai_oracle_ollama = PSTAIOracle(db=self.db, provider_type="ollama")
 
-        self.strategies = [
+        # Lista maestra de todas las posibles estrategias instanciadas
+        self._all_strategies = [
             self.ema_flow, 
             self.mean_reversion, 
             self.ai_oracle_gemini,
             self.ai_oracle_groq,
             self.ai_oracle_ollama
         ]
+        
+        # self.strategies se poblará dinámicamente en cada ciclo de run()
+        self.strategies = []
+
+    async def update_active_strategies(self):
+        """Filtra las estrategias activas combinando config global y DB."""
+        try:
+            # 1. Obtener estados globales de la DB para todas las estrategias conocidas
+            # Usamos ENABLED_STRATEGIES como la lista maestra inicial.
+            global_enabled = []
+            for s_name in ENABLED_STRATEGIES:
+                db_val = await self.db.get_config(f"enabled_{s_name}", default="true")
+                if db_val.lower() == "true":
+                    global_enabled.append(s_name)
+
+            # 2. Obtener estrategias específicas del símbolo (desde la tabla symbol_strategies)
+            # Esto devuelve un dict {strategy_name: bool}
+            sym_overrides = await self.db.get_symbol_strategies(self.symbol)
+            
+            # 3. Filtrar instancias finales
+            # Combinamos _all_strategies y channel_master para el filtrado uniforme
+            pool = self._all_strategies + [self.channel_master]
+            
+            self.strategies = []
+            for s in pool:
+                name = s.STRATEGY_NAME
+                
+                # Habilitado si:
+                # 1. Está en el Whitelist Global (ENABLED_STRATEGIES) Y está activo en DB globalmente
+                is_globally_on = name in global_enabled
+                
+                # 2. NO está desactivado específicamente para este símbolo
+                is_active = sym_overrides.get(name, True)
+                
+                if is_globally_on and is_active:
+                    self.strategies.append(s)
+
+            # Mantener orden: Channel Master primero si está activo
+            if self.channel_master in self.strategies:
+                self.strategies.remove(self.channel_master)
+                self.strategies.insert(0, self.channel_master)
+
+        except Exception as e:
+            logger.error(f"❌ Error actualizando estrategias para {self.symbol}: {e}")
+            # Fallback seguro: solo lo que diga config.py
+            self.strategies = [s for s in self._all_strategies if s.STRATEGY_NAME in ENABLED_STRATEGIES]
 
     async def run(self):
         logger.debug(f"🚀 Iniciando tarea para {self.symbol}")
         while self.running:
+            # 0.1 Check for Daily Drawdown Lock
+            if await self.portfolio.is_daily_locked():
+                logger.warning(f"🔒 [{self.symbol}] Operativa bloqueada por Drawdown Diario. Esperando...")
+                await asyncio.sleep(60)
+                continue
+
             mtr_m1 = mtr_m5 = mtr_m15 = mtr_h1 = {"rsi": 0, "vol": 0, "adx": 0}
             volatility_factor = 1.0
             is_market_open = True
             user_levels = None 
+
+            # 0. Actualizar estrategias activas (Dinámico)
+            await self.update_active_strategies()
 
             # 0. Verificar si el símbolo sigue activo globalmente
             is_active = await self.db.get_config(f"symbol_active_{self.symbol}", default="1")
@@ -264,6 +320,14 @@ class SymbolTask:
                     atr_mean = atr_series.rolling(window=20).mean().iloc[-1] if len(atr_series) > 20 else atr_val
                     volatility_factor = (atr_val / atr_mean) if atr_mean > 0 else 1.0
 
+                    # DEFINIR PRECIO ACTUAL (Corrección NameError)
+                    # Prioridad: M1 -> M5 -> H1 (df_regime)
+                    price = price_h1 
+                    if mtf_data.get('m1') is not None and len(mtf_data['m1']) > 0:
+                        price = float(mtf_data['m1']['close'].iloc[-1])
+                    elif mtf_data.get('m5') is not None and len(mtf_data['m5']) > 0:
+                        price = float(mtf_data['m5']['close'].iloc[-1])
+
                     # Helper para calcular métricas de un DF
                     def calc_metrics(df_in):
                         if df_in is None or len(df_in) < 20: return {"rsi": 0, "vol": 0, "adx": 0}
@@ -327,29 +391,39 @@ class SymbolTask:
                             s_meta["strategy_display"] = STRAT_TRANS.get(s_name_raw, s_name_raw)
                             s_name = STRAT_TRANS.get(s_name_raw, s_name_raw)
 
+                            # 3. Evaluar Ejecución (Trading Automático)
+                            # Verificamos si la estrategia es apta para el régimen actual
+                            strat_type = getattr(strat, 'STRATEGY_TYPE', "UNKNOWN")
+                            is_strat_in_regime = False
+                            
+                            # Lógica de Compatibilidad de Régimen (Crisis WR Fix)
+                            if strat_type == mode: 
+                                is_strat_in_regime = True
+                            elif strat_type == "ALL":
+                                is_strat_in_regime = True
+                            
+                            # EMA Flow: Estrictamente Tendencia (PROHIBIDO en Volátil o Rango)
+                            if "PSTEMAFlow" in type(strat).__name__ and mode != RegimeMode.TREND:
+                                is_strat_in_regime = False
+
+                            # Si es la Maestra, siempre monitorea
+                            if "ChannelMaster" in type(strat).__name__:
+                                is_strat_in_regime = True
+
+                            # --- NEW: REGIME BLOCK LOGGING & SCORE CAPPING ---
+                            # Si la estrategia tiene un score alto pero el régimen no es compatible
+                            if not is_strat_in_regime and s_score >= 70:
+                                if s_result.get("entry", 0) != 0:
+                                    await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_REGIME", s_score, price)
+                                s_score = 60 # Visual Cap (User Req)
+                                s_meta["blocked_reason"] = "REGIMEN"
+
                             # 2. Actualizar mejor score para el HUD
                             if s_score > current_score:
                                 current_score = s_score
                                 strategy_name = s_name
                                 best_metadata = s_meta
                                 atr_val = s_result.get("atr", 0)
-
-                            # 3. Evaluar Ejecución (Trading Automático)
-                            # Verificamos si la estrategia es apta para el régimen actual
-                            strat_type = getattr(strat, 'STRATEGY_TYPE', "UNKNOWN")
-                            is_strat_in_regime = False
-                            
-                            # Lógica de Compatibilidad de Régimen
-                            if strat_type == mode: 
-                                is_strat_in_regime = True
-                            elif mode == RegimeMode.VOLATILE: # En volátil operamos todo
-                                is_strat_in_regime = True
-                            elif strat_type == "ALL":
-                                is_strat_in_regime = True
-                            
-                            # Si es la Maestra, siempre monitorea
-                            if "ChannelMaster" in type(strat).__name__:
-                                is_strat_in_regime = True
 
                             # Check rápido de trading mode
                             trading_mode = await self.db.get_config('trading_mode', 'AUTO')
@@ -359,7 +433,11 @@ class SymbolTask:
                                 # 0. Cooldown Check
                                 is_blocked, msg = cooldown_mgr.is_blocked(self.symbol)
                                 if is_blocked:
-                                    logger.debug(f"🧊 {self.symbol} en Cooldown: {msg}")
+                                    logger.info(f"🧊 [{self.symbol}] BLOQUEO DE SEGURIDAD (Cooldown/Histerésis). {msg}. Evitando operativa circular.")
+                                    if s_score >= 70:
+                                        await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_COOLDOWN", s_score, price)
+                                        best_metadata["blocked_reason"] = "COOLDOWN"
+                                        current_score = 60 # Visual Cap
                                 else:
                                     # 1. Ejecución
                                     sig_val = s_result.get("entry", 0)
@@ -369,6 +447,10 @@ class SymbolTask:
                                     if news_mgr.is_news_near(self.symbol, window_minutes=30):
                                          logger.warning(f"🛑 [NEWS BLOCK] {self.symbol} signal blocked.")
                                          best_metadata["news_blocked"] = True
+                                         best_metadata["blocked_reason"] = "NOTICIAS"
+                                         if s_score >= 70:
+                                              await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_NEWS_{sig_type_str}", s_score, price)
+                                              current_score = 60 # Visual Cap
                                     else:
                                         # Check Portfolio Limits
                                         open_positions = await get_positions_async()
@@ -377,32 +459,70 @@ class SymbolTask:
                                         if can_trade and s_score >= 70:
                                             # FIRE!
                                             logger.info(f"⚡ [TRADE] {self.symbol} {sig_type_str} by {s_name} (Score: {s_score})")
-                                            # SL/TP dinámico basado en ATR (si la estrategia lo provee o default)
-                                            atr_current = s_result.get("atr", 0)
-                                            if atr_current == 0: atr_current = atr_val # Fallback
                                             
-                                            sl_dist = atr_current * SL_ATR_MULTIPLIER if atr_current > 0 else 0
-                                            tp_dist = atr_current * TP_ATR_MULTIPLIER if atr_current > 0 else 0
+                                            # Bloc de seguridad in-flight (PST v7.0)
+                                            self.portfolio.register_in_flight(self.symbol)
                                             
-                                            await self.executor.execute_trade(
-                                                self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode
-                                            )
-                                            await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
-                                            
-                                            # NOTIFICACIÓN TELEGRAM (Ph3)
-                                            if s_score >= 80: # Solo ALERTAS VIP
-                                                asyncio.create_task(notif_mgr.send_signal_alert(
-                                                    self.symbol, s_name, s_score, sig_type_str, 
-                                                    round(sl_dist, 5), round(tp_dist, 5),
-                                                    s_meta.get('factors_detailed', [])
-                                                ))
-                                            
-                                            # Marcar visualmente
-                                            signal = sig_val
-                                            strategy_name = s_name
+                                            try:
+                                                # SL/TP dinámico basado en ATR (si la estrategia lo provee o default)
+                                                atr_current = s_result.get("atr", 0)
+                                                if atr_current == 0: atr_current = atr_val # Fallback 1: Market ATR
+
+                                                # Fallback 2: Absolute Price fallback if ATR is still 0 (Crucial for Stocks/Indices)
+                                                if atr_current <= 0 and price > 0:
+                                                    logger.warning(f"⚠️ [SAFETY] ATR 0 detected for {self.symbol}. Using 0.5% price fallback.")
+                                                    atr_current = price * 0.005 
+                                                
+                                                # SAFETY PAD: Aumentar distancia para Acciones/Indices para evitar "Invalid Stops"
+                                                sl_mult = SL_ATR_MULTIPLIER
+                                                tp_mult = TP_ATR_MULTIPLIER
+                                                
+                                                # Si es simbolo largo (Acciones) o Indices, damos mas aire
+                                                if len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol:
+                                                    sl_mult = 3.5  # Antes 2.0
+                                                    tp_mult = 5.0  # Antes 3.0
+                                                
+                                                sl_dist = atr_current * sl_mult 
+                                                
+                                                # --- NEW: SOPORTE PARA TP TÉCNICO ---
+                                                tp_price_target = s_result.get("tp_price", 0)
+                                                if tp_price_target > 0:
+                                                    # Calcular distancia exacta al objetivo técnico
+                                                    tp_dist = abs(price - tp_price_target)
+                                                    logger.info(f"🎯 [TECHNICAL TP] {self.symbol} usando objetivo: {tp_price_target:.5f} (Dist: {tp_dist:.5f})")
+                                                else:
+                                                    tp_dist = atr_current * tp_mult 
+
+                                                # Asegurar distancia mínima absoluta para evitar code 10016 (Invalid Stops)
+                                                # En lugar de hardcodear 0.20, usamos un % del precio para ser compatible con Crypto y Forex
+                                                min_dist = price * 0.0015 # 0.15% del precio como mínimo absoluto
+                                                if sl_dist < min_dist: sl_dist = min_dist
+                                                if tp_dist < min_dist: tp_dist = min_dist
+                                                
+                                                await self.executor.execute_trade(
+                                                    self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode
+                                                )
+                                                await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
+                                                
+                                                # Marcar visualmente
+                                                signal = sig_val
+                                                strategy_name = s_name
+                                            except Exception as e:
+                                                logger.error(f"❌ Fallo crítico en ejecución para {self.symbol}: {e}")
+                                            finally:
+                                                # Liberamos tras un tiempo prudencial (30s) para asegurar que MT5 refleje la posición
+                                                # y evitar que el siguiente ciclo de 10s dispare de nuevo si hay latencia.
+                                                async def delayed_clear(sym):
+                                                    await asyncio.sleep(30)
+                                                    self.portfolio.clear_in_flight(sym)
+                                                
+                                                asyncio.create_task(delayed_clear(self.symbol))
                                         else:
+                                            # Bloc por Riesgo/Portafolio
                                             if s_score >= 70:
                                                  await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_{sig_type_str}", s_score, price)
+                                                 best_metadata["blocked_reason"] = "RIESGO/PORTFOLIO"
+                                                 current_score = 60 # Visual Cap
                         
                         except Exception as e:
                             logger.exception(f"❌ [{self.symbol}] Error estrat {type(strat).__name__}: {e}")
@@ -490,15 +610,18 @@ async def sync_trades_task(db: PSTDatabase):
                             # Si existe, verificamos si está abierto (price_out = 0) para cerrarlo
                             is_open = await db.is_trade_open(d.position_id)
                             if is_open:
-                                await db.update_trade_cierre(d.position_id, d.price, d.profit + d.swap + d.commission)
-                                logger.info(f"✅ Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL: {d.profit}")
+                                total_pnl = d.profit + d.swap + d.commission
+                                await db.update_trade_cierre(d.position_id, d.price, total_pnl)
+                                logger.info(f"✅ Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL: {total_pnl:.2f}")
                                 
                                 # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0 para BE sucio), registrar en CooldownManager
-                                total_pnl = d.profit + d.swap + d.commission
                                 if total_pnl < -2.0: # TOLERANCIA BE: Perdonamos pérdidas menores a 2€ (comisiones/swap)
-                                    # Importar localmente si fuera necesario, o usar global
                                     from ..utils.cooldown_manager import cooldown_mgr
                                     cooldown_mgr.register_loss(d.symbol, duration_minutes=60)
+                                else:
+                                    # Hysteresis para trades en ganancia/BE (Evita Hyper-trading)
+                                    from ..utils.cooldown_manager import cooldown_mgr
+                                    cooldown_mgr.register_trade_finish(d.symbol, duration_minutes=15)
                                     
                                 count_synced += 1
                         else:
@@ -524,6 +647,26 @@ async def sync_trades_task(db: PSTDatabase):
                 
                 if count_synced > 0 or count_imported > 0:
                     logger.info(f"🔄 Sync Report: {count_synced} cerrados, {count_imported} importados.")
+                
+                # --- NEW: STALE TRADES AUTO-CLEANUP ---
+                # Buscamos trades que la DB cree que están abiertos
+                open_db_trades = await db.get_active_trades()
+                if open_db_trades:
+                    import MetaTrader5 as mt5 # Ref
+                    current_positions = mt5.positions_get()
+                    active_tickets = [p.ticket for p in current_positions] if current_positions else []
+                    
+                    for t in open_db_trades:
+                        ticket = t.get('ticket')
+                        if ticket and ticket not in active_tickets:
+                            # El trade no está en MT5. Si es viejo (> 12h), lo cerramos "en falso" para liberar el bot
+                            try:
+                                time_in = datetime.fromisoformat(t['time_in'])
+                                if (datetime.now() - time_in).total_seconds() > 43200: # 12 horas
+                                    logger.warning(f"🧹 [CLEANUP] Cerrando trade huérfano en DB: {t['symbol']} (Ticket {ticket})")
+                                    await db.update_trade_cierre(ticket, 0.0, 0.0)
+                            except:
+                                pass # Formato de fecha inv. o error
             else:
                  logger.debug("🔍 Escaneando historial mt5: 0 deals encontrados.")
             
@@ -535,14 +678,39 @@ async def sync_trades_task(db: PSTDatabase):
             await asyncio.sleep(30)
 
 async def global_trade_management(executor: PSTExecutor):
-    """Tarea periódica para gestionar todas las posiciones abiertas."""
-    logger.info("🛡️ Iniciando Sistema de Protección Dinámica (Trailing/BE)...")
+    """Tarea periódica para gestionar todas las posiciones abiertas y el Drawdown Diario."""
+    from ..config import DAILY_LOSS_EXIT_USD
+    logger.info("🛡️ Iniciando Sistema de Protección Dinámica y Drawdown Diario...")
     while True:
         try:
+            # A. Gestión de Trailing/BE individual
             await executor.manage_active_trades()
-            await asyncio.sleep(10) # Revisión cada 10 segundos
+            
+            # B. Monitorización de PnL Diario (Seguro FTMO)
+            # Solo chequeamos si no estamos ya bloqueados
+            is_locked = await executor.portfolio.is_daily_locked()
+            if not is_locked:
+                acc = await executor.portfolio.get_account_status()
+                if acc and "daily_pnl" in acc:
+                    daily_pnl = acc["daily_pnl"]
+                    
+                    # Si la pérdida diaria (negativa) supera el límite
+                    if daily_pnl <= -DAILY_LOSS_EXIT_USD:
+                        logger.critical(f"🛑 [DRAWDOWN DIARIO] Pérdida de ${abs(daily_pnl):.2f} alcanzada! Límite: ${DAILY_LOSS_EXIT_USD}")
+                        
+                        # 1. Cierre de Emergencia
+                        await executor.panic_close_all()
+                        
+                        # 2. Bloqueo Persistente
+                        await executor.portfolio.set_daily_lock()
+                        
+                        # 3. Notificación (Opcional, se puede añadir Telegram aquí)
+                        from ..utils.notification_manager import notif_mgr
+                        await notif_mgr.send_simple_alert(f"🚨 [PANIC CLOSE] Operativa cerrada. Pérdida Diaria: ${abs(daily_pnl):.2f}. Bot BLOQUEADO hasta mañana.")
+            
+            await asyncio.sleep(10) # Revisión recurrente
         except Exception as e:
-            logger.error(f"❌ Error en gestión global de trades: {e}")
+            logger.error(f"❌ Error en gestión global de trades/drawdown: {e}")
             await asyncio.sleep(10)
 
 async def start_v6(symbols: List[str]):
@@ -551,7 +719,8 @@ async def start_v6(symbols: List[str]):
     db = PSTDatabase()
     await db.initialize()
     
-    portfolio = PortfolioManager()
+    from ..config import MAX_RISK_PCT, MAX_DRAWDOWN_PCT
+    portfolio = PortfolioManager(db=db, max_risk_pct=MAX_RISK_PCT, max_drawdown_pct=MAX_DRAWDOWN_PCT)
 
     success = await init_mt5_async()
     if not success:
