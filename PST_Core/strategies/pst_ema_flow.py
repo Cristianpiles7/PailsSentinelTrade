@@ -11,8 +11,8 @@ from ..utils.tech_utils import get_asset_class
 def get_mtr_data(df_in, tf_minutes=5):
     if df_in is None or len(df_in) < 14: return None
     try:
-        # DEFENSIVE: Ensure numeric and handle NaNs
-        df_clean = df_in[['high', 'low', 'close', 'tick_volume']].tail(60).copy()
+        # DEFENSIVE: Ensure numeric and handle NaNs (Warmup increased for ADX precision)
+        df_clean = df_in[['high', 'low', 'close', 'tick_volume']].tail(200).copy()
         df_clean = df_clean.ffill().fillna(0)
         
         if len(df_clean) < 14: return None
@@ -101,6 +101,8 @@ class PSTEMAFlow:
         P_ATR_MARGIN = 0.15
         P_VOL_MULT = 1.5
         P_H1_PENALTY = 15
+        
+        block_reasons = [] # Trackers de por qué no operamos (Fase 55+)
         
         # OVERRIDES
         if asset_class == "INDEX":
@@ -402,13 +404,22 @@ class PSTEMAFlow:
         mtr_m15 = get_mtr_data(df_m15, tf_minutes=15)
         mtr_h1 = get_mtr_data(data_input.get('h1'), tf_minutes=60) if isinstance(data_input, dict) else None
         
+        # --- NEW: SESSION & VSA ANALYSIS (FASE 55) ---
+        from ..utils.tech_utils import get_market_session, detect_absorption
+        session_name = "UNKNOWN"
+        if isinstance(data_input, dict) and 'time' in df.columns:
+            last_dt = pd.to_datetime(df['time'].iloc[-1], unit='s', utc=True)
+            session_name = get_market_session(last_dt)
+        
+        abs_type, is_climax = detect_absorption(df)
+        
         # --- MTF MOMENTUM (ADX DYNAMIC V2) ---
         adx_pts = 0
         adx_desc = []
         m5_adx = mtr_m5['adx'] if mtr_m5 else 0
         if mtr_m5: adx_desc.append(f"M5:{m5_adx:.1f}")
         if mtr_m15: adx_desc.append(f"M15:{mtr_m15['adx']:.1f}")
-        if mtr_h1: adx_desc.append(f"H1:{mtr_h1['h1']:.1f}" if 'h1' in mtr_h1 else f"H1:{mtr_h1['adx']:.1f}")
+        if mtr_h1: adx_desc.append(f"H1:{mtr_h1['adx']:.1f}")
         
         # A. M5 Sliding Scale
         if m5_adx < 15: adx_pts -= 20 # Bloqueo por falta de tendencia
@@ -430,11 +441,12 @@ class PSTEMAFlow:
             "score": adx_pts
         }
 
-        # GUARD: Hard ADX Gate (Strict Trend Requirement)
         adx_gate = m5_adx >= (P_ADX_THR - 5) 
         if not adx_gate:
             internal_gate_failed = True
-            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO ADX", "v": f"Tendencia insuficiente ({m5_adx:.1f} < {P_ADX_THR-5})", "score": -20})
+            reason = f"ADX insuficiente ({m5_adx:.1f} < {P_ADX_THR-5})"
+            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO ADX", "v": reason, "score": -20})
+            block_reasons.append(reason)
 
         # --- MTF VOLUME (DYNAMIC V2) ---
         vol_pts = 0
@@ -463,11 +475,31 @@ class PSTEMAFlow:
             "score": vol_pts
         }
 
-        # GUARD: Hard Volume Gate (Strict Liquidity Requirement)
         vol_gate = m5_vol >= 0.8 or h1_vol >= 1.5 
         if not vol_gate:
             internal_gate_failed = True
-            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO VOLUMEN", "v": f"Sin interés inst. ({m5_vol:.1f}x)", "score": -20})
+            reason = f"Sin interés inst. (M5 Vol:{m5_vol:.1f}x)"
+            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO VOLUMEN", "v": reason, "score": -20})
+            block_reasons.append(reason)
+            
+        # --- SESSION MOMENTUM (FASE 55) ---
+        # London y NY/Overlap son los reyes de la tendencia. Asian castiga.
+        session_pts = 0
+        if session_name in ["OVERLAP", "LONDON", "NY"]:
+            session_pts = 10
+            factor_groups["MOMENTO"] = [{"k": "Plaza Operativa", "v": f"Alta Liquidez ({session_name})", "score": session_pts}]
+        elif session_name == "ASIAN":
+            session_pts = -25
+            factor_groups["MOMENTO"] = [{"k": "Plaza Operativa", "v": "Baja Liquidez (ASIAN)", "score": session_pts}]
+        else:
+            factor_groups["MOMENTO"] = []
+
+        # --- VSA INSTITUTIONAL CLIMAX (FASE 55) ---
+        vsa_pts = 0
+        if abs_type:
+            # We don't know the entry direction yet until net_score comparison, but VSA is universally powerful. 
+            # We will award points conditionally below. Keep record.
+            pass
 
         # --- PRELIMINARY SCORE CALCULATION ---
         bull_score = bull_base
@@ -519,11 +551,21 @@ class PSTEMAFlow:
         if not factor_groups["ESTRUCTURA"]:
              p_type = "Alcista" if direction == 1 else "Bajista"
              factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": f"Sesgo {p_type}", "score": 0}
+             
+        # Eval VSA (Now we know the direction)
+        if direction != 0 and abs_type:
+            abs_match = (direction == 1 and abs_type == "BUY_ABS") or (direction == -1 and abs_type == "SELL_ABS")
+            if abs_match:
+                 vsa_pts = 35 if is_climax else 15
+                 txt = "CLÍMAX INSTITUCIONAL" if is_climax else "Absorción a Favor"
+                 factor_groups["MOMENTO"].append({"k": "VSA Trigger", "v": txt, "score": vsa_pts})
 
         # --- UNIFIED FILTER EVALUATION ---
         # Ensure we always sum bonuses
         net_score += adx_pts
         net_score += vol_pts
+        net_score += session_pts
+        net_score += vsa_pts
 
         # 1. STICKY ALERT: If we have a setup, ensure score doesn't fall below a visible threshold
         if best_setup and net_score < 40 and not internal_gate_failed:
@@ -583,21 +625,28 @@ class PSTEMAFlow:
             net_score += 15
             factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": "M15 Confirmada", "score": 15}
 
-        # 4. H1 FRICTION
+        # 4. H1 FRICTION (FASE 55 - FRACTAL ALIGNMENT)
         df_h1 = data_input.get('h1') if isinstance(data_input, dict) else None
         if mtr_h1 and df_h1 is not None and len(df_h1) > 50:
              h1_ema50 = ta.ema(df_h1['close'], length=50).iloc[-1]
              h1_close = df_h1['close'].iloc[-1]
              h1_trend = 1 if h1_close > h1_ema50 else -1
+             h1_adx = mtr_h1['adx'] if 'adx' in mtr_h1 else 0
+             
              is_type_a_reversal = base_event and "Type A" in base_event.get("v", "")
              
              if direction != h1_trend:
-                 if is_type_a_reversal:
+                 # Si la tendencia contraria de H1 es MUY fuerte (ADX > 30), bloqueo absoluto
+                 if h1_adx > 30:
+                     internal_gate_failed = True
+                     factor_groups["VALIDACION"].append({"k": "Bloqueo Fractal H1", "v": f"Imparable en contra (ADX {h1_adx:.1f})", "score": -50})
+                     net_score -= 50
+                 elif is_type_a_reversal:
                      factor_groups["VALIDACION"].append({"k": "Fricción H1 (Filtro)", "v": "Ignorada (Giro Tipo A)", "score": 0})
                  else:
                       penalty_h1 = P_H1_PENALTY
                       net_score -= penalty_h1
-                      factor_groups["VALIDACION"].append({"k": "Fricción H1 (Filtro)", "v": "Contratendencia", "score": -penalty_h1})
+                      factor_groups["VALIDACION"].append({"k": "Momento H1", "v": "Contratendencia Débil", "score": -penalty_h1})
 
         # 4b. VOLUME CONFIRMATION (Institutional Backing)
         # User Req: Crisis WR Fix - Require at least 1.2 relative volume
@@ -662,7 +711,9 @@ class PSTEMAFlow:
             bb_u = mtr_m5.get('bb_u', 0) if mtr_m5 else 0
             if bb_u > 0 and latest_c >= bb_u:
                 internal_gate_failed = True # No bloquea pero penaliza fuertemente para evitar tops
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": "Agotamiento (Techo BB)", "score": -35})
+                reason = "Agotamiento (Techo Bollinger)"
+                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": reason, "score": -35})
+                block_reasons.append(reason)
                 net_score -= 35
         elif direction == -1:
             fail_ema21 = latest_c >= latest_ema21
@@ -686,7 +737,9 @@ class PSTEMAFlow:
             bb_l = mtr_m5.get('bb_l', 0) if mtr_m5 else 0
             if bb_l > 0 and latest_c <= bb_l:
                 internal_gate_failed = True
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": "Agotamiento (Suelo BB)", "score": -35})
+                reason = "Agotamiento (Suelo Bollinger)"
+                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": reason, "score": -35})
+                block_reasons.append(reason)
                 net_score -= 35
 
         # --- FINAL DECISION ---
@@ -705,7 +758,7 @@ class PSTEMAFlow:
         rsi_exhausted = (direction == 1 and curr_rsi > 70) or (direction == -1 and curr_rsi < 30)
         
         # Filtro 2: Anti-Chasing (Distancia excesiva a la media rápida)
-        # Si el precio se ha alejado demasiado (>1.2 ATR), el movimiento ya está maduro.
+        # Convertimos is_chasing de MODO BLOQUEO a MODO STALKING
         is_chasing = dist_ema21 > (current_atr * 1.2)
         
         if direction != 0:
@@ -715,24 +768,43 @@ class PSTEMAFlow:
                 factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO RSI", "v": f"Agotamiento ({cause})", "score": -50})
             
             if is_chasing:
-                internal_gate_failed = True
-                factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO CHASING", "v": f"Lejos de EMA21 ({dist_ema21/current_atr:.1f} ATR)", "score": -50})
-
-        # --- NEW: VISUAL SCORE CAPPING ---
-        # Si el bot decide NO entrar por filtros de seguridad (Pasivo o Gates), 
-        # limitamos el score a 65 para que se vea amarillo en el dashboard y no confunda al usuario.
-        if is_passive or internal_gate_failed:
-            # User Req: If blocked/passive, score must be < 80 and clearly not trade. 
-            # We use 65 to keep it in the "Warning/Yellow" zone but below the 75 threshold.
-            if score >= 70:
-                score = 65
-                logger.debug(f"⚖️ [VISUAL CAP] {symbol} score limitado de {net_score:.1f} a 65 (Bloqueo por Filtros).")
+                # Ya NO fallamos el internal_gate. Pasamos el score, pero habilitamos is_chasing para triggerear el STALKING posterior.
+                factor_groups["ADVERTENCIAS"].append({"k": "PULLBACK REQUERIDO", "v": f"Dist. EMA21 {dist_ema21/current_atr:.1f} ATR", "score": -10})
+                net_score -= 10 # Pequeña penalización por esperar, pero mantiene el score alto (>80) para que el user vea el setup
 
         # ENTRY RULES: Score >= 75 AND not passive AND gates passed
-        if score >= THRESHOLD and not is_passive and not internal_gate_failed:
-            entry = direction
-            factor_groups["ESTADO"] = {"k": "Estado", "v": "ORDEN ACTIVADA", "score": 0}
+        is_stalking = False
         
+        if score >= THRESHOLD and not is_passive and not internal_gate_failed:
+             if is_chasing:
+                 # En lugar de bloquear la entrada bruscamente, el bot se queda "acechando" un pullback
+                 is_stalking = True
+                 entry = 0 # No disparamos aun
+                 factor_groups["ESTADO"] = {"k": "Estado", "v": "ACECHANDO PULLBACK", "score": 0}
+                 block_reasons.append(f"Esperando Pullback EMA21 ({dist_ema21/current_atr:.1f} ATR)")
+                 logger.info(f"🐺 [EMA STALKING] {symbol} Score={score}% - Setup OK pero esperando pullback a EMA21 (Dist: {dist_ema21/current_atr:.1f} ATR). No se dispara aun.")
+             else:
+                 entry = direction
+                 factor_groups["ESTADO"] = {"k": "Estado", "v": "ORDEN ACTIVADA", "score": 0}
+                 logger.info(f"⚡ [EMA ENTRY] {symbol} Score={score}% - Disparando orden {'+1=BUY' if direction==1 else '-1=SELL'}")
+        elif is_passive:
+            factor_groups["ESTADO"] = {"k": "Estado", "v": "Mantenimiento Pasivo", "score": 0}
+            if score >= 70: logger.info(f"🚫 [EMA BLOQUEADO-PASIVO] {symbol} Score={score}% - Tendencia pasiva, sin setup activo")
+        elif internal_gate_failed:
+            factor_groups["ESTADO"] = {"k": "Estado", "v": "Bloqueo por Seguridad", "score": 0}
+            if score >= 70: logger.info(f"🚫 [EMA BLOQUEADO-GATE] {symbol} Score={score}% - Gate de seguridad activo (RSI/ADX/H1/BB). Ver breakdown.")
+
+        # --- CAP VISUAL: Si no hay entrada real, el score no puede superar 74 ---
+        # Razón: Un score >= 75 en el frontend indica "LISTO PARA OPERAR".
+        # Si estamos en STALKING, PASIVO o con gate, cappear para no confundir.
+        if entry == 0:
+            score = min(score, 74)
+            # Inyectar motivo principal de bloqueo en el UI si el score es alto
+            if score >= 70 or internal_gate_failed or is_stalking:
+                txt_reason = ", ".join(block_reasons) if block_reasons else ("Sin setup claro" if not is_passive else "Mantenimiento pasivo")
+                factor_groups["BLOCKER"] = {"k": "MOTIVO DE BLOQUEO", "v": txt_reason, "score": 0}
+
+
         # --- CONSTRUCT FINAL FACTORS LIST (Explicit Layout & Unique) ---
         factors_detailed = []
 
@@ -750,11 +822,14 @@ class PSTEMAFlow:
         add_unique_f(factors_detailed, m5_ev)
         add_unique_f(factors_detailed, m15_ev)
 
-        # 2. ROW 2: STATUS & STRUCTURE
+        # 2. ROW 2: STATUS & STRUCTURE & BLOCKER
         st_ev = factor_groups.get("ESTADO") or {"k": "Estado", "v": "Analizando", "score": 0}
         str_ev = factor_groups.get("ESTRUCTURA") or {"k": "Estructura", "v": "Sincronizando", "score": 0}
+        bl_ev = factor_groups.get("BLOCKER")
+        
         add_unique_f(factors_detailed, st_ev)
         add_unique_f(factors_detailed, str_ev)
+        if bl_ev: add_unique_f(factors_detailed, bl_ev)
 
         # 3. THE REST (Ordered)
         ordered_keys = ["FUERZA", "VOLUMEN", "SETUP_GENERIC", "MOMENTO", "VALIDACION", "ADVERTENCIAS"]
@@ -770,10 +845,21 @@ class PSTEMAFlow:
         for f in factors_detailed:
              breakdown[f['k']] = f"{f['v']} ({'+' if f['score'] >= 0 else ''}{f['score']})"
 
+        # Mensaje de Estatus Principal
+        status_msg = "Estudiando..."
+        if is_passive:
+             status_msg = "Esperando Setup (Pasivo)"
+        elif internal_gate_failed:
+             status_msg = "Filtrado (Seguridad)"
+        elif is_stalking:
+             status_msg = "Acechando Pullback (STALKING)"
+        elif entry != 0:
+             status_msg = "Setup Activo"
+
         metadata = {
             "strategy": self.STRATEGY_NAME,
             "score": score,
-            "total_score": score,
+            "total_score": score,  # Now strictly the RAW score
             "score_breakdown": breakdown,
             "factors_detailed": factors_detailed,
             "can_entry": entry != 0,
@@ -784,7 +870,7 @@ class PSTEMAFlow:
             "rsi": round(curr_rsi, 1),
             "bb_u": round(mtr_m5.get('bb_u', 0) if mtr_m5 else 0, 2),
             "bb_l": round(mtr_m5.get('bb_l', 0) if mtr_m5 else 0, 2),
-            "status": "Esperando Setup (Pasivo)" if is_passive else ("Setup Activo" if entry != 0 else "Filtros fallidos"),
+            "status": status_msg,
             "direction": direction
         }
 

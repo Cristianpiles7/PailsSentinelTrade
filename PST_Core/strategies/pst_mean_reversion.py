@@ -132,20 +132,22 @@ class PSTMeanReversion:
         signal_type = "NEUTRAL"
         
         # --- 4.1 FILTRO MAESTRO: ADX (BLOQUEO) ---
-        # Si ADX < 25 -> Ideal para rangos.
         # Si ADX > 50 -> Bloqueo total (Tendencia imparable).
-        # Si 25 < ADX < 50 -> Entrar con cuidado (solo si hay agotamiento extremo).
         is_adx_extreme = adx_val > P_ADX_MAX
-        is_adx_high = adx_val > 30
         
+        gate_failed = False
+        block_reasons = []
+
         if is_adx_extreme:
-             factor_groups["ENTORNO"] = {"k": "Filtro ADX", "v": f"Tendencia Fuerte ({adx_val:.1f})", "score": -100}
-             return self._build_result(0, list(filter(None, factor_groups.values())), "Bloqueado por Tendencia")
+             reason = f"Tendencia Fuerte (ADX:{adx_val:.1f} > {P_ADX_MAX})"
+             factor_groups["ENTORNO"] = {"k": "Filtro ADX", "v": reason, "score": -50}
+             block_reasons.append(reason)
+             gate_failed = True # NO EARLY RETURN. Computamos el score normal pero bloqueamos la entrada.
 
         # --- 4.2 Métricas de Entorno (Siempre visibles) ---
         from ..utils.tech_utils import detect_divergence, detect_absorption
         div_type = detect_divergence(df)
-        abs_type = detect_absorption(df)
+        abs_type, is_climax = detect_absorption(df)
         
         # Divergencia Info
         if div_type:
@@ -154,10 +156,11 @@ class PSTMeanReversion:
         else:
             factor_groups["DIVERGENCIA"] = {"k": "Divergencia", "v": "No detectada", "score": 0}
             
-        # Absorción Info
+        # Absorción Info (VSA)
         if abs_type:
-            score_abs = 15
-            factor_groups["ABSORCION"] = {"k": "Absorción", "v": "Presión Institucional", "score": score_abs}
+            score_abs = 25 if is_climax else 15
+            climax_txt = " (CLÍMAX VSA)" if is_climax else ""
+            factor_groups["ABSORCION"] = {"k": "Absorción", "v": f"Presión Institucional{climax_txt}", "score": score_abs}
         else:
             factor_groups["ABSORCION"] = {"k": "Absorción", "v": "Neutro", "score": 0}
 
@@ -291,14 +294,24 @@ class PSTMeanReversion:
         else:
             target_tp = 0
 
-        if final_score >= 80:
+        if final_score >= 80 and not gate_failed:
              factor_groups["ESTADO"]["v"] = "Oportunidad Confirmada"
-             return self._build_result(final_score, factors_final, f"Reversión {signal_type}", entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
-        elif final_score >= 50:
+             return self._build_result(final_score, factors_final, f"Reversión {signal_type}", gate_failed, entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
+        
+        # Bloqueo Visual de Score (Capping)
+        capped_score = min(final_score, 74)
+        
+        # Inyectar motivo de bloqueo si el score era prometedor
+        if final_score >= 50 or gate_failed:
+            txt_reason = ", ".join(block_reasons) if block_reasons else "Sin gatillo claro"
+            factors_final.insert(2, {"k": "MOTIVO DE BLOQUEO", "v": txt_reason, "score": 0})
+
+        if final_score >= 50 and not gate_failed:
              factor_groups["ESTADO"]["v"] = "Vigilando Extremo"
-             return self._build_result(final_score, factors_final, "Posible Reversión", entry_signal="NEUTRAL", direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
+             return self._build_result(capped_score, factors_final, "Posible Reversión", gate_failed, entry_signal="NEUTRAL", direction=0, tp_price=target_tp)
         else:
-             return self._build_result(0, factors_final, "Rango Neutral", direction=0)
+             stat_msg = "Rango Neutral" if not gate_failed else "Bloqueo por Tendencia (Seguridad)"
+             return self._build_result(capped_score, factors_final, stat_msg, gate_failed, direction=0)
 
     def get_dynamic_targets(self, df, direction):
         """
@@ -357,12 +370,13 @@ class PSTMeanReversion:
                 "total_score": 0,
                 "score_breakdown": {"Estado": reason},
                 "factors_detailed": [],
-                "direction": 0
+                "direction": 0,
+                "gate_failed": False
             },
             "score": 0
         }
 
-    def _build_result(self, score, factors, status_msg, entry_signal="NEUTRAL", direction=0, tp_price=0):
+    def _build_result(self, score, factors, status_msg, gate_failed=False, entry_signal="NEUTRAL", direction=0, tp_price=0):
         entry = 1 if entry_signal == "BUY" else (-1 if entry_signal == "SELL" else 0)
         return {
             "entry": entry,
@@ -374,7 +388,9 @@ class PSTMeanReversion:
                 "total_score": score,
                 "score_breakdown": {"Estado": status_msg},
                 "factors_detailed": factors,
-                "can_entry": entry != 0,
+                "can_entry": (entry != 0) and not gate_failed,
+                "gate_failed": gate_failed,
+                "status": status_msg,
                 "direction": direction,
                 "tp_target": tp_price # Para mostrar en dashboard
             },

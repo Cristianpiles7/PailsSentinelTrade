@@ -29,7 +29,8 @@ ENABLED_STRATEGIES = [
     "PST-EMA-Flow",
     "PST-Channel-Master",
     "PST-Mean-Reversion",
-    "PST-AI-Oracle-Gemini",
-    "PST-AI-Oracle-Groq",
-    "PST-AI-Oracle-Ollama"
+    "PST-Liquidity-Hunter",
+    "PST-AI-Oracle-gemini",
+    "PST-AI-Oracle-groq",
+    "PST-AI-Oracle-ollama"
 ]

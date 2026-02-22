@@ -8,6 +8,7 @@ from ..strategies.pst_channel_master import PSTChannelMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
+from ..strategies.pst_liquidity_hunter import PSTLiquidityHunter # FASE 55
 from ..strategies.pst_ai_oracle import PSTAIOracle # NEW V6.5 AI
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
@@ -19,6 +20,7 @@ import json
 import numpy as np
 from ..utils.cooldown_manager import cooldown_mgr # Cooldown Import
 from ..utils.notification_manager import notif_mgr
+from .telegram_manager import telegram_bot
 
 # Configuración básica de logs para el Corazón PST
 logging.basicConfig(
@@ -42,6 +44,7 @@ class SymbolTask:
         self.channel_master = PSTChannelMaster()
         self.ema_flow = PSTEMAFlow()
         self.mean_reversion = PSTMeanReversion()
+        self.liquidity_hunter = PSTLiquidityHunter()
         
         # IA Dinámica (Selector por Símbolo)
         # Motor de IA Oráculo (Multi-Instancia para Competición)
@@ -52,7 +55,8 @@ class SymbolTask:
         # Lista maestra de todas las posibles estrategias instanciadas
         self._all_strategies = [
             self.ema_flow, 
-            self.mean_reversion, 
+            self.mean_reversion,
+            self.liquidity_hunter,
             self.ai_oracle_gemini,
             self.ai_oracle_groq,
             self.ai_oracle_ollama
@@ -121,10 +125,9 @@ class SymbolTask:
             # 0. Actualizar estrategias activas (Dinámico)
             await self.update_active_strategies()
 
-            # 0. Verificar si el símbolo sigue activo globalmente
-            is_active = await self.db.get_config(f"symbol_active_{self.symbol}", default="1")
-            if is_active == "0":
-                logger.info(f"🛑 Deteniendo tarea para {self.symbol} por desactivación global.")
+            # 0. Verificar si el símbolo sigue activo globalmente (Dashboard Toggle)
+            if not await self.db.is_symbol_active(self.symbol):
+                logger.info(f"🛑 Deteniendo tarea para {self.symbol} por desactivación desde Dashboard.")
                 self.running = False
                 break
             try:
@@ -272,6 +275,52 @@ class SymbolTask:
                     if (now - last_tick_time).total_seconds() > 7200: # 2 horas
                          is_market_open = False
 
+                    # === 3.1b AUTO-CIERRE ESTRATÉGICO POR FIN DE SESIÓN ===
+                    from .market_schedule import is_closing_soon
+                    is_closing, closing_reason = is_closing_soon(self.symbol)
+                    if is_closing:
+                        # Auto-liquidar y omitir trading
+                        positions = await get_positions_async()
+                        if positions:
+                            sym_positions = [p for p in positions if p.symbol == self.symbol]
+                            for p in sym_positions:
+                                p_type = "BUY" if p.type == 0 else "SELL"
+                                logger.info(f"🛑 [{self.symbol}] CIERRE FORZADO ANTES DE SESIÓN: {closing_reason}. Liquidando ticket {p.ticket} ({p_type}).")
+                                import MetaTrader5 as mt5
+                                tick = mt5.symbol_info_tick(p.symbol)
+                                order_type = mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+                                price = tick.bid if p.type == mt5.ORDER_TYPE_BUY else tick.ask
+                                
+                                request = {
+                                    "action": mt5.TRADE_ACTION_DEAL,
+                                    "symbol": p.symbol,
+                                    "volume": p.volume,
+                                    "type": order_type,
+                                    "position": p.ticket,
+                                    "price": price,
+                                    "magic": p.magic,
+                                    "comment": f"Auto {closing_reason[:15]}",
+                                    "type_time": mt5.ORDER_TIME_GTC,
+                                    "type_filling": mt5.ORDER_FILLING_IOC,
+                                }
+                                res = await send_order_async(request)
+                                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                                    logger.info(f"✅ [{self.symbol}] Liquidación completada: {res.deal}")
+                                    try:
+                                        await self.db.update_trade_exit(
+                                            ticket=p.ticket,
+                                            price_out=price,
+                                            profit=p.profit
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Error actualizando trade en DB: {e}")
+                                else:
+                                    logger.error(f"⚠️ [{self.symbol}] Fallo al liquidar: {res.comment if res else 'Unknown error'}")
+
+                        logger.debug(f"💤 [{self.symbol}] Mercado cerrando ({closing_reason}). Omitiendo señales.")
+                        await asyncio.sleep(60)
+                        continue
+
                     # Alineación de EMAs (RESTORADO)
                     ema_alignment = "NEUTRAL"
                     if ema21 > 0 and ema50 > 0:
@@ -372,6 +421,11 @@ class SymbolTask:
                         await asyncio.sleep(self.interval)
                         continue
 
+                    current_score = 0
+                    strategy_name = None
+                    best_metadata = {}
+                    all_factors = {} # NEW: Multi-Strategy factors
+
                     for strat in elite_strats:
                         try:
                             # Usar el ID específico si existe (para Multi-IA) o el nombre de clase
@@ -390,6 +444,12 @@ class SymbolTask:
                             # Inyectar nombre limpio en metadata
                             s_meta["strategy_display"] = STRAT_TRANS.get(s_name_raw, s_name_raw)
                             s_name = STRAT_TRANS.get(s_name_raw, s_name_raw)
+
+                            # Guardar factores y score para el Dashboard (Multi-Strategy Map)
+                            all_factors[strat_id] = {
+                                "score": s_score,
+                                "factors": s_meta.get("factors_detailed", [])
+                            }
 
                             # 3. Evaluar Ejecución (Trading Automático)
                             # Verificamos si la estrategia es apta para el régimen actual
@@ -420,6 +480,13 @@ class SymbolTask:
 
                             # 2. Actualizar mejor score para el HUD
                             if s_score > current_score:
+                                # --- NEW: TELEGRAM SIGNAL ALERT (FASE 52) ---
+                                # if s_score >= 80 and s_score > current_score:
+                                #     sig_type_str_alert = "BUY" if s_result.get("entry", 0) == 1 else "SELL" if s_result.get("entry", 0) == -1 else "ALERT"
+                                #     # Solo alertar si hay dirección clara
+                                #     if sig_type_str_alert != "ALERT":
+                                #         asyncio.create_task(telegram_bot.send_signal_alert(self.symbol, sig_type_str_alert, s_score, price, s_name))
+
                                 current_score = s_score
                                 strategy_name = s_name
                                 best_metadata = s_meta
@@ -427,6 +494,9 @@ class SymbolTask:
 
                             # Check rápido de trading mode
                             trading_mode = await self.db.get_config('trading_mode', 'AUTO')
+                            
+                            # Diagnostic log before the execution gate
+                            logger.debug(f"⚙️ [{self.symbol}] Execution Gate Check: is_strat_in_regime={is_strat_in_regime}, entry_signal={s_result.get('entry', 0)}, trading_mode='{trading_mode}', is_market_open={is_market_open}")
                             
                             if is_strat_in_regime and s_result.get("entry", 0) != 0 and trading_mode == 'AUTO' and is_market_open:
                                 
@@ -452,9 +522,9 @@ class SymbolTask:
                                               await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_NEWS_{sig_type_str}", s_score, price)
                                               current_score = 60 # Visual Cap
                                     else:
-                                        # Check Portfolio Limits
+                                        # Check Portfolio Limits & Pyramiding
                                         open_positions = await get_positions_async()
-                                        can_trade = await self.portfolio.can_open_trade(self.symbol, sig_type_str, open_positions)
+                                        can_trade = await self.portfolio.can_open_trade(self.symbol, sig_type_str, open_positions, s_name)
                                         
                                         if can_trade and s_score >= 70:
                                             # FIRE!
@@ -500,7 +570,7 @@ class SymbolTask:
                                                 if tp_dist < min_dist: tp_dist = min_dist
                                                 
                                                 await self.executor.execute_trade(
-                                                    self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode
+                                                    self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode, best_metadata
                                                 )
                                                 await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
                                                 
@@ -558,6 +628,19 @@ class SymbolTask:
                     if rsi_val == 0:
                         logger.warning(f"⚠️ [{self.symbol}] RSI es 0.0. Velas: {history_len}. Close[-1]: {price_h1}")
 
+                    # --- NEW: SENTINEL RADAR TELEMETRY ---
+                    # Guardamos un snapshot para que el Dashboard vea la intención operativa (incluso antes de disparar)
+                    best_dir_val = best_metadata.get("direction", 0)
+                    sig_direction = "BUY" if best_dir_val > 0 else ("SELL" if best_dir_val < 0 else "NONE")
+                    
+                    await self.db.save_radar_snapshot(
+                        symbol=self.symbol,
+                        score=current_score,
+                        regime=str(mode),
+                        direction=sig_direction,
+                        factors=all_factors # PASS ALL FACTORS DICT
+                    )
+
                     # Log en la Base de Datos para historial
                     await self.db.log_regime(self.symbol, mode, adx, tech_data=json.dumps(tech_data))
                     
@@ -613,6 +696,10 @@ async def sync_trades_task(db: PSTDatabase):
                                 total_pnl = d.profit + d.swap + d.commission
                                 await db.update_trade_cierre(d.position_id, d.price, total_pnl)
                                 logger.info(f"✅ Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL: {total_pnl:.2f}")
+                                
+                                # --- NEW: TELEGRAM CLOSURE ALERT (FASE 52) ---
+                                trade_type_str = "BUY" if d.type == 1 else "SELL" # DEAL_TYPE_BUY=0, SELL=1 (Cierre de un BUY es un SELL deal)
+                                asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
                                 
                                 # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0 para BE sucio), registrar en CooldownManager
                                 if total_pnl < -2.0: # TOLERANCIA BE: Perdonamos pérdidas menores a 2€ (comisiones/swap)
@@ -743,11 +830,32 @@ async def start_v6(symbols: List[str]):
 
     logger.info("💎 PST ASYNC CORE ONLINE 💎")
     
+    # --- CONFIGURACIÓN DE LOGS EN DB ---
+    try:
+        from ..utils.logger_utils import DBLogHandler
+        db_handler = DBLogHandler(db)
+        db_handler.setLevel(logging.INFO)
+        # Añadir al logger del orquestador y opcionalmente al root
+        logger.addHandler(db_handler)
+        logging.getLogger().addHandler(db_handler) # Capturar todo el sistema
+        logger.info("📝 Live Log Streaming: ACTIVE")
+    except Exception as e:
+        logger.warning(f"⚠️ No se pudo inicializar DBLogHandler: {e}")
+
     # Initialize Notification Manager with DB
     from ..utils.notification_manager import notif_mgr
     notif_mgr.db = db
     
     executor = PSTExecutor(db, portfolio)
+    
+    # --- NEW: INITIALIZE TELEGRAM LISTENER (FASE 52.2) ---
+    try:
+        from .telegram_manager import telegram_bot
+        # Pasamos executor porque contiene acceso a db, portfolio y funciones de trade
+        asyncio.create_task(telegram_bot.start_listener(executor))
+    except Exception as e:
+        logger.error(f"❌ Error lanzando Telegram Listener: {e}")
+
     # Crear tareas para cada símbolo pasando DB y Portfolio
     symbol_tasks = [SymbolTask(sym, db, portfolio, executor).run() for sym in symbols]
     

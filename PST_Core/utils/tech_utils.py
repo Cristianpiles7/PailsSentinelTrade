@@ -302,33 +302,56 @@ def detect_divergence(df, window=5, order=2):
 
     return None
 
+def get_market_session(dt_utc: datetime) -> str:
+    """
+    Identifica la sesión operativa activa basada en la hora UTC.
+    Retorna: 'ASIAN', 'LONDON', 'NY', 'OVERLAP' (London + NY)
+    """
+    hour = dt_utc.hour
+    
+    # Horarios simplificados (invierno/verano estándar)
+    # Tokyo: ~00:00 a 09:00 UTC
+    # London: ~08:00 a 16:30 UTC
+    # NY: ~13:30 a 20:00 UTC
+    
+    if 13 <= hour < 16:
+        return "OVERLAP" # London + NY (Máxima liquidez)
+    elif 8 <= hour < 13:
+        return "LONDON"
+    elif 16 <= hour <= 20:
+        return "NY"
+    else:
+        return "ASIAN" # Poca liquidez
+
 def detect_absorption(df, vol_rel_threshold=1.5):
     """
     Detecta absorción institucional: Alto volumen + Mecha grande + Cuerpo pequeño.
     Retorna: 'BUY_ABS' (Absorción en suelo), 'SELL_ABS' (Absorción en techo) o None
     """
-    if len(df) < 20: return None
+    if len(df) < 20: return None, False
     
     last = df.iloc[-1]
     import pandas_ta as ta
     vol_ma = ta.sma(df['tick_volume'], length=20).iloc[-1] if 'tick_volume' in df.columns else 1
     vol_rel = last['tick_volume'] / vol_ma if vol_ma > 0 else 0
     
-    if vol_rel < vol_rel_threshold: return None
+    if vol_rel < vol_rel_threshold: return None, False
     
     range_total = last['high'] - last['low']
     body = abs(last['close'] - last['open'])
     upper_wick = last['high'] - max(last['open'], last['close'])
     lower_wick = min(last['open'], last['close']) - last['low']
     
-    if range_total == 0: return None
+    if range_total == 0: return None, False
+    
+    is_climax = vol_rel >= 3.0 # Considerado Clímax Institucional (>300% volumen promedio)
     
     # ABSORCIÓN EN SUELO (Martillo con volumen)
     if lower_wick > (body * 2) and vol_rel > vol_rel_threshold:
-        return "BUY_ABS"
+        return "BUY_ABS", is_climax
     
     # ABSORCIÓN EN TECHO (Shooting star con volumen)
     if upper_wick > (body * 2) and vol_rel > vol_rel_threshold:
-        return "SELL_ABS"
+        return "SELL_ABS", is_climax
         
-    return None
+    return None, False
