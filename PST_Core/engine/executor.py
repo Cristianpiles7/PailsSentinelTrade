@@ -81,6 +81,20 @@ class PSTExecutor:
 
         # 3. Calcular Stop Loss y Lote con Volatilidad
         price = s_info.ask if signal_type == "BUY" else s_info.bid
+        
+        # --- NEW: OBTENCIÓN DE DATOS PARA CÁLCULOS TÉCNICOS ---
+        df_m5 = await fetch_rates_async(symbol, 5, 50)
+        current_atr = 0
+        ma_atr = 0
+        if df_m5 is not None and len(df_m5) >= 20:
+            atr_series = ta.atr(df_m5['high'], df_m5['low'], df_m5['close'], length=14)
+            current_atr = atr_series.iloc[-1]
+            ma_atr = atr_series.rolling(20).mean().iloc[-1]
+        
+        if current_atr == 0:
+            current_atr = stop_loss_atr / 2.5 # Fallback razonable
+            ma_atr = current_atr
+
         # --- NEW: SOPORTE PARA TP TÉCNICO Y SL ESTRUCTURAL ---
         # A. CALCULAR STOP LOSS ESTRUCTURAL (FASE 54)
         # Buscar el último mínimo o máximo relevante en las velas recientes
@@ -94,7 +108,7 @@ class PSTExecutor:
                 structural_sl = recent_low - (current_atr * 0.2) # Padding de seguridad
                 # Validar la distancia: no puede estar pegado, ni debe ser astronómico
                 dist_atr = (price - structural_sl) / current_atr
-                if 0.5 <= dist_atr <= (sl_m * 1.5):
+                if 1.5 <= dist_atr <= (sl_m * 1.5):
                     sl_price = structural_sl
                     structural_sl_found = True
                     logger.debug(f"📐 SL Estructural (BUY) fijado en {sl_price:.5f} (Swing Low)")
@@ -103,7 +117,7 @@ class PSTExecutor:
                 recent_high = df_m5['high'].tail(15).max()
                 structural_sl = recent_high + (current_atr * 0.2)
                 dist_atr = (structural_sl - price) / current_atr
-                if 0.5 <= dist_atr <= (sl_m * 1.5):
+                if 1.5 <= dist_atr <= (sl_m * 1.5):
                     sl_price = structural_sl
                     structural_sl_found = True
                     logger.debug(f"📐 SL Estructural (SELL) fijado en {sl_price:.5f} (Swing High)")
@@ -115,6 +129,17 @@ class PSTExecutor:
 
         # Recalcular SL Points reales para el dimensionamiento del lote
         sl_points = abs(price - sl_price) / s_info.point
+        
+        # --- NEW: SECURITY FLOOR FOR SL POINTS (FASE 56) ---
+        # Suelo del 0.08% para Stocks/Forex para evitar lotajes extremos por ruido
+        min_sl_dist = price * 0.0008 
+        min_sl_points = min_sl_dist / s_info.point
+        
+        if sl_points < min_sl_points:
+            logger.warning(f"⚠️ [SAFETY] SL muy ajustado ({sl_points:.1f} pts). Usando suelo de seguridad ({min_sl_points:.1f} pts).")
+            sl_points = min_sl_points
+            # Ajustamos sl_price para consistencia
+            sl_price = price - min_sl_dist if signal_type == "BUY" else price + min_sl_dist
         
         lot = self.portfolio.calculate_lot_size(
             acc["balance"], 
@@ -196,7 +221,7 @@ class PSTExecutor:
             # Capturamos contexto de 50 velas M15 para el Journal
             import json
             # time_out=0 para obtener los más recientes
-            context_rates = await fetch_rates_async(symbol, mt5.TIMEFRAME_M15, 0, 50)
+            context_rates = await fetch_rates_async(symbol, 15, 50)
             if context_rates is not None:
                 ohlc_list = []
                 for r in context_rates:

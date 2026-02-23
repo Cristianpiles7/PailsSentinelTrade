@@ -176,7 +176,9 @@ class PSTMeanReversion:
         
         # Volume Logic
         if vol_rel > 1.2:
-            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Alto ({vol_rel:.1f}x)", "score": 10}
+            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Explosivo ({vol_rel:.1f}x)", "score": 10}
+        elif vol_rel < 0.8:
+            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Insuficiente ({vol_rel:.1f}x)", "score": 0}
         else:
             factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Neutro ({vol_rel:.1f}x)", "score": 0}
 
@@ -298,13 +300,13 @@ class PSTMeanReversion:
              factor_groups["ESTADO"]["v"] = "Oportunidad Confirmada"
              return self._build_result(final_score, factors_final, f"Reversión {signal_type}", gate_failed, entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
         
-        # Bloqueo Visual de Score (Capping)
-        capped_score = min(final_score, 74)
+        # SIN BLOQUEO VISUAL (Cap removido para transparencia total)
+        capped_score = final_score
         
         # Inyectar motivo de bloqueo si el score era prometedor
         if final_score >= 50 or gate_failed:
-            txt_reason = ", ".join(block_reasons) if block_reasons else "Sin gatillo claro"
-            factors_final.insert(2, {"k": "MOTIVO DE BLOQUEO", "v": txt_reason, "score": 0})
+            txt_reason = ", ".join(block_reasons) if block_reasons else "Falta Gatillo Claro (Ej: Reingreso)"
+            factors_final.insert(0, {"k": "REGLA MAESTRA", "v": txt_reason, "score": -50 if gate_failed else 0})
 
         if final_score >= 50 and not gate_failed:
              factor_groups["ESTADO"]["v"] = "Vigilando Extremo"

@@ -39,6 +39,7 @@ class SymbolTask:
         self.executor = executor
         self.interval = interval
         self.running = True
+        self.active_stalking = {} # FASE 56: {strategy_id: {'direction': 1/-1, 'target_price': float, 'best_score': int}}
         self.classifier = RegimeClassifier()
         # Instanciar estrategias
         self.channel_master = PSTChannelMaster()
@@ -440,6 +441,41 @@ class SymbolTask:
                             s_score = s_result.get("score", 0)
                             s_meta = s_result.get("metadata", {})
                             s_name_raw = getattr(strat, 'STRATEGY_NAME', type(strat).__name__)
+                            strat_id = getattr(strat, 'STRAT_ID', type(strat).__name__)
+
+                            # --- NEW: STALKING LOGIC (ACECHO) ---
+                            is_stalking_signal = s_result.get("is_stalking", False)
+                            if is_stalking_signal:
+                                direction = s_result.get("direction", 0)
+                                # Buscamos la EMA21 en M5 como nivel de retroceso ideal
+                                target_price = ema21_series.iloc[-1] if 'ema21_series' in locals() else price
+                                self.active_stalking[strat_id] = {
+                                    'direction': direction,
+                                    'target_price': target_price,
+                                    'score': s_score,
+                                    'strategy_name': s_name_raw
+                                }
+                                logger.info(f"🐺 [STALKING] {self.symbol} vigilando {s_name_raw}. Esperando pullback a {target_price:.5f}")
+
+                            # Chequeo de activación de acecho previo
+                            if strat_id in self.active_stalking:
+                                stalk_data = self.active_stalking[strat_id]
+                                stalk_dir = stalk_data['direction']
+                                target = stalk_data['target_price']
+                                
+                                # Condición de activación: El precio toca o supera el nivel de la EMA21 (pullback)
+                                is_triggered = False
+                                if stalk_dir == 1 and price <= target: is_triggered = True
+                                elif stalk_dir == -1 and price >= target: is_triggered = True
+                                
+                                if is_triggered:
+                                    logger.info(f"⚡ [STALKING TRIGGER] {self.symbol} Pullback completado en {price:.5f}. Disparando {s_name_raw}.")
+                                    s_result["entry"] = stalk_dir
+                                    s_score = max(s_score, 85) # Forzamos score alto por cumplimiento de pullback
+                                    del self.active_stalking[strat_id]
+                                elif s_score < 40: # Si la señal muere completamente, abortamos acecho
+                                    logger.info(f"🧊 [STALKING CANCEL] {self.symbol} Señal de {s_name_raw} debilitada. Abortando acecho.")
+                                    del self.active_stalking[strat_id]
                             
                             # Inyectar nombre limpio en metadata
                             s_meta["strategy_display"] = STRAT_TRANS.get(s_name_raw, s_name_raw)
