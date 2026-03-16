@@ -12,3 +12,4 @@ fastapi
 uvicorn
 aiosqlite
 pydantic
+python-telegram-bot

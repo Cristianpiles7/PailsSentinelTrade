@@ -52,6 +52,7 @@ jobs:
           --hidden-import "uvicorn" `
           --hidden-import "aiosqlite" `
           --hidden-import "pydantic" `
+          --hidden-import "telegram" `
           PST_API/main.py
 
       - name: Build PST_LAUNCHER with PyInstaller
