@@ -1107,7 +1107,7 @@ def start_app():
         resizable=True,
         min_size=(1000, 700)
     )
-    webview.start(debug=True)
+    webview.start()
 
 if __name__ == "__main__":
     start_app()
