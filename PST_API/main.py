@@ -122,7 +122,7 @@ async def get_account():
     from datetime import datetime, time
     today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
     
-        closed_today = 0.0
+    closed_today = 0.0
     try:
         import aiosqlite
         async with aiosqlite.connect(db.db_path) as conn:
