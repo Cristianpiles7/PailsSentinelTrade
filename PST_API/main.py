@@ -1100,7 +1100,6 @@ if __name__ == "__main__":
         width=1280, 
         height=850,
         resizable=True,
-        min_size=(1000, 700),
-        debug=True
+        min_size=(1000, 700)
     )
-    webview.start()
+    webview.start(debug=True)
