@@ -12,7 +12,7 @@ class PSTChannelMaster:
     STRATEGY_TYPE = RegimeMode.TREND 
     WEIGHT = 2.0
 
-    async def calculate_signal(self, data_input, current_regime, user_levels=None):
+    async def calculate_signal(self, data_input, current_regime, user_levels=None, **kwargs):
         if isinstance(data_input, dict):
             df = data_input.get('m5')
         else:
@@ -169,7 +169,9 @@ class PSTChannelMaster:
         is_overextended = dist_ema50_pct > 0.8 # Umbral conservador: 0.8% de distancia a la EMA 50
 
         # Determinar Señal de Entrada (Solo Rupturas COHERENTES + MOMENTUM + NO SOBREEXTENDIDO)
-        if score_res >= 80 and act_res == "ROTURA":
+        threshold = kwargs.get('score_threshold') or 80
+        
+        if score_res >= threshold and act_res == "ROTURA":
             # RESISTENCIA ROTA -> COMPRA. 
             if close > chan_upper and is_green_candle:
                 if is_overextended:
@@ -184,7 +186,7 @@ class PSTChannelMaster:
                     metadata["factors_detailed"] = desc_res
                     logger.info(f"🎯 [ChannelMaster] SEÑAL COMPRA | Ruptura Confirmada @ {chan_upper:.2f}")
 
-        elif score_sup >= 80 and act_sup == "ROTURA":
+        elif score_sup >= threshold and act_sup == "ROTURA":
             # SOPORTE ROTO -> VENTA.
             if close < chan_lower and is_red_candle:
                 if is_overextended:

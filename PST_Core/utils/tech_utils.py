@@ -147,13 +147,23 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         progress = (THR_NEUTRAL - abs_dist_pct) / THR_NEUTRAL
         base_score = 10 + (progress * 50)
         score += base_score
-        factors.append({"k": "Proximidad", "v": f"{abs_dist_pct:.2f}%", "score": round(base_score)})
+        factors.append({
+            "k": "Proximidad", 
+            "v": f"{abs_dist_pct:.2f}%", 
+            "score": round(base_score),
+            "desc": "Mide qué tan cerca está el precio del nivel objetivo. A menor distancia, mayor es la probabilidad de interacción inmediata."
+        })
         
         # RSI Context
         rsi_ok = (is_res and rsi > 60) or (is_sup and rsi < 40)
         if rsi_ok:
             score += 15
-            factors.append({"k": "RSI Context", "v": f"OK ({rsi:.1f})", "score": 15})
+            factors.append({
+                "k": "RSI Context", 
+                "v": f"OK ({rsi:.1f})", 
+                "score": 15,
+                "desc": "El RSI confirma que el precio tiene espacio para moverse hacia el nivel o que está mostrando la presión adecuada para un rebote/rotura."
+            })
         else:
             factors.append({"k": "RSI Context", "v": f"Neutral ({rsi:.1f})", "score": 0})
             
@@ -181,7 +191,12 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         # FILTROS ESTRICTOS
         if vol_val > vol_ma:
             score += 25
-            factors.append({"k": "Volumen", "v": "Confirmado (Vol > MA)", "score": 25})
+            factors.append({
+                "k": "Volumen", 
+                "v": "Confirmado (Vol > MA)", 
+                "score": 25,
+                "desc": "El volumen superior a la media de 20 periodos valida la rotura como un movimiento con participación institucional real."
+            })
         else:
             factors.append({"k": "Volumen", "v": "Bajo (No Confirmado)", "score": 0})
         
@@ -196,7 +211,12 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         if adx >= 25:
             bonus = 20
             score += bonus
-            factors.append({"k": "Fuerza ADX", "v": f"Alta ({adx:.1f})", "score": bonus})
+            factors.append({
+                "k": "Fuerza ADX", 
+                "v": f"Alta ({adx:.1f})", 
+                "score": bonus,
+                "desc": "Un ADX por encima de 25 indica una tendencia con inercia, fundamental para que la ruptura no sea un falso movimiento."
+            })
         elif adx < 18 and adx > 0:
             penalty = 15
             score -= penalty
@@ -302,33 +322,168 @@ def detect_divergence(df, window=5, order=2):
 
     return None
 
+def get_market_session(dt_utc: datetime) -> str:
+    """
+    Identifica la sesión operativa activa basada en la hora UTC.
+    Retorna: 'ASIAN', 'LONDON', 'NY', 'OVERLAP' (London + NY)
+    """
+    hour = dt_utc.hour
+    
+    # Horarios simplificados (invierno/verano estándar)
+    # Tokyo: ~00:00 a 09:00 UTC
+    # London: ~08:00 a 16:30 UTC
+    # NY: ~13:30 a 20:00 UTC
+    
+    if 13 <= hour < 16:
+        return "OVERLAP" # London + NY (Máxima liquidez)
+    elif 8 <= hour < 13:
+        return "LONDON"
+    elif 16 <= hour <= 20:
+        return "NY"
+    else:
+        return "ASIAN" # Poca liquidez
+
 def detect_absorption(df, vol_rel_threshold=1.5):
     """
     Detecta absorción institucional: Alto volumen + Mecha grande + Cuerpo pequeño.
     Retorna: 'BUY_ABS' (Absorción en suelo), 'SELL_ABS' (Absorción en techo) o None
     """
-    if len(df) < 20: return None
+    if len(df) < 20: return None, False
     
     last = df.iloc[-1]
     import pandas_ta as ta
     vol_ma = ta.sma(df['tick_volume'], length=20).iloc[-1] if 'tick_volume' in df.columns else 1
     vol_rel = last['tick_volume'] / vol_ma if vol_ma > 0 else 0
     
-    if vol_rel < vol_rel_threshold: return None
+    if vol_rel < vol_rel_threshold: return None, False
     
     range_total = last['high'] - last['low']
     body = abs(last['close'] - last['open'])
     upper_wick = last['high'] - max(last['open'], last['close'])
     lower_wick = min(last['open'], last['close']) - last['low']
     
-    if range_total == 0: return None
+    if range_total == 0: return None, False
+    
+    is_climax = vol_rel >= 3.0 # Considerado Clímax Institucional (>300% volumen promedio)
     
     # ABSORCIÓN EN SUELO (Martillo con volumen)
     if lower_wick > (body * 2) and vol_rel > vol_rel_threshold:
-        return "BUY_ABS"
+        return "BUY_ABS", is_climax
     
     # ABSORCIÓN EN TECHO (Shooting star con volumen)
     if upper_wick > (body * 2) and vol_rel > vol_rel_threshold:
-        return "SELL_ABS"
+        return "SELL_ABS", is_climax
         
-    return None
+    return None, False
+
+def detect_fvg(df):
+    """
+    Detecta Fair Value Gaps (FVG) entre 3 velas.
+    Un FVG ocurre cuando el Bajo de la vela 1 no alcanza el Alto de la vela 3 (Bullish)
+    o el Alto de la vela 1 no alcanza el Bajo de la vela 3 (Bearish).
+    Retorna: Lista de dicts con {'type': 'BULLISH'/'BEARISH', 'top': float, 'bottom': float, 'index': int}
+    """
+    if len(df) < 5: return []
+    
+    fvgs = []
+    # Analizamos las últimas 20 velas para buscar huecos recientes
+    for i in range(len(df) - 1, len(df) - 20, -1):
+        if i < 2: break
+        
+        # Velas i-2 (1), i-1 (2), i (3)
+        c1 = df.iloc[i-2]
+        c2 = df.iloc[i-1]
+        c3 = df.iloc[i]
+        
+        # Bullish FVG (Hueco alcista)
+        if c1['high'] < c3['low']:
+            fvgs.append({
+                'type': 'BULLISH',
+                'top': c3['low'],
+                'bottom': c1['high'],
+                'index': i-1,
+                'time': c2.get('time', i-1)
+            })
+            
+        # Bearish FVG (Hueco bajista)
+        elif c1['low'] > c3['high']:
+            fvgs.append({
+                'type': 'BEARISH',
+                'top': c1['low'],
+                'bottom': c3['high'],
+                'index': i-1,
+                'time': c2.get('time', i-1)
+            })
+            
+    return fvgs
+
+def detect_order_blocks(df, window=20):
+    """
+    Detecta Order Blocks (OB) institucionales.
+    Un Bullish OB es la última vela bajista antes de un movimiento impulsivo alcista fuerte.
+    Un Bearish OB es la última vela alcista antes de un movimiento impulsivo bajista fuerte.
+    """
+    if len(df) < window: return []
+    
+    obs = []
+    import pandas_ta as ta
+    
+    # 1. Definir movimiento impulsivo (Cuerpo > 1.5 ATR y volumen alto)
+    atr = ta.atr(df['high'], df['low'], df['close'], length=14)
+    vol_ma = ta.sma(df['tick_volume'], length=20)
+    
+    for i in range(len(df) - 1, len(df) - window, -1):
+        if i < 2: break
+        
+        curr = df.iloc[i]
+        prev = df.iloc[i-1]
+        
+        c_body = abs(curr['close'] - curr['open'])
+        c_atr = atr.iloc[i] if atr is not None else 0
+        c_vol = curr['tick_volume']
+        c_vma = vol_ma.iloc[i] if vol_ma is not None else 1
+        
+        # Requisito de Impulso: Cuerpo fuerte + Volumen > Media
+        is_impulsive = c_body > (c_atr * 1.5) and c_vol > c_vma
+        
+        if is_impulsive:
+            # Bullish OB (Vela previa roja)
+            if curr['close'] > curr['open'] and prev['close'] < prev['open']:
+                obs.append({
+                    'type': 'BULLISH',
+                    'top': prev['high'],
+                    'bottom': prev['low'],
+                    'index': i-1,
+                    'time': prev.get('time', i-1),
+                    'mitigated': False # TODO: Check if price has returned to this zone
+                })
+            # Bearish OB (Vela previa verde)
+            elif curr['close'] < curr['open'] and prev['close'] > prev['open']:
+                obs.append({
+                    'type': 'BEARISH',
+                    'top': prev['high'],
+                    'bottom': prev['low'],
+                    'index': i-1,
+                    'time': prev.get('time', i-1),
+                    'mitigated': False
+                })
+                
+    # 2. Verificar mitigación (¿El precio ya regresó a esta zona?)
+    for ob in obs:
+        ob_range_low = ob['bottom']
+        ob_range_high = ob['top']
+        
+        # Chequear desde el índice de la vela impulsiva hasta el final
+        start_idx = ob['index'] + 2
+        if start_idx < len(df):
+            test_data = df.iloc[start_idx:]
+            if ob['type'] == 'BULLISH':
+                # Si algún Low bajó a la zona, está mitigado
+                if (test_data['low'] <= ob_range_high).any():
+                    ob['mitigated'] = True
+            else:
+                # Si algún High subió a la zona, está mitigado
+                if (test_data['high'] >= ob_range_low).any():
+                    ob['mitigated'] = True
+                    
+    return obs

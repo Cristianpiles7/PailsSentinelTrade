@@ -48,8 +48,43 @@ async def get_positions_async(symbol: str = None):
     return await asyncio.to_thread(mt5.positions_get, symbol=symbol) if symbol else await asyncio.to_thread(mt5.positions_get)
 
 async def send_order_async(request: dict):
-    """Envía una orden al mercado de forma asíncrona."""
+    """Envía una orden al mercado de forma asíncrona con log de error."""
+    res = await asyncio.to_thread(mt5.order_send, request)
+    if res is None:
+        last_err = mt5.last_error()
+        import logging
+        logging.getLogger("MT5-Async").error(f"❌ MT5 order_send retornó None. Last Error: {last_err}")
+    return res
+
+async def close_position_async(ticket: int):
+    """Cierra una posición abierta a precio de mercado usando su ticket."""
+    position = await asyncio.to_thread(mt5.positions_get, ticket=ticket)
+    if not position:
+        return None
+    pos = position[0]
+    symbol = pos.symbol
+    volume = pos.volume
+    pos_type = pos.type  # 0=BUY, 1=SELL
+
+    # Para cerrar: orden inversa a la posición
+    close_type = mt5.ORDER_TYPE_SELL if pos_type == 0 else mt5.ORDER_TYPE_BUY
+    info = await asyncio.to_thread(mt5.symbol_info_tick, symbol)
+    price = info.bid if pos_type == 0 else info.ask  # vender al bid, comprar al ask
+
+    request = {
+        "action":       mt5.TRADE_ACTION_DEAL,
+        "symbol":       symbol,
+        "volume":       volume,
+        "type":         close_type,
+        "position":     ticket,
+        "price":        price,
+        "magic":        666,
+        "comment":      "PST_CLOSE_MANUAL",
+        "type_time":    mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
     return await asyncio.to_thread(mt5.order_send, request)
+
 
 async def modify_position_async(ticket: int, sl: float, tp: float):
     """Modifica el SL/TP de una posición de forma asíncrona."""
@@ -68,15 +103,21 @@ async def get_history_deals_async(days=1):
     start_date = end_date - timedelta(days=days)
     return await asyncio.to_thread(mt5.history_deals_get, start_date, end_date)
 
-async def get_mtf_data_async(symbol: str):
+async def get_mtf_data_async(symbol: str, include_m1: bool = False):
     """Obtiene datos Multi-Timeframe (M1, M5, M15, H1, H4) en paralelo."""
     # M1: Scalping / Volatilidad (User Request)
     # M5: Disparo / Tendencia Corta
     # M15: Táctica / Estructura
     # H1: Tendencia Principal
     # H4: Macro / Filtro Mayor
-    tasks = [
-        fetch_rates_async(symbol, 1, 100),   # M1
+    tasks = []
+    if include_m1:
+        tasks.append(fetch_rates_async(symbol, 1, 200)) # M1 (Aumentado a 200 para Scalper Pro)
+    else:
+        # Placeholder for index consistency
+        tasks.append(asyncio.sleep(0, result=None))
+    
+    tasks += [
         fetch_rates_async(symbol, 3, 100),   # M3 (NEW)
         fetch_rates_async(symbol, 5, 200),   # M5
         fetch_rates_async(symbol, 15, 200),  # M15

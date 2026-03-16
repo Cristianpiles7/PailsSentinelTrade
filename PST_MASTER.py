@@ -8,6 +8,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def run_bot():
     """Ejecuta el núcleo del Pails Sentinel Trade."""
+    setup_logging_silence()
     from PST_Core.run_pst import start_v6, SYMBOLS_TO_TRADE
     import asyncio
     print("🚀 [SISTEMA] Arrancando Motor de Trading PST...")
@@ -15,12 +16,25 @@ def run_bot():
 
 def run_dashboard():
     """Ejecuta el servidor del Dashboard."""
+    setup_logging_silence()
     from PST_Core.dashboard.server import app
     print("📊 [DASHBOARD] Arrancando Interfaz Web en http://0.0.0.0:5000")
     # Desactivamos el reloader para evitar conflictos con multiprocessing
     app.run(debug=False, port=5000, host='0.0.0.0')
 
+def setup_logging_silence():
+    """Silencia los logs ruidosos de librerías externas."""
+    import logging
+    # Silenciar spam de la API de Telegram y peticiones HTTP
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+    # También silenciar logs de flask si son pesados
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
 if __name__ == "__main__":
+    setup_logging_silence()
     print("\n" + "="*50)
     print("💎 PAILS SENTINEL TRADE - UNIFIED MASTER LAUNCHER 💎")
     print("="*50 + "\n")

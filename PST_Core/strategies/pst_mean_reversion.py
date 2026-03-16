@@ -31,7 +31,7 @@ class PSTMeanReversion:
     STRATEGY_TYPE = RegimeMode.RANGING # Especialista en rangos
     WEIGHT = 1.0 # Peso estándar
 
-    async def calculate_signal(self, data_input, current_regime, user_levels=None):
+    async def calculate_signal(self, data_input, current_regime=None, user_levels=None, **kwargs):
         """
         Calcula señales de reversión a la media basadas en Bollinger Bands (2.5 dev) + RSI.
         Implementa un TP AGRESIVO que se cierra ligeramente antes de la media para asegurar el beneficio.
@@ -132,20 +132,22 @@ class PSTMeanReversion:
         signal_type = "NEUTRAL"
         
         # --- 4.1 FILTRO MAESTRO: ADX (BLOQUEO) ---
-        # Si ADX < 25 -> Ideal para rangos.
         # Si ADX > 50 -> Bloqueo total (Tendencia imparable).
-        # Si 25 < ADX < 50 -> Entrar con cuidado (solo si hay agotamiento extremo).
         is_adx_extreme = adx_val > P_ADX_MAX
-        is_adx_high = adx_val > 30
         
+        gate_failed = False
+        block_reasons = []
+
         if is_adx_extreme:
-             factor_groups["ENTORNO"] = {"k": "Filtro ADX", "v": f"Tendencia Fuerte ({adx_val:.1f})", "score": -100}
-             return self._build_result(0, list(filter(None, factor_groups.values())), "Bloqueado por Tendencia")
+             reason = f"Tendencia Fuerte (ADX:{adx_val:.1f} > {P_ADX_MAX})"
+             factor_groups["ENTORNO"] = {"k": "Filtro ADX", "v": reason, "score": -50}
+             block_reasons.append(reason)
+             gate_failed = True # NO EARLY RETURN. Computamos el score normal pero bloqueamos la entrada.
 
         # --- 4.2 Métricas de Entorno (Siempre visibles) ---
         from ..utils.tech_utils import detect_divergence, detect_absorption
         div_type = detect_divergence(df)
-        abs_type = detect_absorption(df)
+        abs_type, is_climax = detect_absorption(df)
         
         # Divergencia Info
         if div_type:
@@ -154,10 +156,11 @@ class PSTMeanReversion:
         else:
             factor_groups["DIVERGENCIA"] = {"k": "Divergencia", "v": "No detectada", "score": 0}
             
-        # Absorción Info
+        # Absorción Info (VSA)
         if abs_type:
-            score_abs = 15
-            factor_groups["ABSORCION"] = {"k": "Absorción", "v": "Presión Institucional", "score": score_abs}
+            score_abs = 25 if is_climax else 15
+            climax_txt = " (CLÍMAX VSA)" if is_climax else ""
+            factor_groups["ABSORCION"] = {"k": "Absorción", "v": f"Presión Institucional{climax_txt}", "score": score_abs}
         else:
             factor_groups["ABSORCION"] = {"k": "Absorción", "v": "Neutro", "score": 0}
 
@@ -167,79 +170,87 @@ class PSTMeanReversion:
 
         # ADX Logic
         if adx_now < 25:
-            factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Ideal Lateral ({adx_now:.1f})", "score": 10}
+            factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Ideal Lateral ({int(adx_now)})", "score": 10}
         else:
-            factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Moderado ({adx_now:.1f})", "score": 0}
+            factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Moderado ({int(adx_now)})", "score": 0}
         
-        # Volume Logic
-        if vol_rel > 1.2:
-            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Alto ({vol_rel:.1f}x)", "score": 10}
+        # Volume Logic (Progresivo - Fuzzy Logic)
+        if vol_rel < 0.6:
+            vol_pts = -15
+            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"MUERTO ({vol_rel:.1f}x)", "score": -15}
         else:
-            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"Neutro ({vol_rel:.1f}x)", "score": 0}
-
-        # Determinar Sesgo Potencial
+            # Escalamos linealmente de -15 a +15 entre 0.6x y 1.5x
+            vol_pts = int(-15 + min(30, max(0, (vol_rel - 0.6) / 0.9 * 30)))
+            v_status = "Bajo" if vol_pts < 0 else "Alto"
+            factor_groups["VOLUMEN"] = {"k": "Volumen MTF", "v": f"{v_status} ({vol_rel:.1f}x)", "score": vol_pts}
+        
+        score += vol_pts
+        
+        # --- DEFINICIÓN DE SESGOS (FASE 65) ---
+        # Inicialización robusta para evitar NameError
+        potential_buy = False
+        potential_sell = False
+        
+        # Lógica de Gatillo Progresivo
         potential_buy = (low <= bb_lower) or (prev_close <= prev_bb_lower)
         potential_sell = (high >= bb_upper) or (prev_close >= prev_bb_upper)
 
-        if potential_buy:
+        # --- 4.3 Puntuación Estructural Progresiva (%B) ---
+        # %B = (Precio - Lower) / (Upper - Lower)
+        bb_range = bb_upper - bb_lower if (bb_upper - bb_lower) > 0 else 0.0001
+        pct_b = (close - bb_lower) / bb_range
+        
+        if pct_b <= 0.2 or potential_buy: # Zona de compra (parte inferior)
              signal_type = "BUY"
-             # Estructura: Siempre +40 si toca banda (Base operativa)
-             score += 40
-             factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": f"Extrema Inf. ({bb_lower:.5f})", "score": 40}
+             # Score base escala de 0 (en el medio 0.5) a 40 (tocando banda 0.0)
+             struct_score = int(max(0, min(45, (0.5 - pct_b) / 0.5 * 45)))
+             score += struct_score
+             factor_groups["ESTRUCTURA"] = {"k": "Estructura %B", "v": f"Zona Inf. ({int(pct_b*100)}%)", "score": struct_score}
              
-             # RSI OS
-             if rsi <= P_RSI_OS:
-                 score += 15
-                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobreventa ({rsi:.1f})", "score": 15}
+             # RSI OS Progresivo (Empieza a puntuar antes de 30)
+             if rsi <= 40:
+                 rsi_pts = int(max(0, min(20, (40 - rsi) / 20 * 20)))
+                 score += rsi_pts
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobreventa ({int(rsi)})", "score": rsi_pts}
              else:
                  factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
 
-             # GATILLOS
+             # GATILLOS (Bonus extra)
              trigger_buy_reentry = (prev_close < prev_bb_lower) and (close > bb_lower)
-             trigger_buy_rsi = (prev_rsi < P_RSI_OS) and (rsi > P_RSI_OS)
-             
              if trigger_buy_reentry:
                  score += 15
                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
-             elif trigger_buy_rsi:
-                 score += 10
-                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Escape de Sobreventa", "score": 10}
              else:
-                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Sin disparador", "score": 0}
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación", "score": 0}
              
              if factor_groups["ENTORNO"]["score"] > 0: score += 10
-             if factor_groups["VOLUMEN"]["score"] > 0: score += 10
              if div_type == "BULLISH": score += factor_groups["DIVERGENCIA"]["score"]
              if abs_type == "BUY_ABS": score += factor_groups["ABSORCION"]["score"]
 
-        elif potential_sell:
+        elif pct_b >= 0.8 or potential_sell: # Zona de venta (parte superior)
              signal_type = "SELL"
-             # Estructura: Siempre +40 si toca banda
-             score += 40
-             factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": f"Extrema Sup. ({bb_upper:.5f})", "score": 40}
+             # Score base escala de 0 (en el medio 0.5) a 40 (tocando banda 1.0)
+             struct_score = int(max(0, min(45, (pct_b - 0.5) / 0.5 * 45)))
+             score += struct_score
+             factor_groups["ESTRUCTURA"] = {"k": "Estructura %B", "v": f"Zona Sup. ({int(pct_b*100)}%)", "score": struct_score}
              
-             # RSI OB
-             if rsi >= P_RSI_OB:
-                 score += 15
-                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobrecompra ({rsi:.1f})", "score": 15}
+             # RSI OB Progresivo
+             if rsi >= 60:
+                 rsi_pts = int(max(0, min(20, (rsi - 60) / 20 * 20)))
+                 score += rsi_pts
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobrecompra ({int(rsi)})", "score": rsi_pts}
              else:
                  factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
 
              # GATILLOS
              trigger_sell_reentry = (prev_close > prev_bb_upper) and (close < bb_upper)
-             trigger_sell_rsi = (prev_rsi > P_RSI_OB) and (rsi < P_RSI_OB)
-             
              if trigger_sell_reentry:
                  score += 15
                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
-             elif trigger_sell_rsi:
-                 score += 10
-                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Escape de Sobrecompra", "score": 10}
              else:
-                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Sin disparador", "score": 0}
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación", "score": 0}
 
              if factor_groups["ENTORNO"]["score"] > 0: score += 10
-             if factor_groups["VOLUMEN"]["score"] > 0: score += 10
              if div_type == "BEARISH": score += factor_groups["DIVERGENCIA"]["score"]
              if abs_type == "SELL_ABS": score += factor_groups["ABSORCION"]["score"]
 
@@ -291,14 +302,24 @@ class PSTMeanReversion:
         else:
             target_tp = 0
 
-        if final_score >= 80:
+        if final_score >= 80 and not gate_failed:
              factor_groups["ESTADO"]["v"] = "Oportunidad Confirmada"
-             return self._build_result(final_score, factors_final, f"Reversión {signal_type}", entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
-        elif final_score >= 50:
+             return self._build_result(final_score, factors_final, f"Reversión {signal_type}", gate_failed, entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
+        
+        # SIN BLOQUEO VISUAL (Cap removido para transparencia total)
+        capped_score = final_score
+        
+        # Inyectar motivo de bloqueo si el score era prometedor
+        if final_score >= 50 or gate_failed:
+            txt_reason = ", ".join(block_reasons) if block_reasons else "Falta Gatillo Claro (Ej: Reingreso)"
+            factors_final.insert(0, {"k": "REGLA MAESTRA", "v": txt_reason, "score": -50 if gate_failed else 0})
+
+        if final_score >= 50 and not gate_failed:
              factor_groups["ESTADO"]["v"] = "Vigilando Extremo"
-             return self._build_result(final_score, factors_final, "Posible Reversión", entry_signal="NEUTRAL", direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
+             return self._build_result(capped_score, factors_final, "Posible Reversión", gate_failed, entry_signal="NEUTRAL", direction=0, tp_price=target_tp)
         else:
-             return self._build_result(0, factors_final, "Rango Neutral", direction=0)
+             stat_msg = "Rango Neutral" if not gate_failed else "Bloqueo por Tendencia (Seguridad)"
+             return self._build_result(capped_score, factors_final, stat_msg, gate_failed, direction=0)
 
     def get_dynamic_targets(self, df, direction):
         """
@@ -357,12 +378,13 @@ class PSTMeanReversion:
                 "total_score": 0,
                 "score_breakdown": {"Estado": reason},
                 "factors_detailed": [],
-                "direction": 0
+                "direction": 0,
+                "gate_failed": False
             },
             "score": 0
         }
 
-    def _build_result(self, score, factors, status_msg, entry_signal="NEUTRAL", direction=0, tp_price=0):
+    def _build_result(self, score, factors, status_msg, gate_failed=False, entry_signal="NEUTRAL", direction=0, tp_price=0):
         entry = 1 if entry_signal == "BUY" else (-1 if entry_signal == "SELL" else 0)
         return {
             "entry": entry,
@@ -374,7 +396,9 @@ class PSTMeanReversion:
                 "total_score": score,
                 "score_breakdown": {"Estado": status_msg},
                 "factors_detailed": factors,
-                "can_entry": entry != 0,
+                "can_entry": (entry != 0) and not gate_failed,
+                "gate_failed": gate_failed,
+                "status": status_msg,
                 "direction": direction,
                 "tp_target": tp_price # Para mostrar en dashboard
             },

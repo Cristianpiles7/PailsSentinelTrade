@@ -59,10 +59,12 @@ class PortfolioManager:
         
         # 1. Obtener PnL de trades cerrados hoy desde la DB
         import sqlite3
+        import os
         closed_pnl = 0.0
         try:
-            # Usamos la conexión directa o el método de la clase si existiera
-            conn = sqlite3.connect("PST_Core/data/pst_trading.db")
+            # Resolviendo ruta absoluta para que funcione al lanzar desde PST_API
+            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pst_trading.db")
+            conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,))
             row = cursor.fetchone()
@@ -96,7 +98,7 @@ class PortfolioManager:
         today_str = datetime.now().strftime('%Y-%m-%d')
         lock_key = f"daily_lock_{today_str}"
         
-        await self.db.save_config(lock_key, "true")
+        await self.db.update_config(lock_key, "true")
         logger.error(f"🔒 [BLOQUEO] Operativa cerrada por el resto de la sesión ({today_str}).")
 
     def get_symbol_group(self, symbol: str) -> List[str]:
@@ -106,9 +108,9 @@ class PortfolioManager:
                 return group
         return "OTHERS"
 
-    async def can_open_trade(self, symbol: str, signal_type: str, current_positions):
+    async def can_open_trade(self, symbol: str, signal_type: str, current_positions, strategy_name: str = None):
         """
-        Lógica de control de riesgo global (FTMO Friendly).
+        Lógica de control de riesgo global (FTMO Friendly) y Pyramiding Institucional.
         """
         # 0. Evitar duplicados por Símbolo (Filtro Estricto y Robusto)
         target_sym = symbol.upper().strip()
@@ -122,8 +124,32 @@ class PortfolioManager:
                 pos_sym = pos.symbol.upper().strip()
                 # Coincidencia exacta o parcial (ej: EURUSD vs EURUSD.cash)
                 if pos_sym == target_sym or target_sym in pos_sym or pos_sym in target_sym:
-                    logger.debug(f"🛡️ Bloqueando entrada duplicada para {symbol}. Posición '{pos.symbol}' detectada.")
-                    return False
+                    # --- PYRAMIDING LOGIC (FASE 55) ---
+                    # Comprobamos si la posición existente está libre de riesgo (Break-Even)
+                    is_buy = getattr(pos, 'type', -1) == 0
+                    is_sell = getattr(pos, 'type', -1) == 1
+                    sig_is_buy = signal_type == "BUY"
+                    sig_is_sell = signal_type == "SELL"
+                    
+                    price_open = getattr(pos, 'price_open', 0)
+                    sl = getattr(pos, 'sl', 0)
+                    
+                    is_risk_free = False
+                    if is_buy and sl >= price_open and price_open > 0:
+                        is_risk_free = True
+                    elif is_sell and sl > 0 and sl <= price_open:
+                        is_risk_free = True
+                        
+                    # Solo piramidamos a favor de la misma dirección si la original es segura
+                    # EXCEPCIÓN: Desactivamos piramidado para SCALPING para evitar sobre-exposición
+                    is_scalper = "Scalper" in strategy_name if strategy_name else False
+                    if is_risk_free and ((is_buy and sig_is_buy) or (is_sell and sig_is_sell)) and not is_scalper:
+                        logger.info(f"📈 [PYRAMIDING] Permitiendo reingreso en {symbol}. La posición original ya está en Break-Even.")
+                        continue # Seguimos validando el resto de las reglas
+                    else:
+                        reason = "SCALPING NO-PYRAMID" if is_scalper else "RISK IN POS"
+                        logger.debug(f"🛡️ Bloqueando entrada duplicada para {symbol}. Razón: {reason}.")
+                        return False
 
         acc = await self.get_account_status()
         if not acc: return False
@@ -190,54 +216,65 @@ class PortfolioManager:
         # 4. FOREX (Default 1:100)
         return 100, 7000, "FOREX"
 
-    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info, current_atr=None, ma_atr=None, open_positions_count=0):
+    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info, current_atr=None, ma_atr=None, open_positions_count=0, risk_mode="LOTS", risk_value=None):
         """
         Calcula el lotaje usando Lógica Híbrida de Riesgo Dinámico y Cubetas de Margen (FTMO Rules).
+        Soporta modos: LOTS (fijo), PCT (% balance), MONEY (nominal €).
         """
         if stop_loss_points <= 0 or symbol_info is None:
             return symbol_info.volume_min if symbol_info else 0.01
 
         symbol = symbol_info.name
         
-        # --- 1. DYNAMIC RISK SCALING (ARRIESGAR MENOS SI HAY EXPOSICIÓN) ---
-        # Si ya hay trades abiertos, reducimos el riesgo base para diversificar
-        effective_risk = risk_per_trade_pct
+        # --- 1. DETERMINAR DINERO EN RIESGO ---
+        # Si no hay risk_value, usamos el risk_per_trade_pct global como fallback
+        risk_money = 0.0
+        
+        if risk_mode == "PCT":
+            risk_pct = risk_value if risk_value is not None else risk_per_trade_pct
+            risk_money = balance * (risk_pct / 100)
+        elif risk_mode == "MONEY":
+            risk_money = risk_value if risk_value is not None else (balance * (risk_per_trade_pct / 100))
+        else: # "LOTS"
+            # Si el modo es LOTS, risk_value es el lotaje directamente
+            if risk_value is not None and risk_value > 0:
+                return max(symbol_info.volume_min, min(symbol_info.volume_max, round(risk_value / symbol_info.volume_step) * symbol_info.volume_step))
+            # Fallback a cálculo por riesgo global
+            risk_money = balance * (risk_per_trade_pct / 100)
+
+        # --- 2. DYNAMIC RISK SCALING (ARRIESGAR MENOS SI HAY EXPOSICIÓN) ---
+        # Reducción de riesgo si hay muchos trades abiertos
         if open_positions_count >= 2:
-            effective_risk *= 0.70 # Reducimos al 70% del riesgo (ej: 0.50 -> 0.35)
+            risk_money *= 0.70
         if open_positions_count >= 5:
-            effective_risk *= 0.50 # Reducimos al 50% (ej: 0.50 -> 0.25)
+            risk_money *= 0.50
             
-        # --- 2. VOLATILITY ADJUSTMENT ---
-        vol_factor = 1.0
+        # --- 3. VOLATILITY ADJUSTMENT ---
         if current_atr and ma_atr and ma_atr > 0:
              vol_factor = ma_atr / current_atr
-             effective_risk *= vol_factor
+             risk_money *= vol_factor
              
-        # Cap de seguridad final tras escalado y volatilidad (Garantizar NO superar el límite del usuario)
-        effective_risk = max(0.05, min(risk_per_trade_pct, effective_risk))
-        
-        risk_money = balance * (effective_risk / 100)
+        # Cap de seguridad de riesgo monetario (no arriesgar más del triple del riesgo base config)
+        base_risk_money = balance * (risk_per_trade_pct / 100)
+        risk_money = min(risk_money, base_risk_money * 3)
+
         tick_value = symbol_info.trade_tick_value
-        
         if tick_value == 0:
             return symbol_info.volume_min
 
         # Lote Inicial basado en Riesgo (Stop Loss)
         raw_lot = risk_money / (stop_loss_points * tick_value) if stop_loss_points > 0 else symbol_info.volume_min
         
-        # --- 3. MARGIN-BUCKET CAP (DYNAMICAL LEVERAGE TIERS) ---
+        # --- 4. MARGIN-BUCKET CAP (DYNAMICAL LEVERAGE TIERS) ---
         leverage, margin_bucket, asset_type = self._get_leverage_and_bucket(symbol)
         
-        # Cálculo de Margen Requerido para el lote calculado
         price = symbol_info.ask if symbol_info.ask > 0 else symbol_info.last
         contract_size = symbol_info.trade_contract_size if symbol_info.trade_contract_size > 0 else 1
         
-        # Fórmula: Margin = (Lots * ContractSize * Price) / Leverage
         required_margin = (raw_lot * contract_size * price) / leverage if leverage > 0 else 0
         
-        logger.info(f"⚖️ [LOTES] {symbol} ({asset_type}) | Riesgo {effective_risk:.2f}% | Margen Req: {required_margin:.2f}€ (Lev 1:{leverage})")
+        logger.info(f"⚖️ [LOTES] {symbol} ({asset_type}) | Riesgo €{risk_money:.2f} | Margen Req: {required_margin:.2f}€")
 
-        # Si el margen requerido supera el bucket, recortamos el lotaje
         if required_margin > margin_bucket:
             raw_lot = (margin_bucket * leverage) / (contract_size * price)
             logger.warning(f"✂️ [MARGIN CAP] {symbol} superó cubeta de {margin_bucket}€. Recortando lotaje.")

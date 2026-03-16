@@ -788,9 +788,10 @@ def get_chart_data(symbol):
                 "PST-EMA-Flow": "Flujo EMA (Tendencia)",
                 "PST-Channel-Master": "Canales Maestros (Premium)",
                 "PST-Mean-Reversion": "Reversión a la Media",
-                "PST-AI-Oracle-Gemini": "IA Gemini (Google)",
-                "PST-AI-Oracle-Groq": "IA Groq (Súper Sónica)",
-                "PST-AI-Oracle-Ollama": "IA Ollama (Local)",
+                "PST-Scalper-Pro": "Scalping Pro",
+                "PST-AI-Oracle-gemini": "IA Gemini (Google)",
+                "PST-AI-Oracle-groq": "IA Groq (Súper Sónica)",
+                "PST-AI-Oracle-ollama": "IA Ollama (Local)",
                 "PSTRSIEquities": "RSI Equities",
                 "PST-RSI-Equities": "RSI Equities"
             }

@@ -1,0 +1,77 @@
+name: Build and Release PST Bot
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on tags like v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Executables
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build React Frontend
+        working-directory: ./PST_Web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+
+      - name: Install Python Dependencies
+        run: |
+          # Use the latest requirements
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pandas_ta
+
+      - name: Build PST_MASTER with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onefile --console --name "PST_MASTER" ^
+          --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" ^
+          --add-data "PST_Core/dashboard/static;PST_Core/dashboard/static" ^
+          --add-data "PST_Web/dist;PST_Web/dist" ^
+          --hidden-import "pandas" ^
+          --hidden-import "pandas_ta" ^
+          --hidden-import "MetaTrader5" ^
+          --hidden-import "fastapi" ^
+          --hidden-import "uvicorn" ^
+          --icon "NONE" ^
+          PST_API/main.py
+
+      - name: Build PST_LAUNCHER with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onefile --console --name "PST_LAUNCHER" ^
+          --hidden-import "requests" ^
+          --icon "NONE" ^
+          Tools/updater_launcher.py
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir release_assets
+          copy "dist\PST_MASTER.exe" "release_assets\"
+          copy "dist\PST_LAUNCHER.exe" "release_assets\"
+          copy "version.txt" "release_assets\"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release_assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
