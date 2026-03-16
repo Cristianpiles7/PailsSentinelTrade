@@ -8,3 +8,7 @@ waitress
 python-dotenv
 colorama
 pyinstaller
+fastapi
+uvicorn
+aiosqlite
+pydantic

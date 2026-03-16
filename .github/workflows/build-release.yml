@@ -25,7 +25,7 @@ jobs:
       - name: Build React Frontend
         working-directory: ./PST_Web
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Setup Python
@@ -38,14 +38,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller pandas_ta fastapi uvicorn waitress aiosqlite requests
 
       - name: Build PST_MASTER with PyInstaller
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --console --name "PST_MASTER" `
+          python -m PyInstaller --noconfirm --onefile --console --name "PST_MASTER" `
           --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" `
-          --add-data "PST_Core/dashboard/static;PST_Core/dashboard/static" `
           --add-data "PST_Web/dist;PST_Web/dist" `
           --hidden-import "pandas" `
           --hidden-import "pandas_ta" `
@@ -53,21 +51,20 @@ jobs:
           --hidden-import "fastapi" `
           --hidden-import "uvicorn" `
           --hidden-import "aiosqlite" `
-          --icon "NONE" `
+          --hidden-import "pydantic" `
           PST_API/main.py
 
       - name: Build PST_LAUNCHER with PyInstaller
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --console --name "PST_LAUNCHER" `
+          python -m PyInstaller --noconfirm --onefile --console --name "PST_LAUNCHER" `
           --hidden-import "requests" `
-          --icon "NONE" `
           Tools/updater_launcher.py
 
       - name: List dist directory
         shell: pwsh
         run: |
-          ls dist
+          if (Test-Path dist) { ls dist } else { Write-Error "Dist directory not found" }
 
       - name: Prepare Artifacts
         shell: pwsh
