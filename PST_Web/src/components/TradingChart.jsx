@@ -122,6 +122,14 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
                 priceLineVisible: true,
             });
 
+            seriesRef.current.ema9 = chart.addSeries(LineSeries, {
+                color: '#4ade80', // Bright Green for fast EMA
+                lineWidth: 1,
+                title: 'EMA 9',
+                lastValueVisible: false,
+                priceLineVisible: false,
+            });
+
             seriesRef.current.ema21 = chart.addSeries(LineSeries, {
                 color: '#f59e0b',
                 lineWidth: 1,
@@ -139,7 +147,7 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
             });
 
             seriesRef.current.ema200 = chart.addSeries(LineSeries, {
-                color: '#ef4444', // Red for macro trend
+                color: '#ef4444',
                 lineWidth: 1,
                 title: 'EMA 200',
                 lastValueVisible: false,
@@ -147,7 +155,7 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
             });
 
             seriesRef.current.bbUpper = chart.addSeries(LineSeries, {
-                color: 'rgba(34, 211, 238, 0.4)', // Cyan-400 with higher opacity
+                color: 'rgba(34, 211, 238, 0.4)',
                 lineWidth: 1,
                 lineStyle: 2,
                 title: 'BB Upper',
@@ -209,6 +217,9 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
             }
         });
         series.candlestick.setData(data);
+
+        const ema9Data = calculateEMA(data, 9);
+        series.ema9.setData(ema9Data);
 
         const ema21Data = calculateEMA(data, 21);
         series.ema21.setData(ema21Data);
@@ -381,6 +392,7 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
                     <span className="text-[10px] font-black text-white uppercase italic tracking-widest">{symbol} CORE ANALYSIS</span>
                 </div>
                 <div className="flex items-center gap-4 bg-zinc-900/50 backdrop-blur-md px-3 py-1.5 rounded-xl border border-zinc-800 text-[9px] font-bold text-zinc-500 uppercase tracking-tighter">
+                    <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#4ade80]" /> EMA 9</span>
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#f59e0b]" /> EMA 21</span>
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#3b82f6]" /> EMA 50</span>
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#ef4444]" /> EMA 200</span>

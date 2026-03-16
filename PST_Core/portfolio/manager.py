@@ -98,7 +98,7 @@ class PortfolioManager:
         today_str = datetime.now().strftime('%Y-%m-%d')
         lock_key = f"daily_lock_{today_str}"
         
-        await self.db.save_config(lock_key, "true")
+        await self.db.update_config(lock_key, "true")
         logger.error(f"🔒 [BLOQUEO] Operativa cerrada por el resto de la sesión ({today_str}).")
 
     def get_symbol_group(self, symbol: str) -> List[str]:
@@ -141,11 +141,14 @@ class PortfolioManager:
                         is_risk_free = True
                         
                     # Solo piramidamos a favor de la misma dirección si la original es segura
-                    if is_risk_free and ((is_buy and sig_is_buy) or (is_sell and sig_is_sell)):
+                    # EXCEPCIÓN: Desactivamos piramidado para SCALPING para evitar sobre-exposición
+                    is_scalper = "Scalper" in strategy_name if strategy_name else False
+                    if is_risk_free and ((is_buy and sig_is_buy) or (is_sell and sig_is_sell)) and not is_scalper:
                         logger.info(f"📈 [PYRAMIDING] Permitiendo reingreso en {symbol}. La posición original ya está en Break-Even.")
                         continue # Seguimos validando el resto de las reglas
                     else:
-                        logger.debug(f"🛡️ Bloqueando entrada duplicada para {symbol}. Posición '{pos.symbol}' detectada y en riesgo.")
+                        reason = "SCALPING NO-PYRAMID" if is_scalper else "RISK IN POS"
+                        logger.debug(f"🛡️ Bloqueando entrada duplicada para {symbol}. Razón: {reason}.")
                         return False
 
         acc = await self.get_account_status()

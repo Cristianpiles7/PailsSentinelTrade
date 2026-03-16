@@ -79,7 +79,7 @@ class PSTEMAFlow:
     STRATEGY_TYPE = RegimeMode.TREND 
     WEIGHT = 1.2 # Estrategia robusta, peso ligeramente mayor
 
-    async def calculate_signal(self, data_input, current_regime, user_levels=None):
+    async def calculate_signal(self, data_input, current_regime=None, user_levels=None, **kwargs):
         # 1. Adaptador de Datos (M5 + M15)
         df = None
         df_m15 = None
@@ -243,9 +243,9 @@ class PSTEMAFlow:
                 # --- CUMULATIVE DECAY LOGIC ---
                 # A. BASE SETUP POINTS
                 # If we find a setup, we start at 45 points (Alerta).
-                tf_mult = 1.2 if tf_name == "M15" else 1.0
-                # User New Req: Strict timing. -10 pts per candle.
-                action_pts = max(0, 45 - (i * 10)) * tf_mult
+                tf_mult = 1.25 if tf_name == "M15" else 1.0
+                # User New Req: Strict timing. -5 pts per candle.
+                action_pts = max(0, 25 - (i * 5)) * tf_mult
                 
                 # B. MOMENTUM IGNITION (User Req) - DISABLED for M5 to avoid late entries
                 if has_momentum_ignition and tf_name == "M15":
@@ -262,7 +262,7 @@ class PSTEMAFlow:
                 if i > 1: # More than 1 bar of delay
                     action_pts -= (i * 15)
                 
-                cross_pts = max(0, 45 - (i * 15)) * tf_mult
+                cross_pts = max(0, 25 - (i * 10)) * tf_mult
                 
                 # Event storage (for logging/detailed view)
                 base_event = None
@@ -271,11 +271,21 @@ class PSTEMAFlow:
                 if p_ema21 <= p_ema50 and c_ema21 > c_ema50: # Golden
                     if cross_pts > bull_base:
                          bull_base = cross_pts
-                         base_event = {"k": f"G. Cross {tf_name} (-{i})", "v": "LONG Confirmado", "score": round(cross_pts)}
+                         base_event = {
+                             "k": f"Cruce {tf_name} (-{i})", 
+                             "v": "GOLDEN CROSS (Compra)", 
+                             "score": round(cross_pts),
+                             "desc": f"El cruce al alza de la EMA21 sobre la EMA50 en {tf_name} indica un cambio de tendencia estructural hacia un régimen alcista."
+                         }
                 elif p_ema21 >= p_ema50 and c_ema21 < c_ema50: # Death
                     if cross_pts > bear_base:
                          bear_base = cross_pts
-                         base_event = {"k": f"D. Cross {tf_name} (-{i})", "v": "SHORT Confirmado", "score": round(bear_base)}
+                         base_event = {
+                             "k": f"Cruce {tf_name} (-{i})", 
+                             "v": "DEATH CROSS (Venta)", 
+                             "score": round(bear_base),
+                             "desc": f"El cruce a la baja de la EMA21 sobre la EMA50 en {tf_name} indica un cambio de tendencia estructural hacia un régimen bajista."
+                         }
                     
                 # B. BREAKOUT / BOUNCE
                 c_high = tf_df['high'].iloc[idx]; c_low = tf_df['low'].iloc[idx]
@@ -333,18 +343,38 @@ class PSTEMAFlow:
                      if action_pts > bull_base:
                           bull_base = action_pts
                           if action_pts == 0:
-                              base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Perdido (Sobreetendido)", "score": 0}
+                              base_event = {
+                                   "k": f"Giro EMA50 {tf_name}", 
+                                   "v": "Perdido (Sobreetendido)", 
+                                   "score": 0,
+                                   "desc": "El precio ha roto la EMA50 pero está demasiado lejos del nivel de ruptura (sobre-extendido). El bot descarta la entrada inmediata por riesgo de retroceso."
+                               }
                           else:
-                              base_event = {"k": f"Giro EMA50 {tf_name}", "v": f"LONG Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", "score": round(bull_base)}
+                              base_event = {
+                                   "k": f"Giro EMA50 {tf_name}", 
+                                   "v": f"LONG Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", 
+                                   "score": round(bull_base),
+                                   "desc": "Cambio de tendencia estructural (Type A). El precio cruza la EMA50 con fuerza, indicando una rotación completa del sentimiento de mercado hacia alcista."
+                               }
                      if i < last_event_idx: last_event_idx = i
 
                 elif is_breaking_ema50_down and is_strong_candle and is_bull_trend:
                      if action_pts > bear_base:
                           bear_base = action_pts
                           if action_pts == 0:
-                              base_event = {"k": f"Giro EMA50 {tf_name}", "v": "Perdido (Sobreetendido)", "score": 0}
+                              base_event = {
+                                   "k": f"Giro EMA50 {tf_name}", 
+                                   "v": "Perdido (Sobreetendido)", 
+                                   "score": 0,
+                                   "desc": "El precio ha roto la EMA50 pero está demasiado lejos del nivel de ruptura (sobre-extendido). El bot descarta la entrada inmediata por riesgo de retroceso."
+                               }
                           else:
-                              base_event = {"k": f"Giro EMA50 {tf_name}", "v": f"SHORT Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", "score": round(bear_base)}
+                              base_event = {
+                                   "k": f"Giro EMA50 {tf_name}", 
+                                   "v": f"SHORT Reversal (Type A) {'(-'+str(i)+')' if i>0 else ''}", 
+                                   "score": round(bear_base),
+                                   "desc": "Cambio de tendencia estructural (Type A). El precio cruza la EMA50 con fuerza, indicando una rotación completa del sentimiento de mercado hacia bajista."
+                               }
                      if i < last_event_idx: last_event_idx = i
 
                 elif is_breaking_ema21_up and is_strong_candle and action_pts > 0:
@@ -354,7 +384,12 @@ class PSTEMAFlow:
                           pts = action_pts - 10
                           if pts > bull_base:
                               bull_base = pts
-                              base_event = {"k": f"Breakout EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bull_base)}
+                              base_event = {
+                                  "k": f"Breakout EMA21 {tf_name}", 
+                                  "v": "Continuación (Type B)", 
+                                  "score": round(bull_base),
+                                  "desc": f"Ruptura de la media rápida EMA21 en favor de la tendencia principal. Indica que el precio ha terminado su retroceso y reanuda el movimiento alcista."
+                              }
                           if i < last_event_idx: last_event_idx = i
 
                 elif is_breaking_ema21_down and is_strong_candle and action_pts > 0:
@@ -364,7 +399,12 @@ class PSTEMAFlow:
                           pts = action_pts - 10
                           if pts > bear_base:
                               bear_base = pts
-                              base_event = {"k": f"Breakout EMA21 {tf_name}", "v": "Trend (Type B)", "score": round(bear_base)}
+                              base_event = {
+                                  "k": f"Breakout EMA21 {tf_name}", 
+                                  "v": "Continuación (Type B)", 
+                                  "score": round(bear_base),
+                                  "desc": f"Ruptura de la media rápida EMA21 en favor de la tendencia principal. Indica que el precio ha terminado su retroceso y reanuda el movimiento bajista."
+                              }
                           if i < last_event_idx: last_event_idx = i
 
                 
@@ -380,11 +420,11 @@ class PSTEMAFlow:
                     if is_long_setup and curr_c < curr_ema21:
                          base_event['v'] = f"~~{base_event['v']}~~ (Invalido: Precio < EMA21)"
                          base_event['score'] = 0
-                         if "LONG" in base_event['v']: bull_base = 0
+                         if "COMPRA" in base_event['v']: bull_base = 0
                     elif is_short_setup and curr_c > curr_ema21:
                          base_event['v'] = f"~~{base_event['v']}~~ (Invalido: Precio > EMA21)"
                          base_event['score'] = 0
-                         if "SHORT" in base_event['v']: bear_base = 0
+                         if "VENTA" in base_event['v']: bear_base = 0
 
                     if base_event['score'] > 0:
                         best_setup = base_event 
@@ -421,31 +461,37 @@ class PSTEMAFlow:
         if mtr_m15: adx_desc.append(f"M15:{mtr_m15['adx']:.1f}")
         if mtr_h1: adx_desc.append(f"H1:{mtr_h1['adx']:.1f}")
         
-        # A. M5 Sliding Scale
-        if m5_adx < 15: adx_pts -= 20 # Bloqueo por falta de tendencia
-        elif 15 <= m5_adx < 21: adx_pts -= 10 # Debilidad
-        elif 21 <= m5_adx < 26: adx_pts += 5  # Aceptable
-        elif 26 <= m5_adx < 35: adx_pts += 20 # Bueno
-        else: adx_pts += 35 # Muy fuerte
+        # A. M5 Sliding Scale (Progresivo - Fuzzy Logic)
+        if m5_adx < 15: 
+            adx_pts = -10
+        else:
+            # Escalamos linealmente de -10 a +15 entre ADX 15 y 35
+            adx_pts = round(-10 + min(25, max(0, (m5_adx - 15) / 20 * 25)))
 
         # B. Macro Context Bonus
-        if mtr_m15 and mtr_m15['adx'] >= 25: adx_pts += 10
-        if mtr_h1 and mtr_h1['adx'] >= 25: adx_pts += 15
+        if mtr_m15 and mtr_m15['adx'] >= 25: adx_pts += 5
+        if mtr_h1 and mtr_h1['adx'] >= 25: adx_pts += 5
 
         adx_status = "Fuerte" if adx_pts >= 25 else ("Baja" if adx_pts < 0 else "Neutral")
         if m5_adx < 15: adx_status = "CRÍTICO (<15)"
 
         factor_groups["FUERZA"] = {
             "k": "Fuerza MTF (ADX)", 
-            "v": f"{adx_status} ({' | '.join(adx_desc)})", 
-            "score": adx_pts
+            "v": f"{adx_status} ({' | '.join([f'{float(x.split(':')[1]):.0f}' if ':' in x else x for x in adx_desc])})", 
+            "score": adx_pts,
+            "desc": f"Análisis multi-temporal del ADX. M5 mide la fuerza inmediata ({m5_adx:.1f}), mientras que M15 y H1 validan si hay una tendencia macro respaldando el movimiento. Puntuación positiva si ADX > 20 en M5."
         }
 
         adx_gate = m5_adx >= (P_ADX_THR - 5) 
         if not adx_gate:
             internal_gate_failed = True
             reason = f"ADX insuficiente ({m5_adx:.1f} < {P_ADX_THR-5})"
-            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO ADX", "v": reason, "score": -20})
+            factor_groups["ADVERTENCIAS"].append({
+                "k": "BLOQUEO ADX", 
+                "v": reason, 
+                "score": -20,
+                "desc": f"El ADX actual ({m5_adx:.1f}) está por debajo del umbral mínimo de {P_ADX_THR-5}. El bot bloquea la entrada para evitar mercados laterales/sucios donde la probabilidad de fallo es alta."
+            })
             block_reasons.append(reason)
 
         # --- MTF VOLUME (DYNAMIC V2) ---
@@ -455,31 +501,38 @@ class PSTEMAFlow:
         if mtr_m5: vol_desc.append(f"M5:{m5_vol:.1f}x")
         if mtr_m15: vol_desc.append(f"M15:{mtr_m15['vol_rel']:.1f}x")
         
-        # A. M5 Sliding Scale
-        if m5_vol < 0.6: vol_pts -= 15 # Bloqueo por mercado muerto
-        elif 0.6 <= m5_vol < 0.9: vol_pts -= 5
-        elif 0.9 <= m5_vol < 1.3: vol_pts += 5
-        elif m5_vol >= 1.3: vol_pts += 20
+        # A. M5 Sliding Scale (Progresivo - Fuzzy Logic)
+        if m5_vol < 0.6:
+            vol_pts = -10
+        else:
+            # Escalamos linealmente de -10 a +10 entre 0.6x y 1.3x
+            vol_pts = round(-10 + min(20, max(0, (m5_vol - 0.6) / 0.7 * 20)))
 
         # B. Institutional Burst Bonus (Macro)
         h1_vol = mtr_h1['vol_rel'] if mtr_h1 else 0
-        if h1_vol >= 1.5: vol_pts += 15 # H1 fuerte compensa M5 debil
-        if mtr_m15 and mtr_m15['vol_rel'] >= 1.5: vol_pts += 10
+        if h1_vol >= 1.5: vol_pts += 10 # H1 fuerte compensa M5 debil
+        if mtr_m15 and mtr_m15['vol_rel'] >= 1.5: vol_pts += 5
 
         vol_status = "Alto" if vol_pts >= 20 else ("Bajo" if vol_pts < 0 else "Normal")
         if m5_vol < 0.6: vol_status = "MUERTO (<0.6x)"
 
         factor_groups["VOLUMEN"] = {
             "k": "Volumen MTF", 
-            "v": f"{vol_status} ({' | '.join(vol_desc)})", 
-            "score": vol_pts
+            "v": f"{vol_status} ({' | '.join(vol_desc)})".replace(".0x", "x"), 
+            "score": vol_pts,
+            "desc": f"El volumen relativo compara el interés actual con la media de las últimas 20 velas. Un valor > 1.2x confirma que instituciones están entrando en el mercado. M5: {m5_vol:.2f}x."
         }
 
         vol_gate = m5_vol >= 0.8 or h1_vol >= 1.5 
         if not vol_gate:
             internal_gate_failed = True
             reason = f"Sin interés inst. (M5 Vol:{m5_vol:.1f}x)"
-            factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO VOLUMEN", "v": reason, "score": -20})
+            factor_groups["ADVERTENCIAS"].append({
+                "k": "BLOQUEO VOLUMEN", 
+                "v": reason, 
+                "score": -20,
+                "desc": f"El volumen relativo ({m5_vol:.2f}x) es insuficiente. Sin una participación institucional clara (volumen), los movimientos suelen ser 'trampas' de minoristas que terminan en stop loss."
+            })
             block_reasons.append(reason)
             
         # --- SESSION MOMENTUM (FASE 55) ---
@@ -487,10 +540,20 @@ class PSTEMAFlow:
         session_pts = 0
         if session_name in ["OVERLAP", "LONDON", "NY"]:
             session_pts = 10
-            factor_groups["MOMENTO"] = [{"k": "Plaza Operativa", "v": f"Alta Liquidez ({session_name})", "score": session_pts}]
+            factor_groups["MOMENTO"] = [{
+                "k": "Sesión Mercado", 
+                "v": f"Alta Liquidez ({session_name})", 
+                "score": session_pts,
+                "desc": f"Operar durante {session_name} asegura spreads bajos y movimientos con mayor continuidad técnica debido al alto volumen institucional."
+            }]
         elif session_name == "ASIAN":
             session_pts = -25
-            factor_groups["MOMENTO"] = [{"k": "Plaza Operativa", "v": "Baja Liquidez (ASIAN)", "score": session_pts}]
+            factor_groups["MOMENTO"] = [{
+                "k": "Sesión Mercado", 
+                "v": "Baja Liquidez (ASIAN)", 
+                "score": session_pts,
+                "desc": "La sesión asiática suele ser lateral y propensa a falsas roturas. Se penaliza la puntuación para evitar atrapadas en rangos estrechos."
+            }]
         else:
             factor_groups["MOMENTO"] = []
 
@@ -530,27 +593,59 @@ class PSTEMAFlow:
                 is_passive = True
                 direction = p_dir
                 p_type = "Alcista" if p_dir == 1 else "Bajista"
-                net_score = 30 # Base Passive Score (Structure only) - UP FROM 25
-                factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": f"Tendencia {p_type} (Pasiva)", "score": 30}
-                breakdown["Estructura"] = f"Tendencia {p_type} (+30)"
-                factor_groups["ESTADO"] = {"k": "Sin Setup", "v": "Tendencia en Curso", "score": 0}
+                
+                # --- NEW: PROXIMITY SCORING (FASE 65) ---
+                # Calculamos distancia a EMA21 en ATRs
+                dist_ema21 = abs(c_close - c_ema21) / current_atr if current_atr > 0 else 5.0
+                # Bonus de hasta 10 puntos si está a < 1.5 ATR
+                prox_bonus = max(0, min(10, (1.5 - dist_ema21) / 1.5 * 10))
+                
+                net_score = round(15 + prox_bonus)
+                factor_groups["ESTRUCTURA"] = {
+                    "k": "Estructura", 
+                    "v": f"Trend {p_type} ({dist_ema21:.1f} ATR)", 
+                    "score": net_score,
+                    "desc": f"La estructura principal de mercado es {p_type}. El precio está a una distancia saludable de la media ({dist_ema21:.1f} ATR) manteniendo la formación de máximos y mínimos."
+                }
+                breakdown["Estructura"] = f"Tendencia {p_type} (+{net_score})"
+                factor_groups["ESTADO"] = {
+                    "k": "Acecho", 
+                    "v": "Esperando Pullback", 
+                    "score": 0,
+                    "desc": "El precio está en tendencia pero no hay una señal de entrada inmediata (rotura/rebote). El bot vigila el activo esperando que el precio regrese a la EMA21."
+                }
             else:
                 # If truly neutral, still provide some context
                 net_score = 0
                 direction = 0
-                factor_groups["ESTADO"] = {"k": "Estado", "v": "Lateral / Indefinido", "score": 0}
-                factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": "Sin tendencia clara", "score": 0}
+                factor_groups["ESTADO"] = {
+                    "k": "Estado", "v": "Lateral / Indefinido", "score": 0,
+                    "desc": "El mercado no presenta una tendencia clara ni un setup activo. Las medias están entrelazadas o el precio oscila sin dirección."
+                }
+                factor_groups["ESTRUCTURA"] = {
+                    "k": "Estructura", "v": "Sin tendencia clara", "score": 0,
+                    "desc": "No se detecta una formación de máximos y mínimos que valide un sesgo alcista o bajista confiable."
+                }
 
         if not factor_groups["ESTADO"]:
             if best_setup:
                 # Update status with setup found
-                factor_groups["ESTADO"] = {"k": "Estado", "v": "Alerta: Setup Activo", "score": round(net_score)}
+                factor_groups["ESTADO"] = {
+                    "k": "Estado", "v": "Alerta: Setup Activo", "score": round(net_score),
+                    "desc": "Se ha detectado una configuración técnica válida (Giro o Continuación). El bot está evaluando ahora la fuerza y el volumen para confirmar el disparo."
+                }
             else:
-                factor_groups["ESTADO"] = {"k": "Estado", "v": "Estudiando Mercado", "score": 0}
+                factor_groups["ESTADO"] = {
+                    "k": "Estado", "v": "Estudiando Mercado", "score": 0,
+                    "desc": "El bot monitoriza el flujo de órdenes y la acción del precio buscando el próximo setup de alta probabilidad."
+                }
         
         if not factor_groups["ESTRUCTURA"]:
              p_type = "Alcista" if direction == 1 else "Bajista"
-             factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": f"Sesgo {p_type}", "score": 0}
+             factor_groups["ESTRUCTURA"] = {
+                 "k": "Estructura", "v": f"Sesgo {p_type}", "score": 0,
+                 "desc": f"El sesgo técnico general en este periodo es {p_type}, basado en la posición relativa de las EMAs rápida y lenta."
+             }
              
         # Eval VSA (Now we know the direction)
         if direction != 0 and abs_type:
@@ -558,7 +653,13 @@ class PSTEMAFlow:
             if abs_match:
                  vsa_pts = 35 if is_climax else 15
                  txt = "CLÍMAX INSTITUCIONAL" if is_climax else "Absorción a Favor"
-                 factor_groups["MOMENTO"].append({"k": "VSA Trigger", "v": txt, "score": vsa_pts})
+                 vsa_desc = "Se ha detectado una vela de volumen extremo que agota la fuerza contraria, despejando el camino para nuestra dirección." if is_climax else "Las órdenes institucionales están absorbiendo la presión contraria en este nivel."
+                 factor_groups["MOMENTO"].append({
+                     "k": "VSA Trigger", 
+                     "v": txt, 
+                     "score": vsa_pts,
+                     "desc": vsa_desc
+                 })
 
         # --- UNIFIED FILTER EVALUATION ---
         # Ensure we always sum bonuses
@@ -568,8 +669,8 @@ class PSTEMAFlow:
         net_score += vsa_pts
 
         # 1. STICKY ALERT: If we have a setup, ensure score doesn't fall below a visible threshold
-        if best_setup and net_score < 40 and not internal_gate_failed:
-             net_score = 40 # Minimum "Alert" visibility
+        if best_setup and net_score < 30 and not internal_gate_failed:
+             net_score = 30 # Minimum "Alert" visibility
 
         # 1. MTF FINAL GATES (Conditional Penalties)
         # If we have a SETUP (best_setup exists), we DON'T subtract for weak ADX/VOL, 
@@ -578,21 +679,37 @@ class PSTEMAFlow:
             if adx_pts < 15: 
                 penalty = 10 # REDUCED FROM 15
                 net_score -= penalty
-                factor_groups["VALIDACION"].append({"k": "Fuerza Estructural", "v": "ADX < 15", "score": -penalty})
+                factor_groups["VALIDACION"].append({
+                    "k": "Fuerza Estructural", 
+                    "v": "ADX < 15", 
+                    "score": -penalty,
+                    "desc": "El ADX mide la intensidad de la tendencia. Valores por debajo de 15 indican un mercado lateral o sin fuerza suficiente para el seguimiento de tendencia."
+                })
             
             if vol_pts == 0:
                 penalty = 5 # REDUCED FROM 10
                 net_score -= penalty
-                factor_groups["VALIDACION"].append({"k": "Volumen Estructural", "v": "Neutro", "score": -penalty})
+                factor_groups["VALIDACION"].append({
+                    "k": "Volumen Estructural", 
+                    "v": "Neutro", 
+                    "score": -penalty,
+                    "desc": "Se requiere una expansión de volumen relativo para confirmar el interés institucional en la dirección de la tendencia."
+                })
 
         # 2a. SLOPE FILTER
         ema50_slope = (ema50_s.iloc[-1] - ema50_s.iloc[-6]) / ema50_s.iloc[-6] * 100 if len(ema50_s) > 6 else 0
         if abs(ema50_slope) < 0.005: 
              penalty = 10 if is_passive else 15
-             factor_groups["ADVERTENCIAS"].append({"k": "Curvatura EMA50", "v": "Pendiente Lateral", "score": -penalty})
+             factor_groups["ADVERTENCIAS"].append({
+                 "k": "Curvatura EMA50", "v": "Pendiente Lateral", "score": -penalty,
+                 "desc": "La media EMA50 está plana. Operar en estas condiciones aumenta drásticamente el riesgo de 'choppiness' (movimiento lateral errático)."
+             })
              net_score -= penalty
         else:
-             factor_groups["ADVERTENCIAS"].append({"k": "Curvatura EMA50", "v": "Pendiente OK", "score": 0})
+             factor_groups["ADVERTENCIAS"].append({
+                 "k": "Curvatura EMA50", "v": "Pendiente OK", "score": 0,
+                 "desc": "La inclinación de la EMA50 valida que el mercado tiene una dirección definida y no está en un rango estrecho."
+             })
 
         # --- MEJORA 2: DETECCIÓN DE "SANDWICH" (ZONA DE TRAMPA) ---
         # Si tenemos EMA200, verificar si estamos atrapados entre EMA50 y EMA200
@@ -611,19 +728,66 @@ class PSTEMAFlow:
                  if in_sandwich and is_compressed:
                      trap_penalty = 30
                      net_score -= trap_penalty
-                     factor_groups["VALIDACION"].append({"k": "Zona de Trampa", "v": "Sandwich EMA50/200", "score": -trap_penalty})
+                     factor_groups["VALIDACION"].append({
+                         "k": "Zona de Trampa", "v": "Sandwich EMA50/200", "score": -trap_penalty,
+                         "desc": "El precio está comprimido entre la EMA50 y la EMA200. Esta zona suele actuar como un imán o un muelle ruidoso donde el precio rebota sin dirección."
+                     })
              except: pass
 
         # 3. HTF ALIGNMENT (M15)
         if direction == 1 and htf_filter == -1:
-            factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": "Contratendencia M15", "score": -20}
+            factor_groups["ESTRUCTURA"] = {
+                "k": "Estructura", "v": "Contratendencia M15", "score": -20,
+                "desc": "La tendencia en temporalidad M15 es contraria. Operar aquí se considera de alto riesgo ya que estamos yendo contra la fuerza macro."
+            }
             net_score -= 20
         elif direction == -1 and htf_filter == 1:
-            factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": "Contratendencia M15", "score": -20}
+            factor_groups["ESTRUCTURA"] = {
+                "k": "Estructura", "v": "Contratendencia M15", "score": -20,
+                "desc": "La tendencia en temporalidad M15 es contraria. Operar aquí se considera de alto riesgo ya que estamos yendo contra la fuerza macro."
+            }
             net_score -= 20
         elif htf_filter != 0:
             net_score += 15
-            factor_groups["ESTRUCTURA"] = {"k": "Estructura", "v": "M15 Confirmada", "score": 15}
+            factor_groups["ESTRUCTURA"] = {
+                "k": "Estructura", "v": "M15 Confirmada", "score": 15,
+                "desc": "Alineación de tendencia perfecta entre M5 y M15. La probabilidad de éxito aumenta significativamente."
+            }
+
+        # --- NEW: DXY CORRELATION FILTER (FASE DXY PRO) ---
+        dxy_data = data_input.get('dxy') if isinstance(data_input, dict) else None
+        if dxy_data:
+            # Si el símbolo es XXXUSD y el DXY es alcista, vender el par
+            # Si el símbolo es XXXUSD y el DXY es bajista, comprar el par
+            # Si el símbolo es USDXXX y el DXY es alcista, comprar el par
+            # Si el símbolo es USDXXX y el DXY es bajista, vender el par
+            
+            is_usd_base = symbol.upper().startswith("USD")
+            dxy_bullish = dxy_data['trend'] == 1
+            
+            # Alineación Ideal
+            ideal_alignment = False
+            if direction == 1: # COMPRA
+                if is_usd_base and dxy_bullish: ideal_alignment = True
+                elif not is_usd_base and not dxy_bullish: ideal_alignment = True
+            elif direction == -1: # VENTA
+                if is_usd_base and not dxy_bullish: ideal_alignment = True
+                elif not is_usd_base and dxy_bullish: ideal_alignment = True
+            
+            if dxy_data:
+                pts = 15 if ideal_alignment else -25
+                status = "A FAVOR" if ideal_alignment else "EN CONTRA"
+                dxy_desc = f"El DXY (Índice del Dólar) está en régimen {dxy_data['status']}. Esto {'valida' if ideal_alignment else 'pone en riesgo'} nuestra tesis operacional debido a la alta correlación con el activo."
+                factor_groups["VALIDACION"].append({
+                    "k": "Filtro DXY", 
+                    "v": f"{status} ({dxy_data['status']})", 
+                    "score": pts,
+                    "desc": dxy_desc
+                })
+                net_score += pts
+                
+                if not ideal_alignment:
+                    block_reasons.append(f"DXY en contra ({dxy_data['status']})")
 
         # 4. H1 FRICTION (FASE 55 - FRACTAL ALIGNMENT)
         df_h1 = data_input.get('h1') if isinstance(data_input, dict) else None
@@ -639,14 +803,29 @@ class PSTEMAFlow:
                  # Si la tendencia contraria de H1 es MUY fuerte (ADX > 30), bloqueo absoluto
                  if h1_adx > 30:
                      internal_gate_failed = True
-                     factor_groups["VALIDACION"].append({"k": "Bloqueo Fractal H1", "v": f"Imparable en contra (ADX {h1_adx:.1f})", "score": -50})
+                     factor_groups["VALIDACION"].append({
+                          "k": "Bloqueo Fractal H1", 
+                          "v": f"Imparable en contra (ADX {h1_adx:.1f})", 
+                          "score": -50,
+                          "desc": "La tendencia en H1 es tan fuerte en dirección opuesta que intentar operar en M5 es suicida. El bot bloquea la entrada hasta que el flujo fractal se alinee."
+                      })
                      net_score -= 50
                  elif is_type_a_reversal:
-                     factor_groups["VALIDACION"].append({"k": "Fricción H1 (Filtro)", "v": "Ignorada (Giro Tipo A)", "score": 0})
+                     factor_groups["VALIDACION"].append({
+                          "k": "Fricción H1 (Filtro)", 
+                          "v": "Ignorada (Giro Tipo A)", 
+                          "score": 0,
+                          "desc": "Ignoramos la contratendencia de H1 porque estamos ante un cambio de estructura mayor (Tipo A) que suele preceder al cambio en temporalidades superiores."
+                      })
                  else:
                       penalty_h1 = P_H1_PENALTY
                       net_score -= penalty_h1
-                      factor_groups["VALIDACION"].append({"k": "Momento H1", "v": "Contratendencia Débil", "score": -penalty_h1})
+                      factor_groups["VALIDACION"].append({
+                          "k": "Momento H1", 
+                          "v": "Contratendencia Débil", 
+                          "score": -penalty_h1,
+                          "desc": "La tendencia lenta (H1) está en contra de nuestra operación. Aunque no bloquea la entrada (ADX bajo), resta puntos a la fiabilidad del setup."
+                      })
 
         # 4b. VOLUME CONFIRMATION (Institutional Backing)
         # User Req: Crisis WR Fix - Require at least 1.2 relative volume
@@ -654,15 +833,24 @@ class PSTEMAFlow:
         if vol_rel < 1.2:
             vol_penalty = 20
             net_score -= vol_penalty
-            factor_groups["MOMENTO"].append({"k": "Volumen Pobre", "v": f"Relativo ({vol_rel:.2f} < 1.2)", "score": -vol_penalty})
+            factor_groups["MOMENTO"].append({
+                "k": "Volumen Pobre", "v": f"Relativo ({vol_rel:.2f} < 1.2)", "score": -vol_penalty,
+                "desc": "El volumen actual es bajo. Falta el 'gasolina' institucional necesaria para mover el precio con convicción."
+            })
         else:
             net_score += 10
-            factor_groups["MOMENTO"].append({"k": "Volumen Confirmado", "v": f"Relativo ({vol_rel:.2f})", "score": 10})
+            factor_groups["MOMENTO"].append({
+                "k": "Volumen Confirmado", "v": f"Relativo ({vol_rel:.2f})", "score": 10,
+                "desc": "El volumen supera la media local, indicando participación real y validando la fuerza del movimiento actual."
+            })
 
         # 5. FRESHNESS
         if not is_passive and last_event_idx == 0: 
             net_score += 10
-            factor_groups["SETUP"] = [factor_groups.get("SETUP", {}), {"k": "Inmediatez", "v": "Evento Reciente", "score": 10}]
+            factor_groups["SETUP"] = [factor_groups.get("SETUP", {}), {
+                "k": "Inmediatez", "v": "Evento Reciente", "score": 10,
+                "desc": "La señal de ruptura o giro acaba de ocurrir. Entrar cerca del evento minimiza la exposición y maximiza el potencial de R:R."
+            }]
         
         # 6. RSI MOMENTUM
         curr_rsi = mtr_m5['rsi'] if mtr_m5 else 50
@@ -671,14 +859,29 @@ class PSTEMAFlow:
                  net_score += 15
                  factor_groups["MOMENTO"].append({"k": "Impulso RSI", "v": f"Alcista ({curr_rsi:.1f})", "score": 15})
              else:
-                 factor_groups["MOMENTO"].append({"k": "Zona RSI", "v": f"Agotamiento/Debilidad ({curr_rsi:.1f})", "score": -15})
+                 factor_groups["MOMENTO"].append({
+                     "k": "Zona RSI", 
+                     "v": f"Agotamiento/Debilidad ({curr_rsi:.1f})", 
+                     "score": -15,
+                     "desc": "El RSI fuera de la zona ideal (50-65 para compras) sugiere que el movimiento está agotado o carece de momentum alcista."
+                 })
                  net_score -= 15
         elif direction == -1:
              if 35 < curr_rsi < 50: # Tightened from 25 to 35
                  net_score += 15
-                 factor_groups["MOMENTO"].append({"k": "Impulso RSI", "v": f"Bajista ({curr_rsi:.1f})", "score": 15})
+                 factor_groups["MOMENTO"].append({
+                     "k": "Impulso RSI", 
+                     "v": f"Bajista ({curr_rsi:.1f})", 
+                     "score": 15,
+                     "desc": "El RSI se encuentra en territorio bajista saludable (35-50), lo que confirma que hay presión de venta real sin llegar todavía a la zona de sobreventa extrema."
+                 })
              else:
-                 factor_groups["MOMENTO"].append({"k": "Zona RSI", "v": f"Agotamiento/Debilidad ({curr_rsi:.1f})", "score": -15})
+                 factor_groups["MOMENTO"].append({
+                     "k": "Zona RSI", 
+                     "v": f"Agotamiento/Debilidad ({curr_rsi:.1f})", 
+                     "score": -15,
+                     "desc": f"El RSI en {curr_rsi:.1f} indica que el movimiento bajista está agotado (RSI < 35) o carece de momentum suficiente para continuar cayendo."
+                 })
                  net_score -= 15
 
         # 7. PRICE VS EMAS (VALIDATION)
@@ -699,12 +902,18 @@ class PSTEMAFlow:
                 net_score = net_score * (1 - reduction)
                 penalty = round(pre_penalty_score - net_score)
                 cause = "Cierre < EMA21" if fail_ema21 else "Zona de Trampa (Sandwich EMA50)"
-                factor_groups["VALIDACION"].append({"k": "Validación", "v": cause, "score": -penalty})
+                factor_groups["VALIDACION"].append({
+                    "k": "Validación", "v": cause, "score": -penalty,
+                    "desc": f"Fallo de confirmación física: El precio ha cerrado por debajo de la media de control ({cause}). Se aplica una penalización drástica al score."
+                })
             
             dist_ema50 = (latest_c - latest_ema50) / latest_ema50 * 100
             if dist_ema50 > 1.0:
                 internal_gate_failed = True
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso", "v": "Sobre-extendido (EMA)", "score": -40})
+                factor_groups["ADVERTENCIAS"].append({
+                    "k": "Exceso", "v": "Sobre-extendido (EMA)", "score": -40,
+                    "desc": "El precio está demasiado lejos de la media EMA50 (>1.0%). La probabilidad de un retroceso violento (reversión a la media) es muy alta."
+                })
                 net_score -= 40
             
             # --- NEW: Bollinger Overextension (GOOG Fix) ---
@@ -712,7 +921,10 @@ class PSTEMAFlow:
             if bb_u > 0 and latest_c >= bb_u:
                 internal_gate_failed = True # No bloquea pero penaliza fuertemente para evitar tops
                 reason = "Agotamiento (Techo Bollinger)"
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": reason, "score": -35})
+                factor_groups["ADVERTENCIAS"].append({
+                    "k": "Exceso BB", "v": reason, "score": -35,
+                    "desc": "El precio ha tocado o superado la Banda de Bollinger superior. Estadísticamente, el precio tiende a rechazar estos niveles de sobrecompra extrema."
+                })
                 block_reasons.append(reason)
                 net_score -= 35
         elif direction == -1:
@@ -725,12 +937,18 @@ class PSTEMAFlow:
                 net_score = net_score * (1 - reduction)
                 penalty = round(pre_penalty_score - net_score)
                 cause = "Cierre > EMA21" if fail_ema21 else "Zona de Trampa (Sandwich EMA50)"
-                factor_groups["VALIDACION"].append({"k": "Validación", "v": cause, "score": -penalty})
+                factor_groups["VALIDACION"].append({
+                    "k": "Validación", "v": cause, "score": -penalty,
+                    "desc": f"Fallo de confirmación física: El precio ha cerrado por debajo de la media de control ({cause}). Se aplica una penalización drástica al score."
+                })
             
             dist_ema50 = (latest_ema50 - latest_c) / latest_ema50 * 100
             if dist_ema50 > 1.0:
                 internal_gate_failed = True
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso", "v": "Sobre-extendido (EMA)", "score": -40})
+                factor_groups["ADVERTENCIAS"].append({
+                    "k": "Exceso", "v": "Sobre-extendido (EMA)", "score": -40,
+                    "desc": "El precio está demasiado lejos de la media EMA50 (>1.0%). La probabilidad de un retroceso violento (reversión a la media) es muy alta."
+                })
                 net_score -= 40
 
             # --- NEW: Bollinger Overextension (GOOG Fix) ---
@@ -738,14 +956,17 @@ class PSTEMAFlow:
             if bb_l > 0 and latest_c <= bb_l:
                 internal_gate_failed = True
                 reason = "Agotamiento (Suelo Bollinger)"
-                factor_groups["ADVERTENCIAS"].append({"k": "Exceso BB", "v": reason, "score": -35})
+                factor_groups["ADVERTENCIAS"].append({
+                    "k": "Exceso BB", "v": reason, "score": -35,
+                    "desc": "El precio ha tocado o superado la Banda de Bollinger superior. Estadísticamente, el precio tiende a rechazar estos niveles de sobrecompra extrema."
+                })
                 block_reasons.append(reason)
                 net_score -= 35
 
         # --- FINAL DECISION ---
         score = min(100, max(0, round(net_score)))
         entry = 0
-        THRESHOLD = 75 
+        THRESHOLD = kwargs.get('score_threshold') or 80 
         
         # --- NEW: HARD EXHAUSTION FILTERS (Anti-Chasing & Hard RSI) ---
         # User Req: Bloqueo rígido para evitar entradas tardías (late-entries).
@@ -765,71 +986,97 @@ class PSTEMAFlow:
             if rsi_exhausted:
                 internal_gate_failed = True
                 cause = "RSI > 70" if direction == 1 else "RSI < 30"
-                factor_groups["ADVERTENCIAS"].append({"k": "BLOQUEO RSI", "v": f"Agotamiento ({cause})", "score": -50})
+                factor_groups["ADVERTENCIAS"].append({
+                    "k": "BLOQUEO RSI", 
+                    "v": f"Agotamiento ({cause})", 
+                    "score": -50,
+                    "desc": "La entrada está bloqueada porque el RSI muestra un estado de sobrecompra o sobreventa extrema. Operar aquí dispararía las probabilidades de quedar atrapado en el techo/suelo."
+                })
             
             if is_chasing:
                 # Ya NO fallamos el internal_gate. Pasamos el score, pero habilitamos is_chasing para triggerear el STALKING posterior.
-                factor_groups["ADVERTENCIAS"].append({"k": "PULLBACK REQUERIDO", "v": f"Dist. EMA21 {dist_ema21/current_atr:.1f} ATR", "score": -10})
+                factor_groups["ADVERTENCIAS"].append({
+                    "k": "PULLBACK REQUERIDO", 
+                    "v": f"Dist. EMA21 {dist_ema21/current_atr:.1f} ATR", 
+                    "score": -10,
+                    "desc": "El precio está en tendencia pero se ha alejado de la media de referencia. Operar aquí es arriesgado; es mejor esperar a que el precio regrese a la zona de valor (EMA21)."
+                })
                 net_score -= 10 # Pequeña penalización por esperar, pero mantiene el score alto (>80) para que el user vea el setup
 
         # ENTRY RULES: Score >= 75 AND not passive AND gates passed
         is_stalking = False
         
+        # DEBUG DE TIPOS
+        if THRESHOLD is None or score is None:
+            logger.error(f"❌ [DEBUG] EMA Flow: score={score} ({type(score)}), THRESHOLD={THRESHOLD} ({type(THRESHOLD)})")
+            if THRESHOLD is None: THRESHOLD = 80
+            if score is None: score = 0
+
         if score >= THRESHOLD and not is_passive and not internal_gate_failed:
              if is_chasing:
                  # En lugar de bloquear la entrada bruscamente, el bot se queda "acechando" un pullback
                  is_stalking = True
                  entry = 0 # No disparamos aun
-                 factor_groups["ESTADO"] = {"k": "Estado", "v": "ACECHANDO PULLBACK", "score": 0}
+                 factor_groups["ESTADO"] = {
+                     "k": "Estado", "v": "ACECHANDO PULLBACK", "score": score,
+                     "desc": "El setup técnico es válido, pero el precio está lejos de la media. El bot está en modo 'acecho', esperando que ocurra un retroceso para entrar a un mejor precio."
+                 }
                  block_reasons.append(f"Esperando Pullback EMA21 ({dist_ema21/current_atr:.1f} ATR)")
-                 logger.info(f"🐺 [EMA STALKING] {symbol} Score={score}% - Setup OK pero esperando pullback a EMA21 (Dist: {dist_ema21/current_atr:.1f} ATR). No se dispara aun.")
              else:
                  entry = direction
-                 factor_groups["ESTADO"] = {"k": "Estado", "v": "ORDEN ACTIVADA", "score": 0}
-                 logger.info(f"⚡ [EMA ENTRY] {symbol} Score={score}% - Disparando orden {'+1=BUY' if direction==1 else '-1=SELL'}")
+                 factor_groups["ESTADO"] = {
+                     "k": "Estado", "v": "ORDEN ACTIVADA", "score": score,
+                     "desc": "¡Se cumplen todos los requisitos institucionales y técnicos! Se ha procedido a activar la señal operativa."
+                 }
         elif is_passive:
-            factor_groups["ESTADO"] = {"k": "Estado", "v": "Mantenimiento Pasivo", "score": 0}
-            if score >= 70: logger.info(f"🚫 [EMA BLOQUEADO-PASIVO] {symbol} Score={score}% - Tendencia pasiva, sin setup activo")
+            factor_groups["ESTADO"] = {
+                "k": "Estado", "v": "Mantenimiento Pasivo", "score": 0,
+                "desc": "El bot mantiene activa la vigilancia del símbolo bajo un sesgo de tendencia establecido, sin buscar entradas nuevas hasta que haya un setup fresco."
+            }
         elif internal_gate_failed:
-            factor_groups["ESTADO"] = {"k": "Estado", "v": "Bloqueo por Seguridad", "score": 0}
-            if score >= 70: logger.info(f"🚫 [EMA BLOQUEADO-GATE] {symbol} Score={score}% - Gate de seguridad activo (RSI/ADX/H1/BB). Ver breakdown.")
+            factor_groups["ESTADO"] = {
+                "k": "Estado", "v": "Bloqueo por Seguridad", "score": 0,
+                "desc": "La operación está bloqueada por fallos en las puertas de seguridad (ADX insuficiente, volumen bajo o condiciones fractales hostiles)."
+            }
 
         # --- CAP VISUAL: Si no hay entrada real, el score no puede superar 74 ---
-        # Razón: Un score >= 75 en el frontend indica "LISTO PARA OPERAR".
-        # Si estamos en STALKING, PASIVO o con gate, cappear para no confundir.
         if entry == 0:
             score = min(score, 74)
-            # Inyectar motivo principal de bloqueo en el UI si el score es alto
-            if score >= 70 or internal_gate_failed or is_stalking:
-                txt_reason = ", ".join(block_reasons) if block_reasons else ("Sin setup claro" if not is_passive else "Mantenimiento pasivo")
-                factor_groups["BLOCKER"] = {"k": "MOTIVO DE BLOQUEO", "v": txt_reason, "score": 0}
-
 
         # --- CONSTRUCT FINAL FACTORS LIST (Explicit Layout & Unique) ---
         factors_detailed = []
 
         def add_unique_f(f_list, factor):
             if not factor: return
-            # Avoid adding the same factor twice (by key and value)
             for existing in f_list:
                 if existing['k'] == factor['k'] and existing['v'] == factor['v']:
                     return
             f_list.append(factor)
 
         # 1. ROW 1: M5 & M15 GIROS (Always present for structure)
-        m5_ev = factor_groups.get("LAYOUT_TOP_M5") or {"k": "Giro EMA50 M5", "v": "Neutral", "score": 0}
-        m15_ev = factor_groups.get("LAYOUT_TOP_M15") or {"k": "Giro EMA50 M15", "v": "Neutral", "score": 0}
+        m5_ev = factor_groups.get("LAYOUT_TOP_M5") or {
+            "k": "Giro EMA50 M5", "v": "Neutral", "score": 0,
+            "desc": "Monitorización de la estructura de 5 minutos. Estado neutral indica ausencia de cruces o rupturas relevantes de la EMA50."
+        }
+        m15_ev = factor_groups.get("LAYOUT_TOP_M15") or {
+            "k": "Giro EMA50 M15", "v": "Neutral", "score": 0,
+            "desc": "Monitorización de la tendencia intermedia (15 minutos). Estado neutral indica que el activo está consolidando sin una dirección dominante."
+        }
         add_unique_f(factors_detailed, m5_ev)
         add_unique_f(factors_detailed, m15_ev)
 
-        # 2. ROW 2: STATUS & STRUCTURE & BLOCKER
-        st_ev = factor_groups.get("ESTADO") or {"k": "Estado", "v": "Analizando", "score": 0}
-        str_ev = factor_groups.get("ESTRUCTURA") or {"k": "Estructura", "v": "Sincronizando", "score": 0}
-        bl_ev = factor_groups.get("BLOCKER")
+        # 2. ROW 2: STATUS & STRUCTURE & PULLBACK
+        st_ev = factor_groups.get("ESTADO") or {
+            "k": "Estado", "v": "Analizando", "score": 0,
+            "desc": "El algoritmo está procesando los datos de mercado en tiempo real para clasificar el estado actual del activo."
+        }
+        str_ev = factor_groups.get("ESTRUCTURA") or {
+            "k": "Estructura", "v": "Sincronizando", "score": 0,
+            "desc": "Validando el alineamiento de temporalidades y buscando el sesgo técnico predominante para esta sesión."
+        }
         
         add_unique_f(factors_detailed, st_ev)
         add_unique_f(factors_detailed, str_ev)
-        if bl_ev: add_unique_f(factors_detailed, bl_ev)
 
         # 3. THE REST (Ordered)
         ordered_keys = ["FUERZA", "VOLUMEN", "SETUP_GENERIC", "MOMENTO", "VALIDACION", "ADVERTENCIAS"]
@@ -842,43 +1089,40 @@ class PSTEMAFlow:
                     add_unique_f(factors_detailed, val)
 
         atr = ta.atr(df['high'], df['low'], df['close'], length=14).iloc[-1]
+        
+        # Breakdown construction
+        breakdown = {}
         for f in factors_detailed:
              breakdown[f['k']] = f"{f['v']} ({'+' if f['score'] >= 0 else ''}{f['score']})"
 
         # Mensaje de Estatus Principal
         status_msg = "Estudiando..."
-        if is_passive:
-             status_msg = "Esperando Setup (Pasivo)"
-        elif internal_gate_failed:
-             status_msg = "Filtrado (Seguridad)"
-        elif is_stalking:
-             status_msg = "Acechando Pullback (STALKING)"
-        elif entry != 0:
-             status_msg = "Setup Activo"
+        if is_passive: status_msg = "Pasivo"
+        elif internal_gate_failed: status_msg = "Filtrado"
+        elif is_stalking: status_msg = "ACECHANDO"
+        elif entry != 0: status_msg = "ACTIVO"
 
         metadata = {
             "strategy": self.STRATEGY_NAME,
-            "score": score,
-            "total_score": score,  # Now strictly the RAW score
+            "score": round(score),
+            "total_score": round(score),
             "score_breakdown": breakdown,
             "factors_detailed": factors_detailed,
             "can_entry": entry != 0,
-            "gate_failed": internal_gate_failed or is_passive,
-            "ema21": round(latest_ema21, 2),
-            "ema50": round(latest_ema50, 2),
-            "adx": round(mtr_m5['adx'] if mtr_m5 else 0, 1),
-            "rsi": round(curr_rsi, 1),
-            "bb_u": round(mtr_m5.get('bb_u', 0) if mtr_m5 else 0, 2),
-            "bb_l": round(mtr_m5.get('bb_l', 0) if mtr_m5 else 0, 2),
+            "is_stalking": is_stalking,
             "status": status_msg,
-            "direction": direction
+            "direction": direction,
+            "target_price": latest_ema21 if is_stalking else 0
         }
 
         return {
             "entry": entry,
+            "score": score,
+            "direction": direction,
+            "is_stalking": is_stalking,
+            "target_price": round(latest_ema21, 5) if is_stalking else 0,
             "atr": atr,
-            "metadata": metadata,
-            "score": score
+            "metadata": metadata
         }
 
     def check_exit_signal(self, df, position_type):

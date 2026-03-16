@@ -34,14 +34,15 @@ class PSTDatabase:
                     time_out TIMESTAMP,
                     regime_at_entry TEXT,
                     strategy_name TEXT,
-                    ticket INTEGER DEFAULT 0
+                    ticket INTEGER DEFAULT 0,
+                    is_partial_closed INTEGER DEFAULT 0
                 )
             ''')
             
-            # Migración: Añadir columna ticket si no existe
             try:
                 await db.execute("ALTER TABLE trades ADD COLUMN ticket INTEGER DEFAULT 0")
-            except: pass # Ya existe
+                await db.execute("ALTER TABLE trades ADD COLUMN is_partial_closed INTEGER DEFAULT 0")
+            except: pass # Ya existen
             
             # Tabla de Señales (Para analizar fiabilidad)
             await db.execute('''
@@ -307,10 +308,13 @@ class PSTDatabase:
 
     async def save_trade(self, trade_data: dict):
         """Guarda una operación iniciada o finalizada."""
+        if 'is_partial_closed' not in trade_data:
+            trade_data['is_partial_closed'] = 0
+            
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
             await db.execute('''
-                INSERT INTO trades (symbol, type, volume, price_in, price_out, sl, tp, profit, time_in, time_out, regime_at_entry, strategy_name, ticket)
-                VALUES (:symbol, :type, :volume, :price_in, :price_out, :sl, :tp, :profit, :time_in, :time_out, :regime_at_entry, :strategy_name, :ticket)
+                INSERT INTO trades (symbol, type, volume, price_in, price_out, sl, tp, profit, time_in, time_out, regime_at_entry, strategy_name, ticket, is_partial_closed)
+                VALUES (:symbol, :type, :volume, :price_in, :price_out, :sl, :tp, :profit, :time_in, :time_out, :regime_at_entry, :strategy_name, :ticket, :is_partial_closed)
             ''', trade_data)
             await db.commit()
 
@@ -326,6 +330,15 @@ class PSTDatabase:
                 await db.commit()
         except Exception as e:
             logger.error(f"❌ Error update_trade_cierre: {e}")
+
+    async def mark_trade_partial_closed(self, ticket: int):
+        """Marca una operación como que ya ha tenido un cierre parcial del 50%."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                await db.execute("UPDATE trades SET is_partial_closed = 1 WHERE ticket = ?", (ticket,))
+                await db.commit()
+        except Exception as e:
+            logger.error(f"❌ Error mark_trade_partial_closed: {e}")
 
     async def update_trade_notes(self, ticket, notes):
         """Actualiza las notas/comentario de un trade."""
@@ -380,6 +393,31 @@ class PSTDatabase:
                         max_win_streak = max(max_win_streak, curr_win_streak)
                         max_loss_streak = max(max_loss_streak, curr_loss_streak)
 
+                # 3. Métricas por Estrategia
+                async with db.execute("""
+                    SELECT 
+                        strategy_name,
+                        COUNT(*) as total,
+                        SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
+                        SUM(profit) as total_profit
+                    FROM trades WHERE price_out > 0
+                    GROUP BY strategy_name
+                """) as cursor:
+                    rows_strat = await cursor.fetchall()
+                    by_strategy = {}
+                    for r in rows_strat:
+                        s_name = r['strategy_name'] or "Manual"
+                        s_total = r['total'] or 0
+                        s_wins = r['wins'] or 0
+                        s_profit = r['total_profit'] or 0.0
+                        s_wr = (s_wins / s_total * 100) if s_total > 0 else 0
+                        by_strategy[s_name] = {
+                            "total": s_total,
+                            "wins": s_wins,
+                            "win_rate": round(s_wr, 1),
+                            "profit": round(s_profit, 2)
+                        }
+
                 return {
                     "total_trades": total,
                     "win_rate": round(win_rate, 2),
@@ -387,7 +425,8 @@ class PSTDatabase:
                     "max_win_streak": max_win_streak,
                     "max_loss_streak": max_loss_streak,
                     "gross_profit": round(gross_profit, 2),
-                    "gross_loss": round(gross_loss, 2)
+                    "gross_loss": round(gross_loss, 2),
+                    "by_strategy": by_strategy
                 }
         except Exception as e:
             logger.error(f"❌ Error get_advanced_metrics: {e}")
@@ -580,8 +619,8 @@ class PSTDatabase:
                 
                 if not exists:
                     await db.execute("""
-                        INSERT INTO symbol_strategies (symbol, strategy_name, is_active, risk_mode, risk_value, sl_mult, tp_mult, score_threshold, use_trailing, use_breakeven, be_mult, ts_mult)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO symbol_strategies (symbol, strategy_name, is_active, risk_mode, risk_value, sl_mult, tp_mult, score_threshold, use_trailing, use_breakeven, be_mult, ts_mult, min_rr)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         symbol, strategy_name, 
                         1 if is_active is None or is_active else 0,
@@ -800,7 +839,8 @@ class PSTDatabase:
         """Obtiene el beneficio realizado por cada símbolo en las últimas 24 horas."""
         try:
             from datetime import timedelta
-            since = datetime.now() - timedelta(hours=24)
+            # Usar formato ISO para comparación robusta en SQLite
+            since = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
                 db.row_factory = aiosqlite.Row
                 # Buscamos trades cerrados (price_out > 0) con time_out en las últimas 24h
@@ -811,7 +851,16 @@ class PSTDatabase:
                     GROUP BY symbol
                 """, (since,)) as cursor:
                     rows = await cursor.fetchall()
-                    return {r['symbol'].upper(): r['total_profit'] for r in rows}
+                    pnl_map = {}
+                    for r in rows:
+                        sym = r['symbol'].upper()
+                        pnl_map[sym] = r['total_profit']
+                        # Normalización: añadir también la base sin sufijos (.m, .pro, etc)
+                        for suffix in [".m", ".pro", ".ecn", ".x", "i"]:
+                            if sym.endswith(suffix.upper()):
+                                base = sym[:-len(suffix)]
+                                pnl_map[base] = pnl_map.get(base, 0.0) + r['total_profit']
+                    return pnl_map
         except Exception as e:
             logger.error(f"❌ Error get_24h_profit_by_symbol: {e}")
             return {}

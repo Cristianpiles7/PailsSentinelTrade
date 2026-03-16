@@ -9,21 +9,39 @@ class NewsManager:
         self.news_data = []
         self.last_fetch = None
         # URL de calendario económico público (ForexFactory JSON format or similar)
-        # Usamos una fuente estable. 
         self.news_url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        import os
+        self.cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news_cache.json")
 
     def fetch_news(self):
-        """Descarga el calendario de la semana."""
+        """Descarga el calendario de la semana con caché en archivo para evitar 429."""
+        import os
+        import json
         try:
-            # Solo descargar una vez cada hora para evitar rate limit
-            if self.last_fetch and (datetime.now() - self.last_fetch).total_seconds() < 3600:
-                return
+            # 1. Intentar cargar desde caché en archivo primero
+            if os.path.exists(self.cache_path):
+                mtime = os.path.getmtime(self.cache_path)
+                # Si el archivo tiene menos de 1 hora, lo usamos
+                if (datetime.now().timestamp() - mtime) < 3600:
+                    with open(self.cache_path, "r") as f:
+                        self.news_data = json.load(f)
+                    self.last_fetch = datetime.fromtimestamp(mtime)
+                    return
 
+            # 2. Si no hay caché o es vieja, descargar
             response = requests.get(self.news_url, timeout=10)
             if response.status_code == 200:
                 self.news_data = response.json()
                 self.last_fetch = datetime.now()
+                # Guardar en caché para otros procesos
+                with open(self.cache_path, "w") as f:
+                    json.dump(self.news_data, f)
                 logger.info(f"📥 Calendario económico actualizado ({len(self.news_data)} eventos).")
+            elif response.status_code == 429:
+                logger.warning("⚠️ Rate limit (429) alcanzado en noticias. Usando caché vieja si existe.")
+                if os.path.exists(self.cache_path):
+                    with open(self.cache_path, "r") as f:
+                        self.news_data = json.load(f)
             else:
                 logger.error(f"❌ Error al descargar noticias: {response.status_code}")
         except Exception as e:

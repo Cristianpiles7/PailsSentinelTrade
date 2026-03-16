@@ -4,7 +4,7 @@ import pandas_ta as ta
 import logging
 from datetime import datetime, timezone
 from ..models.classifier import RegimeMode
-from ..utils.tech_utils import get_asset_class, get_market_session, detect_absorption
+from ..utils.tech_utils import get_asset_class, get_market_session, detect_absorption, detect_order_blocks, detect_fvg
 
 def get_safe(series, default=0.0):
     try:
@@ -23,7 +23,7 @@ class PSTLiquidityHunter:
     # Tolerancia: Qué tan lejos puede romper el nivel para que siga siendo un 'Sweep' y no una rotura real.
     MAX_SWEEP_ATR = 1.5 
     
-    async def calculate_signal(self, data_input, current_regime, user_levels=None):
+    async def calculate_signal(self, data_input, current_regime, user_levels=None, **kwargs):
         """
         Calcula señales de "cacería de liquidez" (Stop Hunts / Sweeps).
         Busca que el precio rompa el alto/bajo del día anterior o sesión asiática, pero que el cierre
@@ -68,6 +68,7 @@ class PSTLiquidityHunter:
             "ESTADO": {"k": "Estado", "v": "Vigilando Liquidez", "score": 0},
             "SWEEP": None,
             "VSA": None,
+            "SMC": None,
             "MOMENTO": None,
             "FILTROS": []
         }
@@ -149,6 +150,54 @@ class PSTLiquidityHunter:
             score += pts
             factor_groups["FILTROS"].append({"k": "Pinbar/Absorción", "v": "Rechazo Claro", "score": pts})
 
+        # --- NEW: SMC CONFIRMATIONS (FASE SMC PRO) ---
+        obs = detect_order_blocks(df)
+        fvgs = detect_fvg(df)
+        smc_pts = 0
+        smc_desc = []
+        
+        # A. Order Blocks (OB)
+        # Buscamos si el nivel que estamos barriendo coincide con un OB institucional
+        active_ob = None
+        for ob in obs:
+            if not ob['mitigated']:
+                # Si es un BUY, buscamos un Bullish OB cerca del PDL
+                if signal_type == "BUY" and ob['type'] == 'BULLISH':
+                    if (ob['bottom'] - (current_atr*0.5)) <= latest_l <= (ob['top'] + (current_atr*0.5)):
+                        active_ob = ob
+                        break
+                # Si es un SELL, buscamos un Bearish OB cerca del PDH
+                elif signal_type == "SELL" and ob['type'] == 'BEARISH':
+                    if (ob['top'] + (current_atr*0.5)) >= latest_h >= (ob['bottom'] - (current_atr*0.5)):
+                        active_ob = ob
+                        break
+        
+        if active_ob:
+            smc_pts += 35
+            smc_desc.append(f"Order Block {active_ob['type']}")
+            
+        # B. Fair Value Gaps (FVG)
+        # Buscamos si hay un FVG reciente que el mercado esté cubriendo durante el sweep
+        active_fvg = None
+        for fvg in fvgs:
+            if signal_type == "BUY" and fvg['type'] == 'BULLISH':
+                # Si el precio acaba de entrar en un FVG alcista
+                if latest_l <= fvg['top'] and latest_c > fvg['bottom']:
+                    active_fvg = fvg
+                    break
+            elif signal_type == "SELL" and fvg['type'] == 'BEARISH':
+                if latest_h >= fvg['bottom'] and latest_c < fvg['top']:
+                    active_fvg = fvg
+                    break
+        
+        if active_fvg:
+            smc_pts += 15
+            smc_desc.append(f"FVG {active_fvg['type']}")
+            
+        if smc_pts > 0:
+            score += smc_pts
+            factor_groups["SMC"] = {"k": "Smart Money", "v": " + ".join(smc_desc), "score": smc_pts}
+
         # 5. CONTEXTO SESIONAL
         # Los verdaderos Sweeps de liquidez pasan en London Open y NY Open
         if session_name in ["LONDON", "NY", "OVERLAP"]:
@@ -171,7 +220,7 @@ class PSTLiquidityHunter:
         final_score = min(100, max(0, score))
 
         factors_list = []
-        for k in ["ESTADO", "SWEEP", "VSA", "MOMENTO"]:
+        for k in ["ESTADO", "SWEEP", "SMC", "VSA", "MOMENTO"]:
             if factor_groups[k]: factors_list.append(factor_groups[k])
         for f in factor_groups["FILTROS"]:
             factors_list.append(f)

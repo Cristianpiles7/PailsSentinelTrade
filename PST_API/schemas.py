@@ -9,6 +9,7 @@ class AccountStatus(BaseModel):
     margin_level: float
     daily_pnl: float
     profit: float
+    active_pnl: float
 
 class Trade(BaseModel):
     ticket: int
@@ -29,10 +30,20 @@ class Factor(BaseModel):
     k: str
     v: str
     score: float
+    desc: Optional[str] = None
 
 class StrategyBreakdown(BaseModel):
     score: float
     factors: List[Factor]
+    is_active: bool = True
+    risk_mode: Optional[str] = None
+    risk_value: Optional[float] = None
+    sl_mult: Optional[float] = None
+    tp_mult: Optional[float] = None
+    use_breakeven: Optional[bool] = None
+    use_trailing: Optional[bool] = None
+    be_mult: Optional[float] = None
+    ts_mult: Optional[float] = None
 
 class SymbolStatus(BaseModel):
     symbol: str
@@ -62,7 +73,18 @@ class OHLCBar(BaseModel):
 class ConfigUpdate(BaseModel):
     symbol: str
     strategy: Optional[str] = None
-    is_active: bool
+    is_active: Optional[bool] = None
+    score_threshold: Optional[float] = None
+    # Parámetros adicionales soportados por el Matrix Editor
+    sl_mult: Optional[float] = None
+    tp_mult: Optional[float] = None
+    risk_mode: Optional[str] = None
+    risk_value: Optional[float] = None
+    use_trailing: Optional[bool] = None
+    use_breakeven: Optional[bool] = None
+    be_mult: Optional[float] = None
+    ts_mult: Optional[float] = None
+    min_rr: Optional[float] = None
 
 class PerformanceMetrics(BaseModel):
     total_trades: int

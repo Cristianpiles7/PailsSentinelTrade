@@ -74,7 +74,7 @@ class PSTRSIEquities:
         except:
             return False, False
 
-    async def calculate_signal(self, data_input, current_regime, user_levels=None):
+    async def calculate_signal(self, data_input, current_regime, user_levels=None, **kwargs):
         # 1. Adaptador de Datos (Soporte M1 y M5)
         df_m1 = None
         df_m5 = None

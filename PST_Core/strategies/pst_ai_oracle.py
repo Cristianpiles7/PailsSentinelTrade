@@ -113,7 +113,7 @@ class PSTAIOracle:
         # Límites razonables (No menos de 45s para cloud (anti-spam), no más de 30 min)
         return max(45, min(1800, int(cooldown)))
 
-    async def calculate_signal(self, mtf_data, current_regime, user_levels=None, force=False):
+    async def calculate_signal(self, mtf_data, current_regime, user_levels=None, force=False, **kwargs):
         """Analiza el mercado usando Inteligencia Artificial. force=True ignora filtros técnicos."""
         
         # 2. Control de frecuencia (Anti-Burst)

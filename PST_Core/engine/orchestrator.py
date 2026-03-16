@@ -9,7 +9,8 @@ from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
 from ..strategies.pst_liquidity_hunter import PSTLiquidityHunter # FASE 55
-from ..strategies.pst_ai_oracle import PSTAIOracle # NEW V6.5 AI
+from ..strategies.pst_scalper_pro import PSTScalperPro # NEW FASE 68
+from ..strategies.pst_ai_oracle import PSTAIOracle # RESTORED
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
 from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES
@@ -28,6 +29,12 @@ logging.basicConfig(
     format='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%H:%M:%S'
 )
+# Silenciar spam de la API de Telegram y peticiones HTTP a nivel global
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+
 logger = logging.getLogger("PST-Orchestrator")
 
 class SymbolTask:
@@ -46,6 +53,7 @@ class SymbolTask:
         self.ema_flow = PSTEMAFlow()
         self.mean_reversion = PSTMeanReversion()
         self.liquidity_hunter = PSTLiquidityHunter()
+        self.scalper_pro = PSTScalperPro()
         
         # IA Dinámica (Selector por Símbolo)
         # Motor de IA Oráculo (Multi-Instancia para Competición)
@@ -58,6 +66,7 @@ class SymbolTask:
             self.ema_flow, 
             self.mean_reversion,
             self.liquidity_hunter,
+            self.scalper_pro,
             self.ai_oracle_gemini,
             self.ai_oracle_groq,
             self.ai_oracle_ollama
@@ -122,6 +131,8 @@ class SymbolTask:
             volatility_factor = 1.0
             is_market_open = True
             user_levels = None 
+            trading_mode = 'AUTO'
+            mode = RegimeMode.RANGE # Default seguro
 
             # 0. Actualizar estrategias activas (Dinámico)
             await self.update_active_strategies()
@@ -132,9 +143,31 @@ class SymbolTask:
                 self.running = False
                 break
             try:
-                # 1. Obtener Datos Multi-Timeframe (M5, M15, H1, H4)
-                mtf_data = await get_mtf_data_async(self.symbol)
+                # 1. Obtener Datos Multi-Timeframe (M1, M5, M15, H1, H4)
+                # Si una de las estrategias activas es SCALPER, priorizamos M1
+                needs_m1 = any(s.STRATEGY_NAME == "PST-Scalper-Pro" for s in self.strategies)
+                mtf_data = await get_mtf_data_async(self.symbol, include_m1=needs_m1)
                 mtf_data['symbol'] = self.symbol # Inyectar símbolo para estrategias
+                
+                # --- NEW: DXY CORRELATION CONTEXT (USD INDEX) ---
+                # Si el par contiene USD, inyectamos la tendencia del DXY
+                dxy_data = None
+                if "USD" in self.symbol.upper():
+                    try:
+                        # Intentamos obtener USDX (o DXY según broker)
+                        dxy_mtf = await fetch_rates_async("USDX", 100, 16385) # M5
+                        if dxy_mtf is not None and not dxy_mtf.empty:
+                            dxy_ema21 = ta.ema(dxy_mtf['close'], length=21).iloc[-1]
+                            dxy_close = dxy_mtf['close'].iloc[-1]
+                            dxy_data = {
+                                'price': dxy_close,
+                                'ema21': dxy_ema21,
+                                'trend': 1 if dxy_close > dxy_ema21 else -1,
+                                'status': 'BULLISH' if dxy_close > dxy_ema21 else 'BEARISH'
+                            }
+                    except: pass
+                
+                mtf_data['dxy'] = dxy_data
                 
                 # Obtener niveles manuales del usuario (Crítico para Trading Híbrido)
                 user_levels_list = await self.db.get_user_levels(self.symbol)
@@ -345,13 +378,14 @@ class SymbolTask:
                     
                     # Mapeo de nombres para consistencia
                     STRAT_TRANS = {
-                        "PSTChannelMaster": "Canal Maestro (T. Híbrido)",
-                        "PSTRSIEquities": "RSI Equities (Multi-Asset)",
-                        "PSTEMAFlow": "Flujo EMA (Tendencia)",
-                        "PSTMeanReversion": "Reversión a la Media (Rangos)",
-                        "PSTAIOracle_gemini": "🤖 IA Gemini (Cloud)",
-                        "PSTAIOracle_groq": "🚀 IA Groq (Super Sónica)",
-                        "PSTAIOracle_ollama": "🏠 IA Ollama (Local)"
+                        "PST-Channel-Master": "Canal Maestro (T. Híbrido)",
+                        "PST-RSI-Equities": "RSI Equities (Multi-Asset)",
+                        "PST-EMA-Flow": "Flujo EMA (Tendencia)",
+                        "PST-Mean-Reversion": "Reversión a la Media (Rangos)",
+                        "PST-Scalper-Pro": "Scalping Pro (Micro-Reversión)",
+                        "PST-AI-Oracle-gemini": "🤖 IA Gemini (Cloud)",
+                        "PST-AI-Oracle-groq": "🚀 IA Groq (Super Sónica)",
+                        "PST-AI-Oracle-ollama": "🏠 IA Ollama (Local)"
                     }
 
                     # Obtener configuración de estrategias para este símbolo (NEW V3.3)
@@ -425,59 +459,85 @@ class SymbolTask:
                     current_score = 0
                     strategy_name = None
                     best_metadata = {}
-                    all_factors = {} # NEW: Multi-Strategy factors
+                    all_factors = {} 
+
+                    # PRE-FETCH: Información del Símbolo y Modo de Trading (FASE 69 Fix)
+                    symbol_info = await sym_info_async(self.symbol)
+                    trading_mode = await self.db.get_config('trading_mode', 'AUTO')
 
                     for strat in elite_strats:
                         try:
-                            # Usar el ID específico si existe (para Multi-IA) o el nombre de clase
-                            strat_id = getattr(strat, 'STRAT_ID', type(strat).__name__)
-                            is_strat_active = strat_config.get(strat_id, True)
+                            # Usar STRATEGY_NAME para sincronizar con la DB (Matrix Editor)
+                            strat_id = getattr(strat, 'STRATEGY_NAME', type(strat).__name__)
+                            is_strat_active = strat_config.get(strat_id, {}).get('is_active', True)
                             if not is_strat_active:
                                 continue
 
                             # 1. Calcular señal
-                            s_result = await strat.calculate_signal(mtf_data, mode, user_levels=user_levels)
+                            # Pasar info extra como spread y configuración de la estrategia
+                            spread_pts = symbol_info.spread if symbol_info else 0
+                            spread_dist = spread_pts * symbol_info.point if symbol_info else 0
                             
+                            # Obtener parámetros específicos de esta estrategia desde la DB
+                            s_params_raw = strat_config.get(strat_id, {}).copy()
+                            # Limpiar metadatos de DB para evitar colisión de argumentos
+                            for key in ['symbol', 'strategy_name', 'id', 'last_update', 'is_active']:
+                                s_params_raw.pop(key, None)
+                            
+                            # --- FIX: ELIMINAR VALORES NONE PARA EVITAR TypeError EN LAS ESTRATEGIAS ---
+                            s_params = {k: v for k, v in s_params_raw.items() if v is not None}
+                            
+                            s_result = await strat.calculate_signal(
+                                mtf_data, 
+                                mode, 
+                                user_levels=user_levels, 
+                                spread_points=spread_pts, 
+                                spread_dist=spread_dist,
+                                symbol=self.symbol,
+                                **s_params # Inyectar parámetros: score_threshold, risk_value, etc.
+                            )
+                            
+                            # Usar el ID sincronizado definido al inicio del bucle: strat_id (STRATEGY_NAME)
                             s_score = s_result.get("score", 0)
                             s_meta = s_result.get("metadata", {})
-                            s_name_raw = getattr(strat, 'STRATEGY_NAME', type(strat).__name__)
-                            strat_id = getattr(strat, 'STRAT_ID', type(strat).__name__)
+                            s_name_raw = strat_id 
 
                             # --- NEW: STALKING LOGIC (ACECHO) ---
                             is_stalking_signal = s_result.get("is_stalking", False)
                             if is_stalking_signal:
-                                direction = s_result.get("direction", 0)
+                                stalk_dir = s_result.get("direction", 0)
                                 # Buscamos la EMA21 en M5 como nivel de retroceso ideal
-                                target_price = ema21_series.iloc[-1] if 'ema21_series' in locals() else price
+                                stalk_target = s_result.get("target_price", price)
                                 self.active_stalking[strat_id] = {
-                                    'direction': direction,
-                                    'target_price': target_price,
+                                    'direction': stalk_dir,
+                                    'target_price': stalk_target,
                                     'score': s_score,
                                     'strategy_name': s_name_raw
                                 }
-                                logger.info(f"🐺 [STALKING] {self.symbol} vigilando {s_name_raw}. Esperando pullback a {target_price:.5f}")
+                                logger.debug(f"🐺 [STALKING] {self.symbol} vigilando {s_name_raw}. Esperando pullback a {stalk_target:.5f}")
 
                             # Chequeo de activación de acecho previo
                             if strat_id in self.active_stalking:
                                 stalk_data = self.active_stalking[strat_id]
-                                stalk_dir = stalk_data['direction']
-                                target = stalk_data['target_price']
+                                s_stalk_dir = stalk_data['direction']
+                                s_target = stalk_data['target_price']
                                 
                                 # Condición de activación: El precio toca o supera el nivel de la EMA21 (pullback)
                                 is_triggered = False
-                                if stalk_dir == 1 and price <= target: is_triggered = True
-                                elif stalk_dir == -1 and price >= target: is_triggered = True
+                                if s_stalk_dir == 1 and price <= s_target: is_triggered = True
+                                elif s_stalk_dir == -1 and price >= s_target: is_triggered = True
                                 
                                 if is_triggered:
-                                    logger.info(f"⚡ [STALKING TRIGGER] {self.symbol} Pullback completado en {price:.5f}. Disparando {s_name_raw}.")
-                                    s_result["entry"] = stalk_dir
+                                    logger.debug(f"⚡ [STALKING TRIGGER] {self.symbol} Pullback completado en {price:.5f}. Disparando {s_name_raw}.")
+                                    s_result["entry"] = s_stalk_dir
                                     s_score = max(s_score, 85) # Forzamos score alto por cumplimiento de pullback
                                     del self.active_stalking[strat_id]
                                 elif s_score < 40: # Si la señal muere completamente, abortamos acecho
-                                    logger.info(f"🧊 [STALKING CANCEL] {self.symbol} Señal de {s_name_raw} debilitada. Abortando acecho.")
+                                    logger.debug(f"🧊 [STALKING CANCEL] {self.symbol} Señal de {s_name_raw} debilitada (Score {s_score}). Abortando acecho.")
                                     del self.active_stalking[strat_id]
                             
-                            # Inyectar nombre limpio en metadata
+                            # Inyectar dirección y nombre limpio en metadata para el Radar/HUD
+                            s_meta["direction"] = s_result.get("entry", 0)
                             s_meta["strategy_display"] = STRAT_TRANS.get(s_name_raw, s_name_raw)
                             s_name = STRAT_TRANS.get(s_name_raw, s_name_raw)
 
@@ -516,21 +576,11 @@ class SymbolTask:
 
                             # 2. Actualizar mejor score para el HUD
                             if s_score > current_score:
-                                # --- NEW: TELEGRAM SIGNAL ALERT (FASE 52) ---
-                                # if s_score >= 80 and s_score > current_score:
-                                #     sig_type_str_alert = "BUY" if s_result.get("entry", 0) == 1 else "SELL" if s_result.get("entry", 0) == -1 else "ALERT"
-                                #     # Solo alertar si hay dirección clara
-                                #     if sig_type_str_alert != "ALERT":
-                                #         asyncio.create_task(telegram_bot.send_signal_alert(self.symbol, sig_type_str_alert, s_score, price, s_name))
-
                                 current_score = s_score
                                 strategy_name = s_name
                                 best_metadata = s_meta
                                 atr_val = s_result.get("atr", 0)
 
-                            # Check rápido de trading mode
-                            trading_mode = await self.db.get_config('trading_mode', 'AUTO')
-                            
                             # Diagnostic log before the execution gate
                             logger.debug(f"⚙️ [{self.symbol}] Execution Gate Check: is_strat_in_regime={is_strat_in_regime}, entry_signal={s_result.get('entry', 0)}, trading_mode='{trading_mode}', is_market_open={is_market_open}")
                             
@@ -583,8 +633,8 @@ class SymbolTask:
                                                 sl_mult = SL_ATR_MULTIPLIER
                                                 tp_mult = TP_ATR_MULTIPLIER
                                                 
-                                                # Si es simbolo largo (Acciones) o Indices, damos mas aire
-                                                if len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol:
+                                                # Si es simbolo largo (Acciones) o Indices, damos mas aire (Exceptuando Scalping)
+                                                if (len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol) and "Scalper" not in s_name:
                                                     sl_mult = 3.5  # Antes 2.0
                                                     tp_mult = 5.0  # Antes 3.0
                                                 
@@ -658,7 +708,8 @@ class SymbolTask:
                         "active_strategy": strategy_name, 
                         "direction": best_metadata.get("direction", 0),
                         "signal_direction": "BUY" if signal > 0 else ("SELL" if signal < 0 else "NONE"), 
-                        "market_open": is_market_open 
+                        "market_open": is_market_open,
+                        "stalking": {k: {"target": v["target_price"], "dist": abs(price - v["target_price"])} for k, v in self.active_stalking.items()}
                     }
                     
                     if rsi_val == 0:
@@ -731,10 +782,10 @@ async def sync_trades_task(db: PSTDatabase):
                             if is_open:
                                 total_pnl = d.profit + d.swap + d.commission
                                 await db.update_trade_cierre(d.position_id, d.price, total_pnl)
-                                logger.info(f"✅ Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL: {total_pnl:.2f}")
+                                logger.info(f"✅ [SYNC] Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL Real: {total_pnl:.2f} (Profit: {d.profit}, Swap: {d.swap}, Comm: {d.commission})")
                                 
                                 # --- NEW: TELEGRAM CLOSURE ALERT (FASE 52) ---
-                                trade_type_str = "BUY" if d.type == 1 else "SELL" # DEAL_TYPE_BUY=0, SELL=1 (Cierre de un BUY es un SELL deal)
+                                trade_type_str = "BUY" if d.type == 1 else "SELL"
                                 asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
                                 
                                 # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0 para BE sucio), registrar en CooldownManager
@@ -762,7 +813,8 @@ async def sync_trades_task(db: PSTDatabase):
                                 "time_out": str(datetime.fromtimestamp(d.time)),
                                 "regime_at_entry": "EXTERNAL",
                                 "strategy_name": "AUTO_SYNC",
-                                "ticket": d.position_id
+                                "ticket": d.position_id,
+                                "is_partial_closed": 0
                             }
                             await db.save_trade(trade_data)
                             logger.info(f"📥 Importado AUTOMÁTICO: {d.symbol} (Ticket {d.position_id}) | PnL: {d.profit}")
@@ -808,6 +860,9 @@ async def global_trade_management(executor: PSTExecutor):
         try:
             # A. Gestión de Trailing/BE individual
             await executor.manage_active_trades()
+            
+            # A.2 Gestión de Cierre de Seguridad (Sesión/Fin de Semana)
+            await executor.run_session_protection()
             
             # B. Monitorización de PnL Diario (Seguro FTMO)
             # Solo chequeamos si no estamos ya bloqueados

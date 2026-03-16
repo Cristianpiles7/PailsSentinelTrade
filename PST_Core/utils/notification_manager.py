@@ -61,7 +61,29 @@ class TelegramManager:
                     else:
                         logger.error(f"❌ Error Telegram ({resp.status}): {await resp.text()}")
         except Exception as e:
-            logger.error(f"❌ Excepción en Telegram: {e}")
+            logger.error(f"❌ Excepción en Telegram (Signal): {e}")
+
+    async def send_simple_alert(self, text: str):
+        """Envía un mensaje de texto simple a Telegram."""
+        await self._load_config()
+        if not self.api_url or not self.chat_id:
+            return
+
+        payload = {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.api_url, json=payload) as resp:
+                    if resp.status == 200:
+                        logger.info(f"📲 Alerta Simple enviada")
+                    else:
+                        logger.error(f"❌ Error Telegram Simple ({resp.status}): {await resp.text()}")
+        except Exception as e:
+            logger.error(f"❌ Excepción en Telegram (Simple): {e}")
 
 # Instancia global (Se configurará desde DB/Config)
 notif_mgr = TelegramManager()

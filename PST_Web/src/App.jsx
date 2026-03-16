@@ -11,7 +11,7 @@ import {
   ArrowUpRight, RefreshCw, Power, Target, Clock, ShieldAlert, BookMarked,
   Image as ImageIcon, FileText, ChevronRight, Save, X, MoreVertical, LayoutDashboard,
   LayoutGrid, History, ShoppingCart, Zap, Trash2, ChevronUp, ChevronDown, Cpu,
-  Terminal, Info, Lock, Shield, Volume2, VolumeX
+  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -22,6 +22,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 
 
 import { TradingChart } from './components/TradingChart'
+import { MarketHeatmap } from './components/MarketHeatmap'
+import { MultiChartWorkspace } from './components/MultiChartWorkspace'
+import { StrategyLab } from './components/StrategyLab'
 
 
 
@@ -126,8 +129,6 @@ const EquityCurve = ({ data }) => {
 
 
     return `${x},${y}`;
-
-
 
   }).join(' ');
 
@@ -295,6 +296,10 @@ function App() {
 
   // FASE 39 AUTH
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('pst_token'))
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'nano'
+  const [activeTab, setActiveTab] = useState('all');
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [toasts, setToasts] = useState([]);
   const [passwordInput, setPasswordInput] = useState('')
   const [loginError, setLoginError] = useState('')
 
@@ -303,8 +308,9 @@ function App() {
 
 
   const [trades, setTrades] = useState([])
-
-
+  const sortedTrades = useMemo(() => {
+    return [...trades].sort((a, b) => (b.profit || 0) - (a.profit || 0));
+  }, [trades]);
 
   const [symbols, setSymbols] = useState([])
 
@@ -322,7 +328,7 @@ function App() {
 
 
 
-  const [currentView, setCurrentView] = useState('home') // 'home' | 'surveillance' | 'config'
+  const [currentView, setCurrentView] = useState('home') // 'home' | 'surveillance' | 'config' | 'heatmap' | 'multichart'
 
 
 
@@ -373,14 +379,12 @@ function App() {
 
 
   const [savingSymbol, setSavingSymbol] = useState(null)
-  const [isFocusMode, setIsFocusMode] = useState(false)
 
   // -- FASE 35 RISK PROFILES --
   const [riskProfiles, setRiskProfiles] = useState([])
   const [selectedProfileId, setSelectedProfileId] = useState('')
   const [newProfileName, setNewProfileName] = useState('')
   const [logs, setLogs] = useState([])
-  const [toasts, setToasts] = useState([])
   const [isMuted, setIsMuted] = useState(false)
   const [replayTrade, setReplayTrade] = useState(null)
   const [upcomingNews, setUpcomingNews] = useState([])
@@ -388,7 +392,7 @@ function App() {
   const prevSignalsRef = useRef({}) // {symbol: score}
 
   // -- FASE 51-53 EXPANSION --
-  const [activeView, setActiveView] = useState('home') // 'home', 'history', 'analytics'
+  const [activeView, setActiveView] = useState('home') // 'home', 'history', 'analytics', 'heatmap', 'multichart', 'strategylab'
   const [analyticsData, setAnalyticsData] = useState(null)
   const [journalSnapshot, setJournalSnapshot] = useState(null)
   const [isJournalLoading, setIsJournalLoading] = useState(false)
@@ -889,7 +893,7 @@ function App() {
 
 
 
-      <nav className="fixed left-0 top-0 h-full w-20 border-r border-zinc-800/40 bg-[#070707]/80 backdrop-blur-2xl flex flex-col items-center py-8 gap-8 z-50">
+      <nav className="fixed left-0 top-0 h-full w-20 border-r border-white/5 bg-[#050505]/60 backdrop-blur-2xl flex flex-col items-center py-8 gap-8 z-50">
 
 
 
@@ -1049,11 +1053,11 @@ function App() {
 
 
 
-      <div className="fixed top-0 left-20 right-0 h-20 border-b border-zinc-800/40 bg-[#070707]/90 backdrop-blur-3xl z-40 flex items-center justify-between px-8 shadow-2xl">
+      <div className="fixed top-0 left-20 right-0 h-20 border-b border-white/5 bg-[#050505]/40 backdrop-blur-3xl z-40 flex items-center justify-between px-8 shadow-2xl">
 
 
 
-        <div className="flex items-center gap-4 bg-white/[0.08] border border-white/20 px-6 py-2.5 rounded-2xl shadow-[0_0_30px_rgba(255,255,255,0.05)] backdrop-blur-xl">
+        <div className="flex items-center gap-4 bg-white/[0.03] border border-white/10 px-6 py-2.5 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
 
 
 
@@ -1086,6 +1090,34 @@ function App() {
 
 
             <span className="text-lg font-black text-white italic tracking-tighter">{account?.equity?.toLocaleString() || '0.00'}€</span>
+
+
+
+          </div>
+
+
+
+          <div className="w-px h-8 bg-zinc-800/50 mx-2" />
+
+
+
+          <div className="flex flex-col">
+
+
+
+            <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1">Active Fleet PnL</span>
+
+
+
+            <span className={`text-lg font-black italic tracking-tighter ${account?.active_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+
+
+
+              {account?.active_pnl >= 0 ? '+' : ''}{account?.active_pnl?.toFixed(2) || '0.00'}€
+
+
+
+            </span>
 
 
 
@@ -1135,12 +1167,57 @@ function App() {
 
         </div>        <div className="flex items-center gap-2 bg-zinc-900/50 p-1 rounded-2xl border border-zinc-800/50">
           <button
-            onClick={() => setCurrentView('home')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${currentView === 'home' ? 'bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)]' : 'text-zinc-500 hover:text-zinc-300'}`}
+            onClick={() => { setActiveView('home'); setCurrentView('home'); }}
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
+              ${activeView === 'home' && currentView === 'home'
+                ? 'bg-indigo-500/20 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.3)]'
+                : 'text-zinc-500 hover:text-indigo-400 hover:bg-zinc-800/50'}`}
           >
-            <LayoutDashboard size={14} />
-            Matrix
+            <Activity size={24} />
+            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+              Dashboard
+            </div>
           </button>
+
+          <button
+            onClick={() => { setActiveView('heatmap'); setCurrentView('heatmap'); }}
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
+              ${activeView === 'heatmap'
+                ? 'bg-amber-500/20 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
+                : 'text-zinc-500 hover:text-amber-400 hover:bg-zinc-800/50'}`}
+          >
+            <LayoutGrid size={24} />
+            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+              Market Heatmap
+            </div>
+          </button>
+
+          <button
+            onClick={() => { setActiveView('multichart'); setCurrentView('multichart'); }}
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
+              ${activeView === 'multichart'
+                ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]'
+                : 'text-zinc-500 hover:text-emerald-400 hover:bg-zinc-800/50'}`}
+          >
+            <LayoutDashboard size={24} />
+            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+              Multi-Chart Workspace
+            </div>
+          </button>
+
+          <button
+            onClick={() => { setActiveView('strategylab'); setCurrentView('strategylab'); }}
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
+              ${activeView === 'strategylab'
+                ? 'bg-purple-500/20 text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.3)]'
+                : 'text-zinc-500 hover:text-purple-400 hover:bg-zinc-800/50'}`}
+          >
+            <FlaskConical size={24} />
+            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+              Strategy Lab Sim
+            </div>
+          </button>
+
           <button
             onClick={() => {
               setCurrentView('history')
@@ -1395,16 +1472,7 @@ function App() {
 
         {currentView === 'analytics' && (
           <div className="w-full px-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
-            <div className="flex justify-between items-end mb-8 px-4">
-              <div>
-                <h1 className="text-4xl font-black tracking-tighter text-white mb-2 uppercase italic">Sentinel Insights</h1>
-                <div className="flex items-center gap-3">
-                  <span className="text-zinc-600 font-black font-mono text-[10px] tracking-[0.3em] uppercase">Advanced Performance Analytics</span>
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
-                  <span className="text-indigo-400/80 font-bold font-mono text-[10px] tracking-widest uppercase">Deep Surveillance Hub</span>
-                </div>
-              </div>
-            </div>
+            <div className="mb-4" />
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8 px-4">
               {[
@@ -1456,21 +1524,54 @@ function App() {
                 </div>
               </div>
             </div>
+
+            <div className="px-4 mt-8">
+              <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
+                <h3 className="text-xl font-black text-white italic tracking-tighter uppercase mb-8">Intelligence Breakdown: Strategy Win Rates</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {analyticsData?.metrics?.by_strategy && Object.entries(analyticsData.metrics.by_strategy).map(([name, data]) => (
+                    <div key={name} className="bg-zinc-900/30 border border-white/5 rounded-3xl p-6 hover:bg-zinc-900/50 transition-all group">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1">Tactical System</p>
+                          <h4 className="text-lg font-black text-white italic tracking-tighter uppercase">{name}</h4>
+                        </div>
+                        <div className="text-right">
+                          <div className={`px-3 py-1 rounded-full text-[10px] font-black mb-2 inline-block ${data.win_rate >= 50 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                            {data.win_rate}% WR
+                          </div>
+                          <div className={`text-xs font-black font-mono block ${data.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {data.profit >= 0 ? '+' : ''}{data.profit.toFixed(2)} $
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-zinc-500 font-bold uppercase tracking-widest">Total Engagements</span>
+                          <span className="text-white font-black font-mono">{data.total}</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-1000 ${data.win_rate >= 50 ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]'}`}
+                            style={{ width: `${data.win_rate}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-zinc-500 font-bold uppercase tracking-widest">Confirmed Wins</span>
+                          <span className="text-emerald-400 font-black font-mono">{data.wins}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
         {currentView === 'history' && (
           <div className="w-full px-4 animate-in fade-in slide-in-from-bottom-2 duration-700">
-            <div className="flex justify-between items-end mb-8">
-              <div>
-                <h1 className="text-4xl font-black tracking-tighter text-white mb-2 uppercase italic">Sentinel Journal</h1>
-                <div className="flex items-center gap-3">
-                  <span className="text-zinc-600 font-black font-mono text-[10px] tracking-[0.3em] uppercase">Trade History & Snapshots</span>
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
-                  <span className="text-indigo-400/80 font-bold font-mono text-[10px] tracking-widest uppercase">Memory Node</span>
-                </div>
-              </div>
-            </div>
+            <div className="mb-4" />
 
             <div className="bg-[#050505] border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl transition-all">
               <table className="w-full text-left border-collapse">
@@ -1552,25 +1653,54 @@ function App() {
           </div>
         )}
 
-        {currentView === 'home' && (
+        {currentView === 'heatmap' && (
+          <div className="w-full h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <MarketHeatmap
+                symbols={symbols}
+                onSelectSymbol={(sym) => {
+                    setSelectedSymbol(sym);
+                    setCurrentView('surveillance');
+                    setActiveView('home');
+                }}
+            />
+          </div>
+        )}
+
+        {currentView === 'multichart' && (
+          <div className="w-full h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <MultiChartWorkspace symbols={symbols} api={api} />
+          </div>
+        )}
+
+        {currentView === 'strategylab' && (
+          <div className="w-full h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <StrategyLab symbols={symbols} />
+          </div>
+        )}
+
+        {activeView === 'home' && currentView === 'home' && (
           <div className="w-full px-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
             {/* Home Header with Focus Mode Toggle */}
-            <div className="flex justify-between items-end mb-8 px-4">
-              <div>
-                <h1 className="text-4xl font-black tracking-tighter text-white mb-2 uppercase italic">Sentinel Matrix</h1>
-                <div className="flex items-center gap-3">
-                  <span className="text-zinc-600 font-black font-mono text-[10px] tracking-[0.3em] uppercase">Tactical Asset Overview</span>
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
-                  <span className="text-indigo-400/80 font-bold font-mono text-[10px] tracking-widest uppercase">Live Surveillance Node</span>
-                  {isNewsBlocked && (
-                    <div className="flex items-center gap-2 ml-4 px-3 py-1 bg-rose-500/20 border border-rose-500/40 rounded-full animate-pulse">
-                      <ShieldAlert size={12} className="text-rose-400" />
-                      <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Global Execution Lock</span>
-                    </div>
-                  )}
-                </div>
+            <div className="flex justify-start mb-6 px-4 gap-4">
+              {/* View Mode Toggle */}
+              <div className="flex items-center gap-2 bg-black/40 backdrop-blur-xl p-1.5 rounded-2xl border border-white/5">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`p-2 rounded-xl transition-all ${viewMode === 'grid' ? 'bg-indigo-500 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
+                  title="Grid View"
+                >
+                  <LayoutGrid size={16} />
+                </button>
+                <button
+                  onClick={() => setViewMode('nano')}
+                  className={`p-2 rounded-xl transition-all ${viewMode === 'nano' ? 'bg-indigo-500 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
+                  title="Nano View (Horizontal)"
+                >
+                  <StretchHorizontal size={16} />
+                </button>
               </div>
 
+              {/* Focus Mode Toggle */}
               <div className="flex items-center gap-4 bg-black/40 backdrop-blur-xl p-2 rounded-2xl border border-white/5">
                 <div className="flex flex-col items-end px-2">
                   <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Opportunity Rank</span>
@@ -1587,23 +1717,72 @@ function App() {
               </div>
             </div>
 
+            {/* NEW: ACTIVE FLEET TRACKER (FASE 54) */}
+            {sortedTrades.length > 0 && (
+              <div className="mb-8 px-4 animate-in slide-in-from-top-4 duration-700">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-indigo-500/10 rounded-xl border border-indigo-500/20">
+                    <Zap className="text-indigo-500 animate-pulse" size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white italic tracking-[0.2em] uppercase">Active Fleet Intelligence</h3>
+                    <p className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Live Monitoring & Quick Tactical Exit</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-4">
+                  {sortedTrades.map(t => (
+                    <motion.div
+                      key={t.ticket}
+                      layoutId={`trade-${t.ticket}`}
+                      className={`bg-zinc-900/30 border rounded-2xl p-4 flex flex-col gap-3 group transition-all hover:bg-zinc-900/50 ${t.profit >= 0 ? 'border-emerald-500/30' : 'border-rose-500/30'}`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black italic text-[10px] ${t.type === 'BUY' ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]'}`}>
+                            {t.type[0]}
+                          </div>
+                          <div>
+                            <h4 className="text-white font-black italic text-sm leading-none">{t.symbol}</h4>
+                            <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className={`text-base font-black italic tracking-tighter ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {t.profit >= 0 ? '+' : ''}{t.profit.toFixed(2)}€
+                          </span>
+                          <div className="text-[7px] font-black text-zinc-600 uppercase">Yield</div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 border-t border-white/5 pt-3 mt-1">
+                        <div className="flex flex-col">
+                          <span className="text-[7px] font-black text-zinc-600 uppercase">Strategy</span>
+                          <span className="text-[9px] font-black text-indigo-400 uppercase truncate max-w-[120px]">{t.strategy}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => navigateToSurveillance(t.symbol)}
+                            className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition-all"
+                          >
+                            <BarChart3 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleCloseTrade(t.ticket)}
+                            className="px-3 py-1 bg-rose-600/20 border border-rose-500/40 text-rose-400 rounded-lg text-[9px] font-black uppercase hover:bg-rose-600/40 transition-all"
+                          >
+                            EXIT
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div
-              className="grid gap-4 w-full"
-
-
-
-              style={{
-
-
-
-                gridTemplateColumns: `repeat(${activeSymbols.length > 0 ? Math.ceil(activeSymbols.length / 2) : 1}, 1fr)`,
-
-
-
-              }}
-
-
-
+              className={`grid gap-4 w-full ${viewMode === 'nano' ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6'}`}
             >
               {activeSymbols.length > 0 ? (isFocusMode ? [...activeSymbols].sort((a, b) => (b.score || 0) - (a.score || 0)) : activeSymbols).map(s => {
                 const hasSignal = s.signal_direction && s.signal_direction !== 'NONE';
@@ -1664,17 +1843,101 @@ function App() {
                 const glowClass = (hasSignal && !isClosed) ? `shadow-[0_0_40px_rgba(${isBuy ? '16,185,129' : '244,63,94'},0.15)]` : '';
                 const closedClass = isClosed ? 'opacity-40 grayscale-[0.8]' : 'opacity-100';
 
+                if (viewMode === 'nano') {
+                  return (
+                    <div
+                      key={s.symbol}
+                      onClick={() => navigateToSurveillance(s.symbol)}
+                      className={`glass-card ${heatClass} rounded-2xl p-3 hover:bg-zinc-900/60 transition-all duration-500 group cursor-pointer relative overflow-hidden shadow-xl ${glowClass} ${closedClass} flex items-center justify-between gap-4`}
+                    >
+                      <div className="flex items-center gap-3 min-w-[120px]">
+                        <div className={`p-1.5 bg-black/40 rounded-lg border border-white/5 group-hover:neon-border-${colorBase} transition-all`}>
+                          <ShieldCheck size={14} className={colorClass} />
+                        </div>
+                        <div>
+                          <h3 className="text-white text-[11px] font-black uppercase tracking-widest leading-none">{s.symbol}</h3>
+                          <span className="text-[7px] font-bold text-zinc-500 tracking-tighter uppercase">{s.regime}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 flex-1">
+                        <div className="flex flex-col items-center min-w-[70px]">
+                          <span className="text-base font-black text-white italic tracking-tighter leading-none">
+                            {s.price?.toFixed((s.symbol.includes('EURUSD') || s.symbol.includes('GBPUSD')) ? 5 : s.symbol.includes('JPY') ? 3 : 2)}
+                          </span>
+                          <span className={`text-[9px] font-black italic ${s.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {s.daily_change_pct >= 0 ? '+' : ''}{s.daily_change_pct?.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="h-6 w-20 flex-shrink-0">
+                          {s.sparkline && s.sparkline.length > 0 && <Sparkline data={s.sparkline} color={colorBase} />}
+                        </div>
+                        <div className="flex-1 hidden xl:flex items-center justify-around gap-2 px-2 border-l border-white/5">
+                          {['M5', 'M15', 'H1'].map(tf => {
+                            const tel = s.telemetry?.[tf] || {};
+                            return (
+                              <div key={tf} className="flex flex-col items-center">
+                                <span className="text-[6px] font-bold text-zinc-600 leading-none">{tf}</span>
+                                <span className={`text-[9px] font-black ${tel.rsi >= 70 ? 'text-rose-400' : tel.rsi <= 30 ? 'text-emerald-400' : 'text-zinc-300'}`}>{tel.rsi || '--'}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex flex-col items-center min-w-[60px] border-l border-white/5 pl-4">
+                          <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase">PnL 24H</span>
+                          <span className={`text-[10px] font-black ${(s.profit_24h || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(s.profit_24h || 0) >= 0 ? '+' : ''}{(s.profit_24h || 0).toFixed(2)}€
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex flex-col items-end mr-2">
+                          <div className="flex items-center gap-1.5">
+                            {isBlocked && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" title="GATED" />}
+                            <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
+                          </div>
+                          <span className="text-[6px] font-black text-zinc-600 uppercase tracking-widest">
+                            {(() => {
+                              const factors = s.factors_map ? Object.entries(s.factors_map) : [];
+                              if (factors.length === 0) return s.active_strategy || "PST-AUTO";
+                              const best = factors.reduce((a, b) => (a[1].score > b[1].score ? a : b));
+                              return best[1].score > 0 ? best[0].replace("PST-", "").toUpperCase() : (s.active_strategy || "PST-AUTO");
+                            })()}
+                          </span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleManualTrade(s.symbol, 'BUY') }}
+                            disabled={isClosed}
+                            className={`px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 text-emerald-400 text-[9px] font-black uppercase tracking-widest hover:bg-emerald-500/20 transition-all ${isClosed ? 'opacity-30' : ''}`}
+                          >
+                            BUY
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleManualTrade(s.symbol, 'SELL') }}
+                            disabled={isClosed}
+                            className={`px-3 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/5 text-rose-400 text-[9px] font-black uppercase tracking-widest hover:bg-rose-500/20 transition-all ${isClosed ? 'opacity-30' : ''}`}
+                          >
+                            SELL
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={s.symbol}
                     onClick={() => navigateToSurveillance(s.symbol)}
-                    className={`bg-zinc-900/40 border ${heatClass} rounded-[2rem] p-6 hover:bg-zinc-900/60 transition-all duration-500 group cursor-pointer relative overflow-hidden shadow-2xl ${glowClass} ${closedClass} flex flex-col gap-5 min-h[420px]`}
+                    className={`glass-card ${heatClass} rounded-[2rem] p-6 hover:bg-zinc-900/60 transition-all duration-500 group cursor-pointer relative overflow-hidden shadow-2xl ${glowClass} ${closedClass} flex flex-col gap-5 min-h[420px]`}
                   >
                     {heatGlow && <div className={`absolute inset-0 ${heatGlow} animate-pulse duration-[4000ms] pointer-events-none`} />}
                     {/* Header: Title & Status */}
                     <div className="flex justify-between items-center relative z-10">
                       <div className="flex items-center gap-3">
-                        <div className={`p-2 bg-black/40 rounded-xl border ${borderClass} group-hover:scale-110 transition-transform`}>
+                        <div className={`p-2 bg-black/40 rounded-xl border border-white/5 group-hover:neon-border-${colorBase} group-hover:scale-110 transition-all`}>
                           <ShieldCheck size={18} className={colorClass} />
                         </div>
                         <div>
@@ -1697,8 +1960,8 @@ function App() {
                           <span className={`text-xs font-black italic ${s.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {s.daily_change_pct >= 0 ? '+' : ''}{s.daily_change_pct?.toFixed(2)}%
                           </span>
-                          {s.floating_pnl !== 0 && (
-                            <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase ${s.floating_pnl > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                          {(s.floating_pnl !== undefined) && (
+                            <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase ${s.floating_pnl > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : s.floating_pnl < 0 ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
                               Live: {s.floating_pnl > 0 ? '+' : ''}{s.floating_pnl.toFixed(2)}€
                             </span>
                           )}
@@ -1741,10 +2004,17 @@ function App() {
                     {/* Sentiment / Score Bar */}
                     <div className="space-y-1.5 relative z-10 px-1">
                       <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-widest text-zinc-500">
-                        <span>{s.active_strategy || "Sentinel Sentiment"}</span>
+                        <span>
+                          {(() => {
+                            const factors = s.factors_map ? Object.entries(s.factors_map) : [];
+                            if (factors.length === 0) return s.active_strategy || "PST-AUTO";
+                            const best = factors.reduce((a, b) => (a[1].score > b[1].score ? a : b));
+                            return best[1].score > 0 ? best[0].replace("PST-", "").toUpperCase() : (s.active_strategy || "PST-AUTO");
+                          })()}
+                        </span>
                         <div className="flex items-center gap-2">
                           {isBlocked && <span className="text-amber-500 text-[7px] border border-amber-500/30 px-1 rounded">GATED</span>}
-                          <span className={colorClass}>{s.score}%</span>
+                          <span className={colorClass}>{Math.round(s.score)}%</span>
                         </div>
                       </div>
                       <div className="h-1.5 w-full bg-zinc-800/50 rounded-full border border-white/5 overflow-hidden">
@@ -1865,7 +2135,6 @@ function App() {
 
 
 
-                    <h3 className="text-sm font-black text-zinc-400 uppercase tracking-widest italic">Live Surveillance</h3>
 
 
 
@@ -2014,7 +2283,7 @@ function App() {
 
 
 
-              <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-6 shadow-2xl flex flex-col gap-5 overflow-hidden transition-all duration-500" style={{ height: '320px' }}>
+              <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-6 shadow-2xl flex flex-col gap-5 overflow-visible transition-all duration-500" style={{ height: '320px' }}>
 
 
 
@@ -2030,7 +2299,6 @@ function App() {
 
 
 
-                    <h3 className="text-sm font-black text-white uppercase tracking-widest italic">Strategy Engine Breakdown</h3>
 
 
 
@@ -2190,7 +2458,7 @@ function App() {
 
 
 
-                <div className="flex-1 overflow-hidden">
+                <div className="flex-1 overflow-visible">
 
 
 
@@ -2276,56 +2544,28 @@ function App() {
 
                       }
 
-
-
-
-
-
-
                       return currentFactors.slice(0, 10).map((f, i) => (
-
-
-
-                        <div key={i} className="bg-zinc-900/40 border border-zinc-800/40 rounded-xl p-2.5 flex flex-col justify-between hover:bg-zinc-800/20 transition-all group">
-
-
-
+                        <div key={i} className="bg-zinc-900/40 border border-zinc-800/40 rounded-xl p-2.5 flex flex-col justify-between hover:bg-zinc-800/20 transition-all group relative hover:z-50">
                           <div className="flex justify-between items-start mb-0.5">
-
-
-
-                            <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest leading-none">{f.k}</span>
-
-
-
+                            <div className="flex items-center gap-1.5 relative group/tooltip">
+                              <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest leading-none">{f.k}</span>
+                              {f.desc && (
+                                <>
+                                  <Info size={10} className="text-indigo-500/50 cursor-help hover:text-indigo-400 transition-colors" />
+                                  <div className={`absolute ${i < 5 ? 'top-full mt-2' : 'bottom-full mb-2'} left-0 w-64 p-3 bg-[#080808] border border-indigo-500/30 rounded-xl text-[10px] text-zinc-300 opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-all duration-300 z-[100] shadow-2xl translate-y-1 group-hover/tooltip:translate-y-0 backdrop-blur-xl`}>
+                                    <div className="text-indigo-400 font-black mb-1.5 uppercase tracking-widest text-[8px] border-b border-indigo-500/10 pb-1">{f.k}</div>
+                                    <div className="leading-relaxed">{f.desc}</div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                             <span className={`text-[9px] font-black italic tracking-tighter ${f.score > 0 ? 'text-emerald-500' : f.score < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
-
-
-
                               {f.score > 0 ? '+' : ''}{f.score.toFixed(0)}
-
-
-
                             </span>
-
-
-
                           </div>
-
-
-
-                          <p className="text-[10px] font-black text-zinc-300 tracking-tighter uppercase line-clamp-1">{f.v}</p>
-
-
-
+                          <p className="text-[10px] font-black text-zinc-300 tracking-tighter uppercase line-clamp-1" title={f.v}>{f.v}</p>
                         </div>
-
-
-
                       ));
-
-
-
                     })()}
 
 
@@ -2961,7 +3201,8 @@ function App() {
 
 
 
-        )}
+        )
+        }
 
 
 
@@ -3037,11 +3278,9 @@ function App() {
 
 
 
-                        <h2 className="text-xl font-black text-white tracking-widest uppercase italic leading-none">Operational Terminal</h2>
 
 
 
-                        <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-[0.4em] mt-1.5">Real-time MetaTrader Position Hub</p>
 
 
 
@@ -3125,7 +3364,7 @@ function App() {
 
 
 
-                        {trades.length === 0 ? (
+                        {sortedTrades.length === 0 ? (
 
 
 
@@ -3145,7 +3384,7 @@ function App() {
 
 
 
-                          trades.map((trade) => (
+                          sortedTrades.map((trade) => (
 
 
 
@@ -3438,11 +3677,12 @@ function App() {
                   // Mapeo de nombres limpios y estratégicos
                   const STRAT_NAME_MAP = {
                     "PST-EMA-Flow": "EMA Flow",
-                    "PST-Mean-Reversion": "Mean Reversion"
+                    "PST-Mean-Reversion": "Mean Reversion",
+                    "PST-Scalper-Pro": "Scalper Pro"
                   };
 
-                  // Obtener solo las estrategias CORE solicitadas: EMA Flow y Mean Reversion
-                  const CORE_STRATS = ["PST-EMA-Flow", "PST-Mean-Reversion"];
+                  // Obtener solo las estrategias CORE solicitadas: EMA Flow, Mean Reversion y Scalper Pro
+                  const CORE_STRATS = ["PST-EMA-Flow", "PST-Mean-Reversion", "PST-Scalper-Pro"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
@@ -3504,8 +3744,8 @@ function App() {
                             const stratData = symbolStrats[strat];
 
                             // Lógica de activación por defecto
-                            const isCore = ["PST-EMA-Flow", "PST-Mean-Reversion"].includes(strat);
-                            const isEnabled = stratData ? (stratData.is_active !== false) : isCore;
+                            const isCore = ["PST-EMA-Flow"].includes(strat); // Mean Reversion ya no es core activa por defecto
+                            const isEnabled = stratData ? (!!stratData.is_active) : isCore;
 
                             // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)
                             const sRiskMode = stratData?.risk_mode || 'MONEY';
@@ -3525,7 +3765,7 @@ function App() {
                                   </button>
                                 </div>
 
-                                <div className="flex items-center justify-between gap-1">
+                                <div className="flex items-center justify-between gap-0.5">
                                   <div className="flex items-center bg-black/60 p-0.5 rounded-md border border-zinc-800/60">
                                     {['L', '%', '€'].map((mLabel, idx) => {
                                       const mVal = idx === 0 ? 'LOTS' : idx === 1 ? 'PCT' : 'MONEY';
@@ -3534,7 +3774,7 @@ function App() {
                                         <button
                                           key={mLabel}
                                           onClick={() => updateStrategyConfig(s.symbol, strat, 'risk_mode', isSelected ? null : mVal)}
-                                          className={`px-1.5 py-0.5 rounded-sm text-[8px] font-black transition-all ${isSelected ? 'bg-indigo-600 text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
+                                          className={`px-1 py-0.5 rounded-sm text-[8px] font-black transition-all ${isSelected ? 'bg-indigo-600 text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
                                         >
                                           {mLabel}
                                         </button>
@@ -3545,16 +3785,16 @@ function App() {
                                       placeholder="Auto"
                                       value={sRiskVal || ""}
                                       onChange={(e) => updateStrategyConfig(s.symbol, strat, 'risk_value', parseFloat(e.target.value) || null)}
-                                      className="w-10 bg-transparent text-[10px] font-black text-indigo-400 text-right outline-none placeholder:text-zinc-800"
+                                      className="w-8 bg-transparent text-[10px] font-black text-indigo-400 text-right outline-none placeholder:text-zinc-800"
                                     />
                                   </div>
 
-                                  <div className="flex items-center gap-1">
+                                  <div className="flex items-center gap-0.5">
                                     <div className={`flex items-center gap-0.5 rounded-md border transition-all ${stratData?.use_breakeven ? 'bg-amber-500/10 border-amber-500/30' : 'border-zinc-800'}`}>
                                       <button
                                         onClick={() => updateStrategyConfig(s.symbol, strat, 'use_breakeven', !(stratData?.use_breakeven))}
                                         title="Break-Even (BE)"
-                                        className={`px-1.5 py-0.5 rounded-sm text-[8px] font-black transition-all ${stratData?.use_breakeven ? 'text-amber-400' : 'bg-transparent text-zinc-600 hover:text-amber-500/50'}`}
+                                        className={`px-1 py-0.5 rounded-sm text-[8px] font-black transition-all ${stratData?.use_breakeven ? 'text-amber-400' : 'bg-transparent text-zinc-600 hover:text-amber-500/50'}`}
                                       >
                                         BE
                                       </button>
@@ -3567,7 +3807,7 @@ function App() {
                                           onBlur={(e) => updateStrategyConfig(s.symbol, strat, 'be_mult', parseFloat(e.target.value) || null)}
                                           onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                                           title="BE Multiplier (ATR)"
-                                          className="w-10 bg-black/40 text-[9px] font-black text-amber-300 text-center outline-none px-0.5 border-l border-amber-500/30 rounded-r-sm shadow-inner cursor-text"
+                                          className="w-8 bg-black/40 text-[9px] font-black text-amber-300 text-center outline-none px-0.5 border-l border-amber-500/30 rounded-r-sm shadow-inner cursor-text"
                                         />
                                       ) : null}
                                     </div>
@@ -3576,7 +3816,7 @@ function App() {
                                       <button
                                         onClick={() => updateStrategyConfig(s.symbol, strat, 'use_trailing', !(stratData?.use_trailing))}
                                         title="Trailing Stop (TS)"
-                                        className={`px-1.5 py-0.5 rounded-sm text-[8px] font-black transition-all ${stratData?.use_trailing ? 'text-emerald-400' : 'bg-transparent text-zinc-600 hover:text-emerald-500/50'}`}
+                                        className={`px-1 py-0.5 rounded-sm text-[8px] font-black transition-all ${stratData?.use_trailing ? 'text-emerald-400' : 'bg-transparent text-zinc-600 hover:text-emerald-500/50'}`}
                                       >
                                         TS
                                       </button>
@@ -3589,21 +3829,31 @@ function App() {
                                           onBlur={(e) => updateStrategyConfig(s.symbol, strat, 'ts_mult', parseFloat(e.target.value) || null)}
                                           onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                                           title="TS Multiplier (ATR)"
-                                          className="w-10 bg-black/40 text-[9px] font-black text-emerald-300 text-center outline-none px-0.5 border-l border-emerald-500/30 rounded-r-sm shadow-inner cursor-text"
+                                          className="w-8 bg-black/40 text-[9px] font-black text-emerald-300 text-center outline-none px-0.5 border-l border-emerald-500/30 rounded-r-sm shadow-inner cursor-text"
                                         />
                                       ) : null}
                                     </div>
                                   </div>
 
-                                  <div className="flex items-center gap-1 text-[9px] font-black ml-auto">
-                                    <div className="flex items-center gap-0.5 bg-black/20 px-1 py-0.5 rounded border border-white/5 mr-1" title="Min Risk:Reward Filter">
+                                  <div className="flex items-center gap-0.5 text-[9px] font-black ml-auto">
+                                    <div className="flex items-center gap-0.5 bg-black/20 px-0.5 py-0.5 rounded border border-white/5" title="Score Threshold Filter">
+                                      <span className="text-[6px] text-zinc-500 uppercase font-black">SC</span>
+                                      <input
+                                        type="text"
+                                        value={stratData?.score_threshold || ""}
+                                        placeholder={params.score_threshold}
+                                        onChange={(e) => updateStrategyConfig(s.symbol, strat, 'score_threshold', parseFloat(e.target.value) || null)}
+                                        className="w-3 bg-transparent text-amber-400 outline-none text-center text-[8px] font-black"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-0.5 bg-black/20 px-0.5 py-0.5 rounded border border-white/5" title="Min Risk:Reward Filter">
                                       <span className="text-[6px] text-zinc-500 uppercase font-black">R:R</span>
                                       <input
                                         type="text"
                                         value={stratData?.min_rr || ""}
                                         placeholder="1.5"
                                         onChange={(e) => updateStrategyConfig(s.symbol, strat, 'min_rr', parseFloat(e.target.value) || null)}
-                                        className="w-4 bg-transparent text-indigo-400 outline-none text-center text-[8px] font-black"
+                                        className="w-3 bg-transparent text-indigo-400 outline-none text-center text-[8px] font-black"
                                       />
                                     </div>
                                     <input
@@ -3611,22 +3861,22 @@ function App() {
                                       value={stratData?.sl_mult || ""}
                                       placeholder={params.sl_mult}
                                       onChange={(e) => updateStrategyConfig(s.symbol, strat, 'sl_mult', parseFloat(e.target.value) || null)}
-                                      className="w-4 bg-transparent text-rose-500 outline-none text-center"
+                                      className="w-3 bg-transparent text-rose-500 outline-none text-center"
                                     />
                                     <span className="text-zinc-700">/</span>
                                     <input
                                       type="text"
                                       value={stratData?.tp_mult || ""}
                                       placeholder={params.tp_mult}
-                                      readOnly={strat === "PST-Mean-Reversion"}
-                                      title={strat === "PST-Mean-Reversion" ? "Usa TP Técnico" : "TP Multiplier"}
+                                      readOnly={strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro"}
+                                      title={(strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") ? "Usa TP Técnico" : "TP Multiplier"}
                                       onClick={(e) => {
-                                        if (strat === "PST-Mean-Reversion") {
+                                        if (strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") {
                                           // Optional: Show a toast here explaining it uses technical TP
                                         }
                                       }}
                                       onChange={(e) => updateStrategyConfig(s.symbol, strat, 'tp_mult', parseFloat(e.target.value) || null)}
-                                      className={`w-4 bg-transparent outline-none text-center ${strat === "PST-Mean-Reversion" ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
+                                      className={`w-3 bg-transparent outline-none text-center ${(strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
                                     />
                                   </div>
                                 </div>
@@ -3808,11 +4058,11 @@ function App() {
           )}
         </AnimatePresence>
 
-      </main>
+      </main >
 
 
 
-    </div>
+    </div >
 
 
 
@@ -4288,7 +4538,6 @@ function LiveConsole({ logs }) {
       <div className="flex justify-between items-center shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_10px_#6366f1]" />
-          <h3 className="text-sm font-black text-white uppercase tracking-[0.3em] italic">System Live Stream</h3>
         </div>
         <div className="flex items-center gap-2">
           <button

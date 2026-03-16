@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException, Request
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from typing import List
 import os
 import sys
@@ -115,15 +116,36 @@ async def get_account():
     if not status:
         raise HTTPException(status_code=503, detail="Error fetching status from MT5")
     
-    # Adaptación para cumplir exactamente con el schema
+    # Calcular PnL diario real (Cerrados hoy + Flotante actual)
+    from datetime import datetime, time
+    today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
+    
+    closed_today = 0.0
+    try:
+        import sqlite3
+        # Usar la ruta de la db del objeto db inyectado
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,))
+        row = cursor.fetchone()
+        closed_today = row[0] if row and row[0] else 0.0
+        conn.close()
+    except Exception as e:
+        logger.error(f"❌ Error calculando closed_today en API: {e}")
+
+    profit_p = status["equity"] - status["balance"] # Flotante
+    daily_total = closed_today + profit_p
+    margin_p = status.get("margin", 0.0)
+    
     return AccountStatus(
         balance=status["balance"],
         equity=status["equity"],
-        margin=0.0, # MT5 lo da pero hay que extraerlo
+        margin=margin_p,
         margin_free=status["margin_free"],
-        margin_level=0.0,
-        daily_pnl=status["daily_pnl"],
-        profit=status["equity"] - status["balance"]
+        margin_level=status.get("margin_level", 0.0),
+        daily_pnl=daily_total,
+        profit=profit_p,
+        active_pnl=profit_p
     )
 
 @app.get("/api/performance", tags=["Performance"])
@@ -266,13 +288,18 @@ async def get_symbols():
     radar_data = await db.get_radar_data()
     profit_24h_map = await db.get_24h_profit_by_symbol()
     
-    # Obtener todas las posiciones para calcular PnL por símbolo una sola vez
+    # Normalización para evitar fallos por sufijos de broker (.m, .pro, etc)
     positions = mt5.positions_get()
     pnl_map = {}
     if positions:
         for p in positions:
-            sym_p = p.symbol
+            sym_p = p.symbol.upper()
             pnl_map[sym_p] = pnl_map.get(sym_p, 0.0) + p.profit
+            # También guardamos la base sin sufijos comunes si detectamos uno
+            for suffix in [".m", ".pro", ".ecn", ".x", "i"]:
+                if sym_p.endswith(suffix.upper()):
+                    base = sym_p[:-len(suffix)]
+                    pnl_map[base] = pnl_map.get(base, 0.0) + p.profit
 
     results = []
     for s in symbols_cfg:
@@ -318,17 +345,61 @@ async def get_symbols():
             factors_list = raw_factors
         elif isinstance(raw_factors, dict):
             # Nuevo formato: {"Strategy": {"factors": [...], "score": 85}}
-            for s_name, s_data in raw_factors.items():
+            strat_states = await db.get_symbol_strategies(sym)
+            
+            # Normalización para cruzar nombres técnicos vs descriptivos (ej: PSTEMAFlow vs PST-EMA-Flow)
+            def norm(n): return n.lower().replace("-","").replace("_","").strip()
+            norm_map = {norm(k): v for k, v in strat_states.items()}
+
+            for s_name_tech, s_data in raw_factors.items():
+                # Buscar en DB por nombre técnico, descriptivo o normalizado
+                db_cfg = strat_states.get(s_name_tech)
+                if not db_cfg:
+                    db_cfg = norm_map.get(norm(s_name_tech), {})
+                
+                is_strat_active = bool(db_cfg.get("is_active", 0))
+                
+                # Importación local para evitar NameError persistente
+                from PST_API.schemas import Factor
+                
+                # Extraemos la configuración real guardada en la base de datos para cada estrategia técnica.
+                s_risk_mode = db_cfg.get("risk_mode")
+                s_risk_value = db_cfg.get("risk_value")
+                s_sl_mult = db_cfg.get("sl_mult")
+                s_tp_mult = db_cfg.get("tp_mult")
+                s_use_breakeven = db_cfg.get("use_breakeven")
+                s_use_trailing = db_cfg.get("use_trailing")
+                s_be_mult = db_cfg.get("be_mult")
+                s_ts_mult = db_cfg.get("ts_mult")
+
                 if isinstance(s_data, dict) and "factors" in s_data:
-                    factors_map[s_name] = StrategyBreakdown(
+                    factors_map[s_name_tech] = StrategyBreakdown(
                         score=s_data.get("score", 0.0),
-                        factors=s_data.get("factors", [])
+                        factors=[Factor(**f) if isinstance(f, dict) else f for f in s_data.get("factors", [])],
+                        is_active=is_strat_active,
+                        risk_mode=s_risk_mode,
+                        risk_value=s_risk_value,
+                        sl_mult=s_sl_mult,
+                        tp_mult=s_tp_mult,
+                        use_breakeven=s_use_breakeven,
+                        use_trailing=s_use_trailing,
+                        be_mult=s_be_mult,
+                        ts_mult=s_ts_mult
                     )
                 else:
-                    # Formato intermedio o antiguo (solo lista de factores por clave)
-                    factors_map[s_name] = StrategyBreakdown(
+                    # Formato antiguo
+                    factors_map[s_name_tech] = StrategyBreakdown(
                         score=0.0,
-                        factors=s_data if isinstance(s_data, list) else []
+                        factors=s_data if isinstance(s_data, list) else [],
+                        is_active=is_strat_active,
+                        risk_mode=s_risk_mode,
+                        risk_value=s_risk_value,
+                        sl_mult=s_sl_mult,
+                        tp_mult=s_tp_mult,
+                        use_breakeven=s_use_breakeven,
+                        use_trailing=s_use_trailing,
+                        be_mult=s_be_mult,
+                        ts_mult=s_ts_mult
                     )
             
             if factors_map:
@@ -338,12 +409,22 @@ async def get_symbols():
                 else:
                     factors_list = list(factors_map.values())[0].factors
 
+        # Calcular score global (máximo de las estrategias activas)
+        overall_score = radar.get('score', 0.0)
+        if factors_map:
+            active_scores = [v.score for k, v in factors_map.items() if v.is_active]
+            if active_scores:
+                overall_score = max(active_scores)
+            else:
+                # Si no hay activas, mostrar el máximo general pero con precaución
+                overall_score = max([v.score for v in factors_map.values()]) if factors_map else 0.0
+
         results.append(SymbolStatus(
             symbol=sym,
             is_active=bool(s['is_active']),
             market_open=market_open,
             regime=radar.get('regime', 'UNKNOWN'),
-            score=radar.get('score', 0.0),
+            score=overall_score,
             signal_direction=radar.get('signal_direction', 'NONE'),
             price=price,
             floating_pnl=pnl_map.get(sym, 0.0),
@@ -457,13 +538,38 @@ async def toggle_symbol(update: ConfigUpdate):
     """Activa o desactiva un símbolo o estrategia en la base de datos."""
     try:
         if update.strategy:
-            await db.set_symbol_strategy(update.symbol, update.strategy, update.is_active)
+            await db.set_symbol_strategy(
+                update.symbol, 
+                update.strategy, 
+                is_active=update.is_active,
+                score_threshold=update.score_threshold,
+                sl_mult=update.sl_mult,
+                tp_mult=update.tp_mult,
+                risk_mode=update.risk_mode,
+                risk_value=update.risk_value,
+                use_trailing=update.use_trailing,
+                use_breakeven=update.use_breakeven,
+                be_mult=update.be_mult,
+                ts_mult=update.ts_mult,
+                min_rr=update.min_rr
+            )
         else:
             await db.set_symbol_active(update.symbol, 1 if update.is_active else 0)
+            if update.score_threshold is not None:
+                await db.update_symbol_params(update.symbol, score_threshold=update.score_threshold)
             
         return APIResponse(status="success", message=f"Updated {update.symbol} success")
     except Exception as e:
         return APIResponse(status="error", message=str(e))
+
+# Alias para compatibilidad con el frontend (App.jsx llama a estos nombres)
+@app.post("/api/config/strategy", response_model=APIResponse, tags=["Config"])
+async def alias_toggle_strategy(update: ConfigUpdate):
+    return await toggle_symbol(update)
+
+@app.post("/api/config/symbol", response_model=APIResponse, tags=["Config"])
+async def alias_toggle_symbol(update: ConfigUpdate):
+    return await toggle_symbol(update)
 
 @app.get("/api/config/bot/{key}", tags=["Config"])
 async def get_bot_config(key: str, default: str = "AUTO"):
@@ -538,26 +644,75 @@ async def update_trade_notes(update: TradeNoteUpdate):
 
 @app.get("/api/trades/{ticket}/snapshot", tags=["Trading"])
 async def get_trade_snapshot(ticket: int):
-    """Retorna el contexto OHLC guardado para un trade (Fase 53)."""
+    """Retorna el contexto OHLC guardado. Si no existe, lo genera (Fase 53 y PRO)."""
     try:
         import aiosqlite
         import json
+        from datetime import datetime
         async with aiosqlite.connect(db.db_path) as conn:
             conn.row_factory = aiosqlite.Row
+            # Intentar obtener el guardado original
             async with conn.execute(
                 "SELECT symbol, ohlc_data, timestamp FROM trade_context WHERE ticket = ? ORDER BY id DESC LIMIT 1", 
                 (ticket,)
             ) as cursor:
                 row = await cursor.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="Snapshot context not found")
+                if row:
+                    return {
+                        "ticket": ticket,
+                        "symbol": row['symbol'],
+                        "timestamp": str(row['timestamp']),
+                        "ohlc": json.loads(row['ohlc_data'])
+                    }
+
+            # ====== FALLBACK DINÁMICO =======
+            # Si no existe contexto en DB, buscar el trade para sacar time_in y symbol
+            async with conn.execute(
+                "SELECT symbol, time_in FROM trades WHERE ticket = ?", 
+                (ticket,)
+            ) as cursor:
+                trade_row = await cursor.fetchone()
+                if not trade_row:
+                    raise HTTPException(status_code=404, detail="Trade neither has context nor exists in history")
+                
+                symbol = trade_row['symbol']
+                time_in_str = trade_row['time_in']
+                
+                # Intentar generar el OHLC en vuelo
+                if not ensure_mt5_connected():
+                    raise HTTPException(status_code=503, detail="MT5 required for historical fallback")
+                
+                # Parsear la fecha de entrada
+                time_in_dt = datetime.strptime(time_in_str, "%Y-%m-%d %H:%M:%S")
+                
+                # Pedimos las 50 velas de M15 anteriores a la entrada + 10 posteriores por contexto visual
+                # Convertimos datetime a timestamp de forma compatible con MT5
+                import time
+                # time_in_dt ya está en timezone local/broker del string guardado
+                rates = mt5.copy_rates_from(symbol, mt5.TIMEFRAME_M15, time_in_dt, 60)
+                
+                if rates is None or len(rates) == 0:
+                    raise HTTPException(status_code=404, detail="Could not fetch historical fallback MT5 data")
+                
+                ohlc_data = []
+                for r in rates:
+                    ohlc_data.append({
+                        "time": datetime.fromtimestamp(r['time']).strftime("%Y-%m-%d %H:%M"),
+                        "open": r['open'],
+                        "high": r['high'],
+                        "low": r['low'],
+                        "close": r['close'],
+                        "volume": r['tick_volume']
+                    })
                 
                 return {
                     "ticket": ticket,
-                    "symbol": row['symbol'],
-                    "timestamp": str(row['timestamp']),
-                    "ohlc": json.loads(row['ohlc_data'])
+                    "symbol": symbol,
+                    "timestamp": time_in_str,
+                    "ohlc": ohlc_data
                 }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error get_trade_snapshot: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -783,10 +938,22 @@ async def get_matrix_data():
         
         # Primero, asegurar que todas las estrategias registradas en la DB aparezcan
         for s_name, s_cfg in strategies_db.items():
+            # Riesgo específico para Scalper Pro: 5€, resto 25€ (si no hay config en DB)
+            default_risk = 5.0 if "Scalper" in s_name else 25.0
+            
             factors_map[s_name] = {
                 "score": 0.0,
-                "is_active": bool(s_cfg.get("is_active", 1)),
-                **s_cfg # Incluye risk_mode, risk_value, sl_mult, tp_mult, score_threshold si existen
+                "is_active": bool(s_cfg.get("is_active", 0)), 
+                "risk_mode": s_cfg.get("risk_mode", "MONEY"),
+                "risk_value": s_cfg.get("risk_value", default_risk),
+                "sl_mult": s_cfg.get("sl_mult", 2.5),
+                "tp_mult": s_cfg.get("tp_mult", 6.0),
+                "score_threshold": s_cfg.get("score_threshold", 80.0),
+                "use_trailing": bool(s_cfg.get("use_trailing", 1)), # Activado por defecto (1)
+                "use_breakeven": bool(s_cfg.get("use_breakeven", 1)), # Activado por defecto (1)
+                "be_mult": s_cfg.get("be_mult", 2.0),
+                "ts_mult": s_cfg.get("ts_mult", 2.5),
+                "min_rr": s_cfg.get("min_rr", 1.5)
             }
             
         # Segundos, actualizar con puntuaciones reales del radar
@@ -875,6 +1042,30 @@ async def delete_profile(profile_id: int):
     success = await db.delete_risk_profile(profile_id)
     if not success: raise HTTPException(status_code=500, detail="Error deleting profile")
     return {"status": "success"}
+
+# --- FRONTEND (SERVE REACT DIST) ---
+# Sirve los archivos de la build de React en modo Producción.
+# Se debe montar al final para no interferir con las rutas /api/.
+react_dist_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PST_Web", "dist")
+
+if os.path.isdir(react_dist_path):
+    app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_path, "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_react_app(full_path: str):
+        # Evitar capturar rutas /api/ accidentales si hubo fallo
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+        
+        # Sirve el index.html principal (React Router se encarga del resto)
+        index_file = os.path.join(react_dist_path, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        
+        return {"error": "Frontend build not found. Run npm run build in PST_Web."}
+else:
+    logger.warning(f"⚠️ Frontend dist no encontrado en {react_dist_path}. Asegúrate de construir la aplicación.")
+
 
 if __name__ == "__main__":
     import uvicorn
