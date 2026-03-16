@@ -1,4 +1,21 @@
 # PST_Core/config.py
+import os
+import sys
+
+def get_db_path():
+    if hasattr(sys, '_MEIPASS'):
+        # En el ejecutable (PyInstaller), la base es la carpeta del EXE
+        base_persist_dir = os.path.dirname(sys.executable)
+    else:
+        # En desarrollo, la base es la raíz del proyecto
+        # Subimos dos niveles desde PST_Core/
+        base_persist_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Prioridad: Variable de entorno > Ruta calculada
+    return os.getenv("DB_PATH", os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db"))
+
+DB_PATH = get_db_path()
+
 # Configuration constants for PailsSentinelTrade
 
 # TRADING RISK PARAMETERS (FTMO Friendly)

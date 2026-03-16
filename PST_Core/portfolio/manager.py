@@ -1,5 +1,6 @@
 import logging
 import MetaTrader5 as mt5
+import aiosqlite
 from typing import Dict, List
 
 logger = logging.getLogger("PST-Portfolio")
@@ -58,18 +59,12 @@ class PortfolioManager:
         today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
         
         # 1. Obtener PnL de trades cerrados hoy desde la DB
-        import sqlite3
-        import os
         closed_pnl = 0.0
         try:
-            # Resolviendo ruta absoluta para que funcione al lanzar desde PST_API
-            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pst_trading.db")
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,))
-            row = cursor.fetchone()
-            closed_pnl = row[0] if row and row[0] else 0.0
-            conn.close()
+            async with aiosqlite.connect(self.db.db_path) as conn:
+                async with conn.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,)) as cursor:
+                    row = await cursor.fetchone()
+                    closed_pnl = row[0] if row and row[0] else 0.0
         except Exception as e:
             logger.error(f"❌ Error consultando PnL hoy: {e}")
             

@@ -26,6 +26,7 @@ from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
 from dotenv import load_dotenv
 import logging
+from PST_Core.config import DB_PATH
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -83,16 +84,6 @@ async def login(req: LoginRequest):
     raise HTTPException(status_code=401, detail="Contraseña incorrecta")
 
 # --- PERSISTENT PATH LOGIC (FASE 45) ---
-if hasattr(sys, '_MEIPASS'):
-    # Si estamos en el EXE, la carpeta de trabajo es donde está el ejecutable
-    # sys.executable da la ruta al .exe. Nos interesa su carpeta.
-    base_persist_dir = os.path.dirname(sys.executable)
-else:
-    # En desarrollo, subimos un nivel desde la raíz del proyecto
-    base_persist_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-DB_PATH = os.getenv("DB_PATH", os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db"))
-
 db = PSTDatabase(db_path=DB_PATH)
 portfolio = PortfolioManager(db=db)
 executor = PSTExecutor(db=db, portfolio=portfolio)

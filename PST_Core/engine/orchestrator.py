@@ -13,7 +13,7 @@ from ..strategies.pst_scalper_pro import PSTScalperPro # NEW FASE 68
 from ..strategies.pst_ai_oracle import PSTAIOracle # RESTORED
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
-from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES
+from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES, DB_PATH
 import pandas_ta as ta
 import pandas as pd
 from typing import List
@@ -906,16 +906,14 @@ async def start_v6(symbols: List[str]):
         return
 
     # 1. Obtener Símbolos Activos desde DB si no se pasan (o para sobreescribir)
-    import sqlite3
+    import aiosqlite
     try:
-        conn = sqlite3.connect("PST_Core/data/pst_trading.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT symbol FROM symbols_config WHERE is_active = 1")
-        db_active_symbols = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        if db_active_symbols:
-            logger.info(f"📋 Cargando {len(db_active_symbols)} símbolos desde DB Configurator.")
-            symbols = db_active_symbols
+        async with aiosqlite.connect(DB_PATH) as conn:
+            async with conn.execute("SELECT symbol FROM symbols_config WHERE is_active = 1") as cursor:
+                db_active_symbols = [row[0] for row in await cursor.fetchall()]
+                if db_active_symbols:
+                    logger.info(f"📋 Cargando {len(db_active_symbols)} símbolos desde DB Configurator.")
+                    symbols = db_active_symbols
     except Exception as e:
         logger.warning(f"⚠️ Error cargando símbolos desde DB: {e}. Usando lista por defecto.")
 

@@ -5,10 +5,12 @@ import logging
 import asyncio
 from datetime import datetime
 
+from ..config import DB_PATH
+
 logger = logging.getLogger("PST-Database")
 
 class PSTDatabase:
-    def __init__(self, db_path="PST_Core/data/pst_trading.db"):
+    def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
         # Asegurar que el directorio existe
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
