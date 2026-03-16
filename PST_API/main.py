@@ -1041,27 +1041,34 @@ async def delete_profile(profile_id: int):
     return {"status": "success"}
 
 # --- FRONTEND (SERVE REACT DIST) ---
-# Sirve los archivos de la build de React en modo Producción.
-# Se debe montar al final para no interferir con las rutas /api/.
-react_dist_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PST_Web", "dist")
+# Detección robusta de rutas para PyInstaller (FASE 45)
+if hasattr(sys, '_MEIPASS'):
+    # En el EXE, los archivos están en la raíz del temporal
+    base_dir = sys._MEIPASS
+else:
+    # En desarrollo, subimos dos niveles desde PST_API/main.py
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+react_dist_path = os.path.join(base_dir, "PST_Web", "dist")
 
 if os.path.isdir(react_dist_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_path, "assets")), name="assets")
 
+    @app.get("/", include_in_schema=False)
+    async def serve_root():
+        return FileResponse(os.path.join(react_dist_path, "index.html"))
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_react_app(full_path: str):
-        # Evitar capturar rutas /api/ accidentales si hubo fallo
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
         
-        # Sirve el index.html principal (React Router se encarga del resto)
         index_file = os.path.join(react_dist_path, "index.html")
         if os.path.exists(index_file):
             return FileResponse(index_file)
-        
-        return {"error": "Frontend build not found. Run npm run build in PST_Web."}
+        return {"error": "Frontend build not found."}
 else:
-    logger.warning(f"⚠️ Frontend dist no encontrado en {react_dist_path}. Asegúrate de construir la aplicación.")
+    logger.warning(f"⚠️ Frontend dist no encontrado en {react_dist_path}")
 
 
 if __name__ == "__main__":
