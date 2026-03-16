@@ -13,11 +13,38 @@ class PSTDatabase:
         # Asegurar que el directorio existe
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
-    async def initialize(self):
+        async def initialize(self):
         """Crea las tablas si no existen y activa modo WAL."""
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
             # Activar modo WAL para permitir lectura/escritura concurrente
             await db.execute("PRAGMA journal_mode=WAL")
+            
+            # --- TABLA CONFIGURACIÓN SÍMBOLOS (NECESARIA PARA RADAR) ---
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS symbols_config (
+                    symbol TEXT PRIMARY KEY,
+                    type TEXT DEFAULT 'FOREX',
+                    is_active INTEGER DEFAULT 1,
+                    lot_size REAL DEFAULT 0.01,
+                    sl_mult REAL DEFAULT 2.5,
+                    tp_mult REAL DEFAULT 6.0,
+                    score_threshold REAL DEFAULT 80.0,
+                    risk_mode TEXT DEFAULT 'PCT',
+                    risk_value REAL DEFAULT 0.25,
+                    min_rr REAL DEFAULT 1.5
+                )
+            ''')
+            
+            # Insertar símbolos por defecto si la tabla está vacía
+            async with db.execute("SELECT COUNT(*) FROM symbols_config") as cursor:
+                count = (await cursor.fetchone())[0]
+                if count == 0:
+                    default_symbols = [
+                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('XAUUSD', 'COMMODITY'),
+                        ('NAS100', 'INDEX'), ('BTCUSD', 'CRYPTO'), ('US30', 'INDEX')
+                    ]
+                    await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
+
             # Tabla de Operaciones (Trades)
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS trades (

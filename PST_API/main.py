@@ -122,16 +122,13 @@ async def get_account():
     from datetime import datetime, time
     today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
     
-    closed_today = 0.0
+        closed_today = 0.0
     try:
-        import sqlite3
-        # Usar la ruta de la db del objeto db inyectado
-        conn = sqlite3.connect(db.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,))
-        row = cursor.fetchone()
-        closed_today = row[0] if row and row[0] else 0.0
-        conn.close()
+        import aiosqlite
+        async with aiosqlite.connect(db.db_path) as conn:
+            async with conn.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,)) as cursor:
+                row = await cursor.fetchone()
+                closed_today = row[0] if row and row[0] else 0.0
     except Exception as e:
         logger.error(f"❌ Error calculando closed_today en API: {e}")
 
