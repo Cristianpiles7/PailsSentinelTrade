@@ -102,9 +102,6 @@ def ensure_mt5_connected():
         logger.error(f"⚠️ Error verificando conexión MT5: {e}")
         return False
 
-@app.get("/", tags=["General"])
-async def root():
-    return {"message": "Pails Sentinel Trade API is running", "status": "online"}
 
 @app.get("/api/account", response_model=AccountStatus, tags=["Trading"])
 async def get_account():
