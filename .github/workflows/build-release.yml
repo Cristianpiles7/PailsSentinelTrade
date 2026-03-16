@@ -18,9 +18,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build React Frontend
         working-directory: ./PST_Web
@@ -63,11 +63,12 @@ jobs:
           Tools/updater_launcher.py
 
       - name: Prepare Artifacts
+        shell: pwsh
         run: |
-          mkdir release_assets
-          copy "dist\PST_MASTER.exe" "release_assets\"
-          copy "dist\PST_LAUNCHER.exe" "release_assets\"
-          copy "version.txt" "release_assets\"
+          New-Item -ItemType Directory -Force -Path release_assets
+          Copy-Item "dist\PST_MASTER.exe" -Destination "release_assets\" -ErrorAction Stop
+          Copy-Item "dist\PST_LAUNCHER.exe" -Destination "release_assets\" -ErrorAction Stop
+          Copy-Item "version.txt" -Destination "release_assets\" -ErrorAction Stop
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
