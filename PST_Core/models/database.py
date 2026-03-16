@@ -13,7 +13,7 @@ class PSTDatabase:
         # Asegurar que el directorio existe
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
-        async def initialize(self):
+    async def initialize(self):
         """Crea las tablas si no existen y activa modo WAL."""
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
             # Activar modo WAL para permitir lectura/escritura concurrente
