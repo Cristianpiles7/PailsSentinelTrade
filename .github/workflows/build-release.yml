@@ -43,6 +43,7 @@ jobs:
         shell: pwsh
         run: |
           python -m PyInstaller --noconfirm --onefile --console --name "PST_MASTER" `
+          --paths "." `
           --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" `
           --add-data "PST_Web/dist;PST_Web/dist" `
           --hidden-import "pandas" `
