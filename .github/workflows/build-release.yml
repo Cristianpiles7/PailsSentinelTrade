@@ -42,7 +42,7 @@ jobs:
       - name: Build PST_MASTER with PyInstaller
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --name "PST_MASTER" `
+          python -m PyInstaller --noconfirm --onefile --console --name "PST_MASTER" `
           --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" `
           --add-data "PST_Web/dist;PST_Web/dist" `
           --hidden-import "pandas" `

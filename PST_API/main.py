@@ -74,11 +74,16 @@ async def login(req: LoginRequest):
         return {"token": WEB_PASSWORD, "status": "authenticated"}
     raise HTTPException(status_code=401, detail="Contraseña incorrecta")
 
-# Inicializar componentes usando variables de entorno
-DB_PATH = os.getenv("DB_PATH", "PST_Core/data/pst_trading.db")
-# Asegurar ruta absoluta si es necesario
-if not os.path.isabs(DB_PATH):
-    DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), DB_PATH)
+# --- PERSISTENT PATH LOGIC (FASE 45) ---
+if hasattr(sys, '_MEIPASS'):
+    # Si estamos en el EXE, la carpeta de trabajo es donde está el ejecutable
+    # sys.executable da la ruta al .exe. Nos interesa su carpeta.
+    base_persist_dir = os.path.dirname(sys.executable)
+else:
+    # En desarrollo, subimos un nivel desde la raíz del proyecto
+    base_persist_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+DB_PATH = os.getenv("DB_PATH", os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db"))
 
 db = PSTDatabase(db_path=DB_PATH)
 portfolio = PortfolioManager(db=db)
@@ -1095,6 +1100,7 @@ if __name__ == "__main__":
         width=1280, 
         height=850,
         resizable=True,
-        min_size=(1000, 700)
+        min_size=(1000, 700),
+        debug=True
     )
     webview.start()
