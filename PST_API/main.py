@@ -1081,7 +1081,7 @@ else:
     logger.warning(f"⚠️ Frontend dist no encontrado en {react_dist_path}")
 
 
-if __name__ == "__main__":
+def start_app():
     import uvicorn
     import threading
     import webview
@@ -1108,3 +1108,6 @@ if __name__ == "__main__":
         min_size=(1000, 700)
     )
     webview.start(debug=True)
+
+if __name__ == "__main__":
+    start_app()

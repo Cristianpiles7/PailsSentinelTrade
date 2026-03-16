@@ -43,7 +43,8 @@ jobs:
         shell: pwsh
         run: |
           python -m PyInstaller --noconfirm --onefile --console --name "PST_MASTER" `
-          --paths "." `
+          --collect-all "PST_Core" `
+          --collect-all "PST_API" `
           --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" `
           --add-data "PST_Web/dist;PST_Web/dist" `
           --hidden-import "pandas" `
@@ -56,7 +57,7 @@ jobs:
           --hidden-import "telegram" `
           --hidden-import "webview" `
           --hidden-import "clr" `
-          PST_API/main.py
+          PST_MASTER.py
 
       - name: Build PST_LAUNCHER with PyInstaller
         shell: pwsh
