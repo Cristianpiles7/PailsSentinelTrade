@@ -1070,23 +1070,10 @@ else:
 if __name__ == "__main__":
     import uvicorn
     import threading
-    import webbrowser
-    import time
-
-    def open_browser():
-        time.sleep(2)
-        webbrowser.open("http://localhost:8000")
-
-    threading.Thread(target=open_browser, daemon=True).start()
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-if __name__ == "__main__":
-    import uvicorn
-    import threading
     import webview
     import time
 
+    # Usar 127.0.0.1 para evitar alertas de firewall en modo escritorio
     def run_server():
         uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
 
@@ -1094,10 +1081,10 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
 
-    # Pequeña espera para que el server esté listo
-    time.sleep(2)
+    # Espera generosa para asegurar que el servidor FastAPI está arriba
+    time.sleep(3)
 
-    # Lanzar ventana nativa tipo escritorio
+    # Lanzar ventana nativa única
     webview.create_window(
         'Pails Sentinel Trade Bot', 
         'http://127.0.0.1:8000',
