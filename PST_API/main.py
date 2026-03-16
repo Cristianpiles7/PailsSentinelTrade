@@ -1079,3 +1079,31 @@ if __name__ == "__main__":
 
     threading.Thread(target=open_browser, daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import threading
+    import webview
+    import time
+
+    def run_server():
+        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+
+    # Iniciar servidor en segundo plano
+    t = threading.Thread(target=run_server, daemon=True)
+    t.start()
+
+    # Pequeña espera para que el server esté listo
+    time.sleep(2)
+
+    # Lanzar ventana nativa tipo escritorio
+    webview.create_window(
+        'Pails Sentinel Trade Bot', 
+        'http://127.0.0.1:8000',
+        width=1280, 
+        height=850,
+        resizable=True,
+        min_size=(1000, 700)
+    )
+    webview.start()

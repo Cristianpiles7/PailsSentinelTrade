@@ -13,3 +13,5 @@ uvicorn
 aiosqlite
 pydantic
 python-telegram-bot
+pywebview
+pythonnet
