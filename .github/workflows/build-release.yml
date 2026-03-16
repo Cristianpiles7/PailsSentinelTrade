@@ -36,31 +36,38 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          # Use the latest requirements
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller pandas_ta
+          pip install pyinstaller pandas_ta fastapi uvicorn waitress aiosqlite requests
 
       - name: Build PST_MASTER with PyInstaller
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --console --name "PST_MASTER" ^
-          --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" ^
-          --add-data "PST_Core/dashboard/static;PST_Core/dashboard/static" ^
-          --add-data "PST_Web/dist;PST_Web/dist" ^
-          --hidden-import "pandas" ^
-          --hidden-import "pandas_ta" ^
-          --hidden-import "MetaTrader5" ^
-          --hidden-import "fastapi" ^
-          --hidden-import "uvicorn" ^
-          --icon "NONE" ^
+          pyinstaller --noconfirm --onefile --console --name "PST_MASTER" `
+          --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" `
+          --add-data "PST_Core/dashboard/static;PST_Core/dashboard/static" `
+          --add-data "PST_Web/dist;PST_Web/dist" `
+          --hidden-import "pandas" `
+          --hidden-import "pandas_ta" `
+          --hidden-import "MetaTrader5" `
+          --hidden-import "fastapi" `
+          --hidden-import "uvicorn" `
+          --hidden-import "aiosqlite" `
+          --icon "NONE" `
           PST_API/main.py
 
       - name: Build PST_LAUNCHER with PyInstaller
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --console --name "PST_LAUNCHER" ^
-          --hidden-import "requests" ^
-          --icon "NONE" ^
+          pyinstaller --noconfirm --onefile --console --name "PST_LAUNCHER" `
+          --hidden-import "requests" `
+          --icon "NONE" `
           Tools/updater_launcher.py
+
+      - name: List dist directory
+        shell: pwsh
+        run: |
+          ls dist
 
       - name: Prepare Artifacts
         shell: pwsh
