@@ -9,7 +9,15 @@ import sys
 import MetaTrader5 as mt5
 
 # Añadir el directorio raíz al path para poder importar PST_Core
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if hasattr(sys, '_MEIPASS'):
+    # En el ejecutable (PyInstaller), la raíz es sys._MEIPASS
+    project_root = sys._MEIPASS
+else:
+    # En desarrollo, subimos un nivel desde PST_API/
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from PST_Core.models.database import PSTDatabase
 from PST_Core.portfolio.manager import PortfolioManager
