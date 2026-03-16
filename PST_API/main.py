@@ -35,16 +35,11 @@ logger = logging.getLogger("PST_API")
 load_dotenv() # Carga variables desde el archivo .env
 WEB_PASSWORD = os.getenv("WEB_PASSWORD", "PstAdmin01")
 
-print(f"DEBUG: main.py - DB_PATH: {DB_PATH}")
-print(f"DEBUG: main.py - project_root: {project_root}")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gestión del ciclo de vida de la aplicación (FASE 42)."""
-    print("DEBUG: lifespan - Initializing DB...")
+    """Gestión del ciclo de vida de la aplicación."""
     await db.initialize()
-    print("DEBUG: lifespan - Initializing MT5...")
     if not mt5.initialize():
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
     
@@ -53,10 +48,9 @@ async def lifespan(app: FastAPI):
         from PST_Core.engine.orchestrator import start_v6
         # Símbolos por defecto si no hay en la DB
         default_symbols = ["US500.cash", "EU50.cash", "XAGUSD", "XAUUSD", "BTCUSD", "ETHUSD"]
-        print("DEBUG: lifespan - Starting trading engine (start_v6)...")
         asyncio.create_task(start_v6(default_symbols))
     except Exception as e:
-        print(f"DEBUG: lifespan - Error starting trading engine: {e}")
+        logger.error(f"Error starting trading engine: {e}")
 
     yield
 
@@ -1112,7 +1106,7 @@ def start_app():
         resizable=True,
         min_size=(1000, 700)
     )
-    webview.start(debug=True)
+    webview.start()
 
 if __name__ == "__main__":
     start_app()

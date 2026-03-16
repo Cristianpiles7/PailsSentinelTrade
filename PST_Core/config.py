@@ -12,9 +12,7 @@ def get_db_path():
         base_persist_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # Prioridad: Variable de entorno > Ruta calculada
-    path = os.getenv("DB_PATH", os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db"))
-    print(f"DEBUG: config.py - Calculated Path: {path}")
-    return path
+    return os.getenv("DB_PATH", os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db"))
 
 DB_PATH = get_db_path()
 
