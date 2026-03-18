@@ -143,7 +143,7 @@ class PortfolioManager:
                         continue # Seguimos validando el resto de las reglas
                     else:
                         reason = "SCALPING NO-PYRAMID" if is_scalper else "RISK IN POS"
-                        logger.debug(f"🛡️ Bloqueando entrada duplicada para {symbol}. Razón: {reason}.")
+                        logger.info(f"🛡️ Bloqueando entrada duplicada para {symbol}. Razón: {reason}.")
                         return False
 
         acc = await self.get_account_status()

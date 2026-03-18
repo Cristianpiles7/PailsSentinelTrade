@@ -30,35 +30,48 @@ class PSTExecutor:
             logger.warning(f"⚠️ [NEWS GUARD] {symbol} Bloqueado por noticia de alto impacto: {news_event['title']} ({news_event['country']})")
             return None
 
-        # 0. Check for Parallelism and Symbol Limits (FASE 67)
-        strategy_category = STRATEGY_CATEGORIES.get(strategy_name, "CORE")
+        # --- REVERSE MAPPING (FASE 48+) ---
+        # Si recibimos el nombre legible (ej: "Flujo EMA (Tendencia)"),
+        # lo traducimos de vuelta al ID técnico para buscar parámetros y categoría.
+        raw_name = strategy_name
+        reverse_map = {
+            "Scalping Pro (Micro-Reversión)": "PST-Scalper-Pro",
+            "Flujo EMA (Tendencia)": "PST-EMA-Flow",
+            "Canal Maestro (T. Híbrido)": "PST-Channel-Master",
+            "Reversión a la Media (Rangos)": "PST-Mean-Reversion",
+            "Liquidez Sentinel (Institucional)": "PST-Liquidity-Hunter"
+        }
+        if strategy_name in reverse_map:
+            raw_name = reverse_map[strategy_name]
+
+        # --- CATEGORY & RISK LIMITS ---
+        strategy_category = STRATEGY_CATEGORIES.get(raw_name, "CORE")
         max_for_cat = MAX_POSITIONS_PER_CATEGORY.get(strategy_category, 1)
         
         all_positions = await get_positions_async(symbol=symbol)
-        
-        # 0.1 Count positions by category
         cat_count = 0
         total_risk_pct = 0
+        
         if all_positions:
             for p in all_positions:
                 # Extraer nombre de estrategia del comentario
                 p_strat = p.comment.replace("PST_", "").replace("PST-", "")
                 # Buscar categoría (usamos coincidencia parcial o limpia)
                 p_cat = "CORE"
-                for s_name, s_cat in STRATEGY_CATEGORIES.items():
-                    if s_name.replace("PST-", "") in p_strat:
+                for s_name_cfg, s_cat in STRATEGY_CATEGORIES.items():
+                    if s_name_cfg.replace("PST-", "") in p_strat:
                         p_cat = s_cat
                         break
                 
                 if p_cat == strategy_category:
                     cat_count += 1
                 
-                # Estimación de riesgo (simplificada por ahora, mejorable en FASE 69)
-                total_risk_pct += 0.25 # Asunción de riesgo base
-            
-            # Bloqueo por categoría
+                # Sumar riesgo solo si es el mismo símbolo
+                # (Asumimos riesgo fijo de 0.25% por posición abierta si no hay metadata)
+                total_risk_pct += 0.25
+
             if cat_count >= max_for_cat:
-                logger.debug(f"🚫 [CATEGORY LIMIT] {symbol} ya tiene {cat_count} pos de tipo {strategy_category}. Bloqueando {strategy_name}.")
+                logger.info(f"🚫 [LIMIT] {symbol} ya tiene {cat_count} pos de tipo {strategy_category}. Bloqueando {raw_name}.")
                 return None
             
             # Bloqueo por exposición total
@@ -74,24 +87,11 @@ class PSTExecutor:
             return
 
         # --- NEW: CARGA DE CONFIGURACIÓN DINÁMICA (FASE 46) ---
-        # 1.1 Obtener parámetros del símbolo base
+        # --- PARAMETERS LOOKUP ---
+        # s_params vendrán de symbols_config (globales)
         s_params = await self.db.get_symbol_params(symbol)
-        
-        # 1.2 Obtener parámetros específicos de la estrategia para este símbolo
-        all_sym_strats = await self.db.get_symbol_strategies(symbol)
-        
-        # Normalizar nombre (Orchestrator puede pasar el nombre 'limpio')
-        raw_name = strategy_name
-        reverse_map = {
-            "Scalping Pro (Micro-Reversión)": "PST-Scalper-Pro",
-            "Flujo EMA (Tendencia)": "PST-EMA-Flow",
-            "Canal Maestro (T. Híbrido)": "PST-Channel-Master",
-            "Reversión a la Media (Rangos)": "PST-Mean-Reversion"
-        }
-        if strategy_name in reverse_map:
-            raw_name = reverse_map[strategy_name]
-            
-        strat_cfg = all_sym_strats.get(raw_name, {})
+        # strat_cfg vendrán de symbol_strategies (específicos de esta estrategia para este símbolo)
+        strat_cfg = (await self.db.get_symbol_strategies(symbol)).get(raw_name, {})
         
         # JERARQUÍA DE RIESGO: Estrategia > Símbolo > Global
         risk_mode = strat_cfg.get("risk_mode") or s_params.get("risk_mode") or "PCT"
