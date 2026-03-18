@@ -4,6 +4,12 @@ import time
 import requests
 import subprocess
 import shutil
+import sys
+
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
 
 # ---------------------------------------------------------
 # CONFIGURACIÓN DEL REPOSITORIO DE GITHUB
