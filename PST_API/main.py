@@ -7,6 +7,7 @@ from typing import List
 import os
 import sys
 import MetaTrader5 as mt5
+import asyncio
 
 # Añadir el directorio raíz al path para poder importar PST_Core
 if hasattr(sys, '_MEIPASS'):
@@ -1085,22 +1086,43 @@ def start_app():
     import threading
     import webview
     import time
+    import socket
+    import sys
 
-    # Usar 127.0.0.1 para evitar alertas de firewall en modo escritorio
+    # Encontrar un puerto libre dinámicamente para evitar bloqueos
+    def find_free_port():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('127.0.0.1', 0))
+            return s.getsockname()[1]
+            
+    port = find_free_port()
+    host = "127.0.0.1"
+
     def run_server():
-        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+        uvicorn.run(app, host=host, port=port, log_level="info")
 
     # Iniciar servidor en segundo plano
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
 
-    # Espera generosa para asegurar que el servidor FastAPI está arriba
-    time.sleep(3)
+    # Espera activa hasta que el puerto esté escuchando (máx 20 segundos)
+    server_ready = False
+    for _ in range(40):
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                server_ready = True
+                break
+        except (ConnectionRefusedError, TimeoutError, OSError):
+            time.sleep(0.5)
+            
+    if not server_ready:
+        print("El servidor falló al iniciar en el puerto", port)
+        sys.exit(1)
 
-    # Lanzar ventana nativa única
+    # Lanzar ventana nativa única apuntando al puerto dinámico
     webview.create_window(
         'Pails Sentinel Trade Bot', 
-        'http://127.0.0.1:8000',
+        f'http://{host}:{port}',
         width=1280, 
         height=850,
         resizable=True,
