@@ -7,9 +7,9 @@ import shutil
 import sys
 
 if sys.stdout is None:
-    sys.stdout = open(os.devnull, 'w')
+    sys.stdout = open(os.devnull, 'w', encoding='utf-8')
 if sys.stderr is None:
-    sys.stderr = open(os.devnull, 'w')
+    sys.stderr = open(os.devnull, 'w', encoding='utf-8')
 
 # ---------------------------------------------------------
 # CONFIGURACIÓN DEL REPOSITORIO DE GITHUB
