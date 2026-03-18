@@ -600,7 +600,8 @@ class SymbolTask:
                                     sig_type_str = "BUY" if sig_val == 1 else "SELL"
                                     
                                     # News Filter
-                                    if news_mgr.is_news_near(self.symbol, window_minutes=30):
+                                    news_window = int(await self.db.get_config('news_block_window', '30'))
+                                    if news_mgr.is_news_near(self.symbol, window_minutes=news_window):
                                          logger.warning(f"🛑 [NEWS BLOCK] {self.symbol} signal blocked.")
                                          best_metadata["news_blocked"] = True
                                          best_metadata["blocked_reason"] = "NOTICIAS"
