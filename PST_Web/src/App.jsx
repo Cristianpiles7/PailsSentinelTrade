@@ -34,6 +34,7 @@ import { StatCard } from './components/ui/StatCard'
 import { EquityCurve } from './components/ui/EquityCurve'
 import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
 import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
+import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 
 
 
@@ -180,6 +181,7 @@ function App() {
   const [journalSnapshot, setJournalSnapshot] = useState(null)
   const [isJournalLoading, setIsJournalLoading] = useState(false)
 
+  const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
   const activeSymbols = symbols.filter(s => s.is_active)
   const strategies = symbols.length > 0 ? Object.keys(symbols[0].factors_map || {}) : []
 
@@ -3004,9 +3006,21 @@ function App() {
 
 
           currentView === 'terminal' && (
-
-
-
+            <div className="w-full animate-in slide-in-from-right-4 duration-500 pr-6">
+              <div className="space-y-6">
+                <section>
+                  <LiveConsole logs={logs} />
+                </section>
+                <TradeTerminalTable 
+                  trades={trades}
+                  historyTrades={historyTrades}
+                  filter={terminalTradesFilter}
+                  setFilter={setTerminalTradesFilter}
+                  onSymbolClick={(sym) => { setSelectedSymbol(sym); setCurrentView('surveillance'); }}
+                />
+              </div>
+            </div>
+          ) && false && (
             <div className="w-full animate-in slide-in-from-right-4 duration-500 pr-6">
 
 
@@ -3082,25 +3096,21 @@ function App() {
 
 
                     <div className="flex items-center gap-4">
-
-
-
+                      {['ACTIVE', 'HISTORY', 'ALL'].map(f => (
+                        <button
+                          key={f}
+                          onClick={() => setTerminalTradesFilter(f)}
+                          className={`px-4 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-widest border transition-all ${terminalTradesFilter === f 
+                            ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20' 
+                            : 'bg-zinc-900/50 border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
+                        >
+                          {f === 'ACTIVE' ? 'En Curso' : f === 'HISTORY' ? 'Cerradas' : 'Todo'}
+                        </button>
+                      ))}
                       <div className="px-5 py-1.5 bg-zinc-900/50 border border-zinc-800 rounded-xl">
-
-
-
-                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Active Fleet: </span>
-
-
-
-                        <span className="text-xs font-black text-indigo-400 italic font-mono">{trades.length} Trades</span>
-
-
-
+                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Registros: </span>
+                        <span className="text-xs font-black text-indigo-400 italic font-mono">{terminalTradesFilter === 'ACTIVE' ? trades.length : terminalTradesFilter === 'HISTORY' ? historyTrades.length : (trades.length + historyTrades.length)}</span>
                       </div>
-
-
-
                     </div>
 
 

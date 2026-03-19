@@ -83,9 +83,13 @@ class PSTDatabase:
                     strategy TEXT,
                     signal_type TEXT, -- BUY/SELL/NONE
                     score REAL,
-                    price REAL
+                    price REAL,
+                    blocked_reason TEXT -- NUEVO: Motivo del bloqueo si aplica
                 )
             ''')
+            try:
+                await db.execute("ALTER TABLE signal_logs ADD COLUMN blocked_reason TEXT")
+            except: pass
             
             # Tabla de Regímenes (Historial de mercado)
             await db.execute('''
@@ -319,15 +323,15 @@ class PSTDatabase:
                     await asyncio.sleep(0.1 * (attempt + 1))
                 else: raise
 
-    async def log_signal(self, symbol, regime, strategy, sig_type, score, price):
+    async def log_signal(self, symbol, regime, strategy, sig_type, score, price, blocked_reason=None):
         """Registra una señal para análisis de métricas con reintentos."""
         for attempt in range(5):
             try:
                 async with aiosqlite.connect(self.db_path, timeout=30) as db:
                     await db.execute('''
-                        INSERT INTO signal_logs (timestamp, symbol, regime, strategy, signal_type, score, price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (datetime.now(), symbol, regime, strategy, sig_type, score, price))
+                        INSERT INTO signal_logs (timestamp, symbol, regime, strategy, signal_type, score, price, blocked_reason)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (datetime.now(), symbol, regime, strategy, sig_type, score, price, blocked_reason))
                     await db.commit()
                 break
             except sqlite3.OperationalError as e:

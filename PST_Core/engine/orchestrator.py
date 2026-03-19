@@ -570,7 +570,7 @@ class SymbolTask:
                             # Si la estrategia tiene un score alto pero el régimen no es compatible
                             if not is_strat_in_regime and s_score >= 70:
                                 if s_result.get("entry", 0) != 0:
-                                    await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_REGIME", s_score, price)
+                                    await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_REGIME", s_score, price, blocked_reason="REGIMEN")
                                 s_score = 60 # Visual Cap (User Req)
                                 s_meta["blocked_reason"] = "REGIMEN"
 
@@ -591,7 +591,7 @@ class SymbolTask:
                                 if is_blocked:
                                     logger.info(f"🧊 [{self.symbol}] BLOQUEO DE SEGURIDAD (Cooldown/Histerésis). {msg}. Evitando operativa circular.")
                                     if s_score >= 70:
-                                        await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_COOLDOWN", s_score, price)
+                                        await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_COOLDOWN", s_score, price, blocked_reason="COOLDOWN")
                                         best_metadata["blocked_reason"] = "COOLDOWN"
                                         current_score = 60 # Visual Cap
                                 else:
@@ -606,7 +606,7 @@ class SymbolTask:
                                          best_metadata["news_blocked"] = True
                                          best_metadata["blocked_reason"] = "NOTICIAS"
                                          if s_score >= 70:
-                                              await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_NEWS_{sig_type_str}", s_score, price)
+                                              await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_NEWS_{sig_type_str}", s_score, price, blocked_reason="NOTICIAS")
                                               current_score = 60 # Visual Cap
                                     else:
                                         # Check Portfolio Limits & Pyramiding
