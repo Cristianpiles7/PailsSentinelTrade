@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sym_info_async, get_positions_async, get_mtf_data_async, send_order_async
 from ..models.classifier import RegimeClassifier, RegimeMode
 from ..models.database import PSTDatabase
@@ -789,14 +790,17 @@ async def sync_trades_task(db: PSTDatabase):
                                 trade_type_str = "BUY" if d.type == 1 else "SELL"
                                 asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
                                 
-                                # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0 para BE sucio), registrar en CooldownManager
-                                if total_pnl < -2.0: # TOLERANCIA BE: Perdonamos pérdidas menores a 2€ (comisiones/swap)
+                                # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0)
+                                # Usamos el tiempo REAL del deal como base para que el cooldown expire correctamente
+                                deal_time = datetime.fromtimestamp(d.time)
+                                
+                                if total_pnl < -2.0: # TOLERANCIA BE
                                     from ..utils.cooldown_manager import cooldown_mgr
-                                    cooldown_mgr.register_loss(d.symbol, duration_minutes=60)
+                                    cooldown_mgr.register_loss(d.symbol, duration_minutes=60, base_time=deal_time)
                                 else:
-                                    # Hysteresis para trades en ganancia/BE (Evita Hyper-trading)
+                                    # Hysteresis para trades en ganancia/BE
                                     from ..utils.cooldown_manager import cooldown_mgr
-                                    cooldown_mgr.register_trade_finish(d.symbol, duration_minutes=15)
+                                    cooldown_mgr.register_trade_finish(d.symbol, duration_minutes=15, base_time=deal_time)
                                     
                                 count_synced += 1
                         else:

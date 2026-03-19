@@ -17,22 +17,33 @@ class CooldownManager:
              cls._instance.cooldowns = {} # {symbol: deadline_datetime}
         return cls._instance
 
-    def register_loss(self, symbol: str, duration_minutes=60):
-        """Registra una pérdida y bloquea el símbolo por X minutos."""
-        deadline = datetime.now() + timedelta(minutes=duration_minutes)
-        self.cooldowns[symbol] = deadline
-        logger.warning(f"❄️ COOLDOWN (PÉRDIDA): {symbol} bloqueado hasta {deadline.strftime('%H:%M')} tras Stop Loss.")
+    def register_loss(self, symbol: str, duration_minutes=60, base_time=None):
+        """Registra una pérdida y bloquea el símbolo por X minutos desde base_time."""
+        start = base_time if base_time else datetime.now()
+        deadline = start + timedelta(minutes=duration_minutes)
+        
+        # Si el deadline ya pasó, no hacemos nada
+        if deadline <= datetime.now():
+            return
 
-    def register_trade_finish(self, symbol: str, duration_minutes=30):
-        """Registra el fin de cualquier trade para evitar re-entradas inmediatas (Hyper-trading fix)."""
-        deadline = datetime.now() + timedelta(minutes=duration_minutes)
-        # Solo sobreescribimos si el nuevo bloqueo es mayor al existente (ej: no quitar un cooldown de 1h por uno de 15m)
+        self.cooldowns[symbol] = deadline
+        logger.warning(f"❄️ COOLDOWN (PÉRDIDA): {symbol} bloqueado hasta {deadline.strftime('%H:%M')} (desde {start.strftime('%H:%M')}).")
+
+    def register_trade_finish(self, symbol: str, duration_minutes=30, base_time=None):
+        """Registra el fin de un trade para evitar re-entradas (desde base_time)."""
+        start = base_time if base_time else datetime.now()
+        deadline = start + timedelta(minutes=duration_minutes)
+        
+        if deadline <= datetime.now():
+            return
+
+        # Solo sobreescribimos si el nuevo bloqueo es mayor al existente
         if symbol in self.cooldowns:
             if deadline < self.cooldowns[symbol]:
                 return
         
         self.cooldowns[symbol] = deadline
-        logger.info(f"❄️ HISTÉRESIS: {symbol} bloqueado hasta {deadline.strftime('%H:%M')} para evitar operativa circular (Ping-Pong).")
+        logger.info(f"❄️ HISTÉRESIS: {symbol} bloqueado hasta {deadline.strftime('%H:%M')} (desde {start.strftime('%H:%M')}).")
 
     def is_blocked(self, symbol: str) -> tuple[bool, str]:
         """Retorna (True, Mensaje) si está bloqueado."""
