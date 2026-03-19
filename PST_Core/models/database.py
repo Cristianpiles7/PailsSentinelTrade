@@ -123,7 +123,10 @@ class PSTDatabase:
                     value TEXT
                 )
             ''')
-            # Valor por defecto
+            # Valores por defecto
+            await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('loss_cooldown_minutes', '15')")
+            await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('hysteresis_minutes', '15')")
+            await db.commit()
             # Tabla de Niveles del Usuario (Trading Híbrido)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_levels (

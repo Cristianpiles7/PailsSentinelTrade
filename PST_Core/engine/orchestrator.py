@@ -791,16 +791,18 @@ async def sync_trades_task(db: PSTDatabase):
                                 asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
                                 
                                 # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0)
-                                # Usamos el tiempo REAL del deal como base para que el cooldown expire correctamente
+                                # Obtener configuración dinámica (v1.3.4)
+                                loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
+                                hyst_mins = int(await db.get_config('hysteresis_minutes', '15'))
                                 deal_time = datetime.fromtimestamp(d.time)
                                 
                                 if total_pnl < -2.0: # TOLERANCIA BE
                                     from ..utils.cooldown_manager import cooldown_mgr
-                                    cooldown_mgr.register_loss(d.symbol, duration_minutes=60, base_time=deal_time)
+                                    cooldown_mgr.register_loss(d.symbol, duration_minutes=loss_cd_mins, base_time=deal_time)
                                 else:
                                     # Hysteresis para trades en ganancia/BE
                                     from ..utils.cooldown_manager import cooldown_mgr
-                                    cooldown_mgr.register_trade_finish(d.symbol, duration_minutes=15, base_time=deal_time)
+                                    cooldown_mgr.register_trade_finish(d.symbol, duration_minutes=hyst_mins, base_time=deal_time)
                                     
                                 count_synced += 1
                         else:
