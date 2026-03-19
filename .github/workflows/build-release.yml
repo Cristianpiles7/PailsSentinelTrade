@@ -57,6 +57,7 @@ jobs:
           --hidden-import "telegram" `
           --hidden-import "webview" `
           --hidden-import "clr" `
+          --hidden-import "aiohttp" `
           PST_MASTER.py
 
       - name: Build PST_LAUNCHER with PyInstaller
