@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Pails Sentinel Trade API", 
-    version="1.3.4",
+    version="1.3.5",
     lifespan=lifespan
 )
 
