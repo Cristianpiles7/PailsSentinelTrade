@@ -6,11 +6,14 @@ def get_db_path():
     if hasattr(sys, '_MEIPASS'):
         # En el ejecutable (PyInstaller), la base es la carpeta del EXE
         base_persist_dir = os.path.dirname(os.path.abspath(sys.executable))
+        print(f"[DEBUG-EXE] sys.executable: {sys.executable}")
+        print(f"[DEBUG-EXE] base_persist_dir: {base_persist_dir}")
     else:
         # En desarrollo, la base es la raíz del proyecto
         # Subimos dos niveles desde PST_Core/config.py
         current_file = os.path.abspath(__file__)
         base_persist_dir = os.path.dirname(os.path.dirname(current_file))
+        print(f"[DEBUG-DEV] base_persist_dir: {base_persist_dir}")
     
     # Construir ruta por defecto: [Base]/PST_Core/data/pst_trading.db
     default_path = os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db")
