@@ -1533,7 +1533,12 @@ function App() {
                           </div>
                           <div>
                             <h4 className="text-white font-black italic text-sm leading-none">{t.symbol}</h4>
-                            <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
+                            <div className="flex flex-col mt-1">
+                                <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
+                                <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-0.5">
+                                    {t.price_current?.toFixed((t.symbol.includes('EURUSD') || t.symbol.includes('GBPUSD')) ? 5 : (t.symbol.includes('JPY') || t.symbol.includes('XAU')) ? 3 : 2)}
+                                </span>
+                            </div>
                           </div>
                         </div>
                         <div className="text-right">
