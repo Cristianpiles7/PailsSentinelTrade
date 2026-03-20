@@ -247,31 +247,40 @@ class PSTDatabase:
                     await db.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_def}")
                 except: pass # Ya existe
 
-            # --- NUEVO: SIEMBRA ROBUSTA DE SÍMBOLOS Y ESTRATEGIAS (v1.4.1) ---
-            default_symbols = [
+            # --- NUEVO: SIEMBRA MAESTRA DE 32 SÍMBOLOS Y ESTRATEGIAS (v1.4.2) ---
+            # Extraído del backup: C:\Users\crist\Desktop\BOLSA\PailsSentinelTrade\old_PST_Core\...
+            master_config = [
                 ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('USDJPY', 'FOREX'),
                 ('AUDUSD', 'FOREX'), ('USDCHF', 'FOREX'), ('USDCAD', 'FOREX'),
-                ('XAUUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
-                ('NAS100', 'INDEX'), ('US30', 'INDEX'), ('US500.cash', 'INDEX'),
-                ('GER40', 'INDEX')
+                ('NZDUSD', 'FOREX'), ('EURGBP', 'FOREX'), ('EURJPY', 'FOREX'),
+                ('XAUUSD', 'COMMODITY'), ('XAGUSD', 'COMMODITY'), ('XTIUSD', 'COMMODITY'),
+                ('XNGUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
+                ('SOLUSD', 'CRYPTO'), ('ADAUSD', 'CRYPTO'), ('DOTUSD', 'CRYPTO'),
+                ('LNKUSD', 'CRYPTO'), ('LTCUSD', 'CRYPTO'), ('UNIUSD', 'CRYPTO'),
+                ('XLMUSD', 'CRYPTO'), ('XRPUSD', 'CRYPTO'), ('NAS100.cash', 'INDEX'),
+                ('US30', 'INDEX'), ('US500.cash', 'INDEX'), ('GER40.cash', 'INDEX'),
+                ('EU50.cash', 'INDEX'), ('UK100.cash', 'INDEX'), ('TSLA', 'STOCK'),
+                ('NVDA', 'STOCK'), ('AAPL', 'STOCK'), ('AMZN', 'STOCK'),
+                ('GOOG', 'STOCK'), ('META', 'STOCK'), ('MSFT', 'STOCK')
             ]
             
-            for sym, stype in default_symbols:
-                # 1. Asegurar símbolo en config global
+            for sym, stype in master_config:
+                # 1. Asegurar símbolo en config global con R:R optimizado
                 await db.execute("""
                     INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, min_rr) 
                     VALUES (?, ?, 1, 1.6)
                 """, (sym, stype))
                 
-                # 2. Configurar Scalper Pro (15€ Riesgo + BE/TS Activos)
+                # 2. Configurar Scalper Pro (15€ Riesgo Maestro + BE/TS Activos)
+                # Usamos risk_mode='MONEY' para compatibilidad con el backup y el cálculo de lotaje
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies 
-                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr)
-                    VALUES (?, 'PST-Scalper-Pro', 1, 'AMT', 15.0, 1, 1, 1.1, 2.5, 1.6)
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-Scalper-Pro', 1, 'MONEY', 15.0, 1, 1, 2.0, 2.5, 1.6, 1.6, 2.5)
                 """, (sym,))
 
             await db.commit()
-            logger.info(f"✅ Base de Datos Inicializada y Sembrada (v1.4.1) en {self.db_path}")
+            logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v1.4.2) en {self.db_path}")
 
     async def add_log(self, level, message, source="SYSTEM"):
         """Añade un mensaje de log a la base de datos."""
