@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
     await db.initialize()
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
-    logger.info(f"✅ Sentinel v1.8.3: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
+    logger.info(f"✅ Sentinel v1.8.4: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
     if not mt5.initialize():
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
     
@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Pails Sentinel Trade API", 
-    version="1.8.3",
+    version="1.8.4",
     lifespan=lifespan
 )
 

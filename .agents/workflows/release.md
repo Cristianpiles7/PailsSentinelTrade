@@ -1,5 +1,5 @@
 ---
-description: Automatizar el proceso de commit, tag y lanzamiento de la GitHub Action (vX.X.X)
+description: Automatizar el commit, tag y lanzamiento de la GitHub Action (vX.X.X o incremento automático)
 ---
 
 Este workflow asegura que los lanzamientos de PST sigan un orden estricto y profesional en GitHub.
