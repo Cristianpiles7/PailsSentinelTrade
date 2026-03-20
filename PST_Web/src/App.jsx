@@ -1684,9 +1684,9 @@ function App() {
                           })}
                         </div>
                         <div className="flex flex-col items-center min-w-[60px] border-l border-white/5 pl-4">
-                          <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase">PnL 24H</span>
-                          <span className={`text-[10px] font-black ${(s.profit_24h || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {(s.profit_24h || 0) >= 0 ? '+' : ''}{(s.profit_24h || 0).toFixed(2)}€
+                          <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase">Daily PNL</span>
+                          <span className={`text-[10px] font-black ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                           </span>
                         </div>
                       </div>
@@ -1774,11 +1774,19 @@ function App() {
 
                     {/* Telemetry Grid (Multi-Timeframe + PnL 24h) */}
                     <div className="grid grid-cols-4 gap-2 bg-black/20 p-3 rounded-2xl border border-white/5 relative z-10">
-                      <div className="flex flex-col items-center justify-center border-r border-white/5">
-                        <span className="text-[7px] font-black text-zinc-600 mb-1">PNL 24H</span>
-                        <span className={`text-[10px] font-black ${(s.profit_24h || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {(s.profit_24h || 0) >= 0 ? '+' : ''}{(s.profit_24h || 0).toFixed(2)}€
-                        </span>
+                      <div className="flex flex-col items-center justify-center border-r border-white/5 px-1">
+                        <div className="flex flex-col items-center mb-1">
+                          <span className="text-[6px] font-black text-zinc-600 uppercase">Daily</span>
+                          <span className={`text-[9px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
+                          </span>
+                        </div>
+                        <div className="flex flex-col items-center border-t border-white/5 pt-1 w-full">
+                          <span className="text-[6px] font-black text-zinc-600 uppercase">Total</span>
+                          <span className={`text-[8px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
+                          </span>
+                        </div>
                       </div>
                       {['M5', 'M15', 'H1'].map(tf => {
                         const tel = s.telemetry?.[tf] || {};

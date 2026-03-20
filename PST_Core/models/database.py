@@ -950,3 +950,79 @@ class PSTDatabase:
         except Exception as e:
             logger.error(f"❌ Error get_24h_profit_by_symbol: {e}")
             return {}
+
+    async def get_all_time_profit_by_symbol(self) -> dict:
+        """Obtiene el beneficio total acumulado histórico por cada símbolo."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("""
+                    SELECT symbol, SUM(profit) as total_profit 
+                    FROM trades 
+                    WHERE price_out > 0 
+                    GROUP BY symbol
+                """) as cursor:
+                    rows = await cursor.fetchall()
+                    return {r['symbol'].upper(): r['total_profit'] for r in rows}
+        except Exception as e:
+            logger.error(f"❌ Error get_all_time_profit_by_symbol: {e}")
+            return {}
+
+    async def get_today_profit_by_symbol(self) -> dict:
+        """Obtiene el beneficio acumulado solo desde las 00:00:00 de hoy por símbolo."""
+        try:
+            from datetime import datetime, time
+            today_str = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("""
+                    SELECT symbol, SUM(profit) as total_profit 
+                    FROM trades 
+                    WHERE price_out > 0 AND time_out >= ? 
+                    GROUP BY symbol
+                """, (today_str,)) as cursor:
+                    rows = await cursor.fetchall()
+                    return {r['symbol'].upper(): r['total_profit'] for r in rows}
+        except Exception as e:
+            logger.error(f"❌ Error get_today_profit_by_symbol: {e}")
+            return {}
+
+    async def sync_mt5_history(self, deals):
+        """Sincroniza deals de MT5 con la tabla trades para incluir cierres externos."""
+        if not deals:
+            return
+        try:
+            from datetime import datetime
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                for d in deals:
+                    # Solo nos interesan los deals de salida (ENTRY_OUT = 1)
+                    if d.entry != 1: continue
+                    
+                    # Verificar si ya existe este ticket en la DB
+                    async with db.execute("SELECT 1 FROM trades WHERE ticket = ?", (d.position_id,)) as cursor:
+                        exists = await cursor.fetchone()
+                    
+                    time_out = datetime.fromtimestamp(d.time).strftime('%Y-%m-%d %H:%M:%S')
+                    trade_type = "BUY" if d.type == 1 else "SELL" # Inverso al deal de cierre
+                    
+                    if exists:
+                        # Si existe, actualizamos los datos de cierre si Price Out es 0
+                        await db.execute("""
+                            UPDATE trades 
+                            SET price_out = ?, profit = ?, time_out = ?
+                            WHERE ticket = ? AND (price_out = 0 OR price_out IS NULL)
+                        """, (d.price, d.profit, time_out, d.position_id))
+                    else:
+                        # Si no existe, es un cierre de un trade que el bot no registró (externo)
+                        # Intentamos estimar el precio de entrada (deal original) o lo dejamos en 0
+                        # Por ahora lo insertamos como trade cerrado para que sume al PNL diario
+                        await db.execute("""
+                            INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_out, ticket, strategy_name)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (d.symbol, trade_type, d.volume, 0.0, d.price, d.profit, time_out, d.position_id, "External/Manual"))
+                
+                await db.commit()
+                return True
+        except Exception as e:
+            logger.error(f"❌ Error sync_mt5_history: {e}")
+            return False

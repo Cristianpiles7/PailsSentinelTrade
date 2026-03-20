@@ -126,10 +126,19 @@ async def get_account():
     if not status:
         raise HTTPException(status_code=503, detail="Error fetching status from MT5")
     
-    # Calcular PnL diario real (Cerrados hoy + Flotante actual)
-    from datetime import datetime, time
-    today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
+    # --- NEW: Sincronización de historial de hoy (v1.8.0) ---
+    from datetime import datetime, time, timedelta
+    today_start_dt = datetime.combine(datetime.now().date(), time.min)
+    today_start = today_start_dt.strftime('%Y-%m-%d %H:%M:%S')
     
+    try:
+        # Sincronizar cierres de hoy desde MT5 a la DB
+        deals = mt5.history_deals_get(today_start_dt, datetime.now())
+        if deals:
+            await db.sync_mt5_history(deals)
+    except Exception as e:
+        logger.error(f"⚠️ Error sincronizando historial en API: {e}")
+
     closed_today = 0.0
     try:
         import aiosqlite
@@ -294,13 +303,15 @@ async def get_symbols():
     symbols_cfg = await db.get_all_symbols_config()
     radar_data = await db.get_radar_data()
     profit_24h_map = await db.get_24h_profit_by_symbol()
+    today_realized_map = await db.get_today_profit_by_symbol()
+    total_realized_map = await db.get_all_time_profit_by_symbol()
     
     # Normalización para evitar fallos por sufijos de broker (.m, .pro, etc)
     positions = mt5.positions_get()
     pnl_map = {}
     if positions:
         for p in positions:
-            sym_p = p.symbol.upper()
+            sym_p = p.symbol.upper().strip()
             pnl_map[sym_p] = pnl_map.get(sym_p, 0.0) + p.profit
             # También guardamos la base sin sufijos comunes si detectamos uno
             for suffix in [".m", ".pro", ".ecn", ".x", "i"]:
@@ -426,6 +437,10 @@ async def get_symbols():
                 # Si no hay activas, mostrar el máximo general pero con precaución
                 overall_score = max([v.score for v in factors_map.values()]) if factors_map else 0.0
 
+        floating_now = pnl_map.get(sym_norm, 0.0)
+        today_realized = today_realized_map.get(sym_norm, 0.0)
+        total_realized = total_realized_map.get(sym_norm, 0.0)
+
         results.append(SymbolStatus(
             symbol=sym,
             is_active=bool(s['is_active']),
@@ -434,8 +449,10 @@ async def get_symbols():
             score=overall_score,
             signal_direction=radar.get('signal_direction', 'NONE'),
             price=price,
-            floating_pnl=pnl_map.get(sym, 0.0),
-            profit_24h=profit_24h_map.get(sym.upper(), 0.0),
+            floating_pnl=floating_now,
+            daily_pnl=today_realized + floating_now,
+            total_pnl=total_realized + floating_now,
+            profit_24h=profit_24h_map.get(sym_norm, 0.0),
             daily_change_pct=daily_change,
             sparkline=spark_data,
             factors=factors_list,

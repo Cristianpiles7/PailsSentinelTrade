@@ -25,6 +25,7 @@ Desktop.ini
 
 # PST Specific
 PailsSentinelTrade/Tools/migrate_to_pst.py
+# PST_MCP/ <- Eliminado para permitir subida del Hub
 
 # Distribution
 build/

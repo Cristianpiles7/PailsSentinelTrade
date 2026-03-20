@@ -1,21 +1,27 @@
 # PST_Core/config.py
 import os
 import sys
+from dotenv import load_dotenv
 
 def get_db_path():
     if hasattr(sys, '_MEIPASS'):
-        # En el ejecutable (PyInstaller), la base es la carpeta del EXE
+        # En el ejecutable (PyInstaller)
         base_persist_dir = os.path.dirname(os.path.abspath(sys.executable))
-        print(f"[DEBUG-EXE] sys.executable: {sys.executable}")
-        print(f"[DEBUG-EXE] base_persist_dir: {base_persist_dir}")
     else:
-        # En desarrollo, la base es la raíz del proyecto
-        # Subimos dos niveles desde PST_Core/config.py
+        # En desarrollo, subimos un nivel para encontrar el .env raíz (fuera del repo)
         current_file = os.path.abspath(__file__)
-        base_persist_dir = os.path.dirname(os.path.dirname(current_file))
-        print(f"[DEBUG-DEV] base_persist_dir: {base_persist_dir}")
+        repo_root = os.path.dirname(os.path.dirname(current_file))
+        base_persist_dir = os.path.dirname(repo_root) # Carpeta "PailsSentinelTrade" raíz
+        
+        # Cargar variables de entorno desde el .env externo
+        env_path = os.path.join(base_persist_dir, ".env")
+        load_dotenv(env_path)
+        
+    # Variables de Configuración Global
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    IS_AI_ENABLED = bool(GEMINI_API_KEY)
     
-    # Construir ruta por defecto: [Base]/PST_Core/data/pst_trading.db
+    # Construir ruta por defecto para la DB
     default_path = os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db")
     
     # Prioridad: Variable de entorno > Ruta calculada
