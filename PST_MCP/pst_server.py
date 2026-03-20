@@ -108,22 +108,36 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
         hoy_pnl_map = await db_temp.get_today_profit_by_symbol()
         total_pnl_map = await db_temp.get_all_time_profit_by_symbol()
         
+        # --- EXTRAER POSICIONES VIVAS v1.8.3 ---
+        live_trades = []
+        if mt5.initialize():
+            pos = mt5.positions_get()
+            if pos:
+                for p in pos:
+                    live_trades.append({
+                        "symbol": p.symbol,
+                        "profit": p.profit,
+                        "type": "BUY" if p.type == 0 else "SELL",
+                        "volume": p.volume
+                    })
+
         prompt = (
-            "Actúa como un experto en gestión de capital y riesgo institucional.\n"
+            "Actúa como un experto en gestión de capital Sentinel v1.8.3 PRECISIÓN.\n"
             f"ESTADO CUENTA MT5 (LIVE): {json.dumps(live_acc) if live_acc else 'MT5 Desconectado'}\n"
+            f"POSICIONES ABIERTAS (Riesgo Vivo): {json.dumps(live_trades)}\n"
             f"PNL HOY POR SÍMBOLO (REALIZADO): {json.dumps(hoy_pnl_map)}\n"
-            f"PNL TOTAL HISTÓRICO (REALIZADO): {json.dumps(total_pnl_map)}\n"
+            f"PNL TOTAL HISTÓRICO: {json.dumps(total_pnl_map)}\n"
             f"CONFIGURACIÓN MATRIX: {json.dumps(strat_config)}\n\n"
-            "MISION v1.8.2:\n"
-            "1. Analiza el rendimiento diario. Si hay pérdidas significativas (Drawdown), identifícalas.\n"
-            "2. Identifica símbolos 'tóxicos' basándote en PNL HOY y PNL TOTAL.\n"
-            "3. Informa el 'Profit Vivo' actual y compáralo con el balance inicial de hoy.\n"
-            "4. Sé extremadamente directo: 'Has perdido X€ hoy, tus peores símbolos son Y. Mi recomendación es Z'.\n"
-            "5. NO digas 0.00€ si hay pérdidas en los mapas de PNL."
+            "MISION v1.8.3:\n"
+            "1. Analiza el riesgo total: HOY Realizado + Floating Actual.\n"
+            "2. Identifica los 2 peores símbolos basados en su floating negativo.\n"
+            "3. Si hoy no hay cierres registrados, céntrate en proteger el capital contra el floating actual.\n"
+            "4. Sé extremadamente directo en tu recomendación de salida o permanencia.\n"
+            "5. NO digas 0.00€ si hay pérdidas flotantes o históricas visibles."
         )
         try:
             response = ai_model.generate_content(prompt)
-            return [TextContent(type="text", text=f"🧠 SENTINEL IA v1.7.5 (LIVE):\n\n{response.text}")]
+            return [TextContent(type="text", text=f"🧠 SENTINEL IA v1.8.3 (CORE):\n\n{response.text}")]
         except Exception as e:
             return [TextContent(type="text", text=str(e))]
 
