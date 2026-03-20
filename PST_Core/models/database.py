@@ -247,8 +247,8 @@ class PSTDatabase:
                     await db.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_def}")
                 except: pass # Ya existe
 
-            # --- NUEVO: SIEMBRA MAESTRA DE 32 SÍMBOLOS Y ESTRATEGIAS (v1.4.2) ---
-            # Extraído del backup: C:\Users\crist\Desktop\BOLSA\PailsSentinelTrade\old_PST_Core\...
+            # --- NUEVO: SIEMBRA MAESTRA DE 32 SÍMBOLOS Y ESTRATEGIAS (v1.4.2+) ---
+            # Configuración Maestra Final (Sincronizada v1.4.4)
             master_config = [
                 ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('USDJPY', 'FOREX'),
                 ('AUDUSD', 'FOREX'), ('USDCHF', 'FOREX'), ('USDCAD', 'FOREX'),
@@ -264,30 +264,39 @@ class PSTDatabase:
                 ('GOOG', 'STOCK'), ('META', 'STOCK'), ('MSFT', 'STOCK')
             ]
             
+            # Lista de símbolos que deben estar DESACTIVADOS (is_active=0) por defecto (Req User v1.4.4)
+            disabled_by_default = [
+                'XNGUSD', 'XTIUSD', 'AUDUSD', 'EURGBP', 'EURJPY', 'NZDUSD', 
+                'USDCAD', 'USDCHF', 'USDJPY', 'GER40.cash', 'NAS100.cash', 
+                'UK100.cash', 'US30'
+            ]
+            
             for sym, stype in master_config:
+                is_active = 0 if sym in disabled_by_default else 1
+                
                 # 1. Asegurar símbolo en config global con multiplicadores visuales (Header)
                 await db.execute("""
                     INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, sl_mult, tp_mult, score_threshold, min_rr) 
-                    VALUES (?, ?, 1, 2.5, 3.5, 80.0, 1.6)
-                """, (sym, stype))
+                    VALUES (?, ?, ?, 2.5, 3.5, 80.0, 1.6)
+                """, (sym, stype, is_active))
                 
-                # 2. Configurar Scalper Pro (15€ Riesgo + BE 2.0 + TS 2.5)
-                # Siguiendo captura (BE/TS) y petición textual (15€)
+                # 2. Configurar Scalper Pro (7€ Riesgo Maestro + BE 2.0 + TS 2.5)
+                # Sincronizado a 7.0€ según petición v1.4.4
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies 
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-Scalper-Pro', 1, 'MONEY', 15.0, 1, 1, 2.0, 2.5, 1.6, 1.6, 2.5)
-                """, (sym,))
+                    VALUES (?, 'PST-Scalper-Pro', ?, 'MONEY', 7.0, 1, 1, 2.0, 2.5, 1.6, 1.6, 2.5)
+                """, (sym, is_active))
 
-                # 3. Configurar EMA Flow (25€ Riesgo según captura)
+                # 3. Configurar EMA Flow (25€ Riesgo Maestro)
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies 
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-EMA-Flow', 1, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.5, 2.5, 3.5)
-                """, (sym,))
+                    VALUES (?, 'PST-EMA-Flow', ?, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.5, 2.5, 3.5)
+                """, (sym, is_active))
 
             await db.commit()
-            logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v1.4.2) en {self.db_path}")
+            logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v1.4.4) en {self.db_path}")
 
     async def add_log(self, level, message, source="SYSTEM"):
         """Añade un mensaje de log a la base de datos."""
