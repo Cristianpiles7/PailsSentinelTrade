@@ -33,7 +33,7 @@ class PSTDatabase:
                     score_threshold REAL DEFAULT 80.0,
                     risk_mode TEXT DEFAULT 'PCT',
                     risk_value REAL DEFAULT 0.25,
-                    min_rr REAL DEFAULT 1.5
+                    min_rr REAL DEFAULT 1.6
                 )
             ''')
             
@@ -42,8 +42,10 @@ class PSTDatabase:
                 count = (await cursor.fetchone())[0]
                 if count == 0:
                     default_symbols = [
-                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('XAUUSD', 'COMMODITY'),
-                        ('NAS100', 'INDEX'), ('BTCUSD', 'CRYPTO'), ('US30', 'INDEX')
+                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('USDJPY', 'FOREX'),
+                        ('XAUUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
+                        ('NAS100', 'INDEX'), ('US30', 'INDEX'), ('US500.cash', 'INDEX'),
+                        ('GER40', 'INDEX')
                     ]
                     await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
 
