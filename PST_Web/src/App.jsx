@@ -329,8 +329,12 @@ function App() {
     const id = Date.now()
     setToasts(prev => [...prev, { id, message, type }])
     setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id))
-    }, 5000)
+      removeToast(id)
+    }, 3000) // Reducido a 3s para v1.5.0
+  }
+
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(t => t.id !== id))
   }
 
   const fetchData = async () => {
@@ -662,7 +666,7 @@ function App() {
 
 
 
-          <Toast key={t.id} {...t} />
+          <Toast key={t.id} {...t} onClose={removeToast} />
 
 
 
