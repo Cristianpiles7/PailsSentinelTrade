@@ -296,6 +296,33 @@ async def get_active_trades():
         ))
     return active_trades
 
+def calculate_symbol_telemetry(symbol: str) -> str:
+    """Calcula un diagnóstico rápido de salud del activo (v1.8.3)."""
+    try:
+        import MetaTrader5 as mt5
+        tick = mt5.symbol_info_tick(symbol)
+        if not tick: return "NO-DATA"
+        
+        info = mt5.symbol_info(symbol)
+        if not info: return "UNKNOWN"
+        
+        # 1. Spread Check (Pips)
+        spread = info.spread
+        point = info.point
+        spread_pips = spread * point if point > 0 else spread
+        
+        # 2. Market State
+        from datetime import datetime
+        last_tick_time = datetime.fromtimestamp(tick.time)
+        diff = (datetime.now() - last_tick_time).total_seconds()
+        
+        if diff > 600: return "CLOSED/STALE"
+        if spread > 50: return "HIGH-SPREAD" # Umbral conservador
+        
+        return "HEALTHY"
+    except:
+        return "ERROR"
+
 @app.get("/api/symbols", response_model=List[SymbolStatus], tags=["Config"])
 async def get_symbols():
     """Obtiene la lista de símbolos y su telemetría de radar en vivo."""
