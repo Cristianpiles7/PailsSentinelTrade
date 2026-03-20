@@ -265,18 +265,25 @@ class PSTDatabase:
             ]
             
             for sym, stype in master_config:
-                # 1. Asegurar símbolo en config global con R:R optimizado
+                # 1. Asegurar símbolo en config global con multiplicadores visuales (Header)
                 await db.execute("""
-                    INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, min_rr) 
-                    VALUES (?, ?, 1, 1.6)
+                    INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, sl_mult, tp_mult, score_threshold, min_rr) 
+                    VALUES (?, ?, 1, 2.5, 3.5, 80.0, 1.6)
                 """, (sym, stype))
                 
-                # 2. Configurar Scalper Pro (15€ Riesgo Maestro + BE/TS Activos)
-                # Usamos risk_mode='MONEY' para compatibilidad con el backup y el cálculo de lotaje
+                # 2. Configurar Scalper Pro (15€ Riesgo + BE 2.0 + TS 2.5)
+                # Siguiendo captura (BE/TS) y petición textual (15€)
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies 
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
                     VALUES (?, 'PST-Scalper-Pro', 1, 'MONEY', 15.0, 1, 1, 2.0, 2.5, 1.6, 1.6, 2.5)
+                """, (sym,))
+
+                # 3. Configurar EMA Flow (25€ Riesgo según captura)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies 
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-EMA-Flow', 1, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.5, 2.5, 3.5)
                 """, (sym,))
 
             await db.commit()
