@@ -300,6 +300,16 @@ async def get_symbols():
     if not ensure_mt5_connected():
          raise HTTPException(status_code=503, detail="MetaTrader 5 not connected")
          
+    # --- PROACTIVE SYNC v1.8.3: Asegurar que la DB tenga los cierres de hoy ---
+    try:
+        from datetime import datetime, time, timedelta
+        today_start_dt = datetime.combine(datetime.now().date(), time.min)
+        deals = mt5.history_deals_get(today_start_dt, datetime.now())
+        if deals:
+            await db.sync_mt5_history(deals)
+    except Exception as e:
+        logger.error(f"⚠️ Error sync proactivo en get_symbols: {e}")
+
     symbols_cfg = await db.get_all_symbols_config()
     radar_data = await db.get_radar_data()
     profit_24h_map = await db.get_24h_profit_by_symbol()

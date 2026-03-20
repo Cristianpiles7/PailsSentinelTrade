@@ -93,19 +93,33 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[TextCon
     if name == "get_ai_trading_advice":
         all_trades = query_db("SELECT symbol, type, profit, price_out, time_out FROM trades ORDER BY id DESC LIMIT 50")
         strat_config = query_db("SELECT symbol, strategy_name, risk_value FROM symbol_strategies LIMIT 15")
-        closed = [t for t in all_trades if t['time_out']]
-        open_tr = [t for t in all_trades if not t['time_out']]
+        
+        # --- NEW: PNL Desglosado para IA (v1.8.2) ---
+        from PST_Core.models.database import PSTDatabase
+        db_temp = PSTDatabase(DB_PATH)
+        # v1.8.3: Sincronización proactiva de hoy antes de dar consejo
+        from datetime import datetime, time
+        today_start = datetime.combine(datetime.now().date(), time.min)
+        if mt5.initialize():
+            deals = mt5.history_deals_get(today_start, datetime.now())
+            if deals:
+                await db_temp.sync_mt5_history(deals)
+        
+        hoy_pnl_map = await db_temp.get_today_profit_by_symbol()
+        total_pnl_map = await db_temp.get_all_time_profit_by_symbol()
         
         prompt = (
             "Actúa como un experto en gestión de capital y riesgo institucional.\n"
             f"ESTADO CUENTA MT5 (LIVE): {json.dumps(live_acc) if live_acc else 'MT5 Desconectado'}\n"
-            f"DATOS RECIENTES (DB): {json.dumps(all_trades[:10])}\n"
+            f"PNL HOY POR SÍMBOLO (REALIZADO): {json.dumps(hoy_pnl_map)}\n"
+            f"PNL TOTAL HISTÓRICO (REALIZADO): {json.dumps(total_pnl_map)}\n"
             f"CONFIGURACIÓN MATRIX: {json.dumps(strat_config)}\n\n"
-            "MISION v1.7.5:\n"
-            "1. Informa el 'Profit Vivo' (Flotante) que ves en los datos de LIVE con el nombre técnico de MT5.\n"
-            "2. Si el profit de LIVE es negativo, advierte sobre la exposición y el margen libre.\n"
-            "3. No digas que el beneficio es 0 si MT5 reporta un valor flotante.\n"
-            "4. Sé muy directo sobre el estado de la cuenta."
+            "MISION v1.8.2:\n"
+            "1. Analiza el rendimiento diario. Si hay pérdidas significativas (Drawdown), identifícalas.\n"
+            "2. Identifica símbolos 'tóxicos' basándote en PNL HOY y PNL TOTAL.\n"
+            "3. Informa el 'Profit Vivo' actual y compáralo con el balance inicial de hoy.\n"
+            "4. Sé extremadamente directo: 'Has perdido X€ hoy, tus peores símbolos son Y. Mi recomendación es Z'.\n"
+            "5. NO digas 0.00€ si hay pérdidas en los mapas de PNL."
         )
         try:
             response = ai_model.generate_content(prompt)

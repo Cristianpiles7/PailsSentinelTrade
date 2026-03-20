@@ -1626,9 +1626,9 @@ function App() {
                 const bgClass = `bg-${colorBase}-500`;
                 const borderClass = `border-${colorBase}-500/40`;
 
-                // Sentinel Heatmap Logic (PnL 24h)
-                const hasProfit = (s.profit_24h || 0) > 0;
-                const hasLoss = (s.profit_24h || 0) < 0;
+                // Sentinel Heatmap Logic (Daily PnL)
+                const hasProfit = (s.daily_pnl || 0) > 0;
+                const hasLoss = (s.daily_pnl || 0) < 0;
                 let heatClass = borderClass;
                 let heatGlow = '';
 
@@ -1672,19 +1672,8 @@ function App() {
                         <div className="h-6 w-20 flex-shrink-0">
                           {s.sparkline && s.sparkline.length > 0 && <Sparkline data={s.sparkline} color={colorBase} />}
                         </div>
-                        <div className="flex-1 hidden xl:flex items-center justify-around gap-2 px-2 border-l border-white/5">
-                          {['M5', 'M15', 'H1'].map(tf => {
-                            const tel = s.telemetry?.[tf] || {};
-                            return (
-                              <div key={tf} className="flex flex-col items-center">
-                                <span className="text-[6px] font-bold text-zinc-600 leading-none">{tf}</span>
-                                <span className={`text-[9px] font-black ${tel.rsi >= 70 ? 'text-rose-400' : tel.rsi <= 30 ? 'text-emerald-400' : 'text-zinc-300'}`}>{tel.rsi || '--'}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
                         <div className="flex flex-col items-center min-w-[60px] border-l border-white/5 pl-4">
-                          <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase">Daily PNL</span>
+                          <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase tracking-tighter">Day PNL</span>
                           <span className={`text-[10px] font-black ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                           </span>
@@ -1772,18 +1761,18 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Telemetry Grid (Multi-Timeframe + PnL 24h) */}
+                    {/* Telemetry Grid (Multi-Timeframe + Daily PnL) */}
                     <div className="grid grid-cols-4 gap-2 bg-black/20 p-3 rounded-2xl border border-white/5 relative z-10">
-                      <div className="flex flex-col items-center justify-center border-r border-white/5 px-1">
+                      <div className="flex flex-col items-center justify-center border-r border-white/5 px-1 min-w-[65px]">
                         <div className="flex flex-col items-center mb-1">
-                          <span className="text-[6px] font-black text-zinc-600 uppercase">Daily</span>
-                          <span className={`text-[9px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className="text-[7px] font-black text-zinc-600 uppercase">Day</span>
+                          <span className={`text-[10px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                           </span>
                         </div>
                         <div className="flex flex-col items-center border-t border-white/5 pt-1 w-full">
-                          <span className="text-[6px] font-black text-zinc-600 uppercase">Total</span>
-                          <span className={`text-[8px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className="text-[7px] font-black text-zinc-600 uppercase">All</span>
+                          <span className={`text-[9px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
                           </span>
                         </div>
