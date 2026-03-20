@@ -22,6 +22,8 @@ class PSTScalperPro:
         self.adx_length = 14
         # R:R Mínimo para Scalping
         self.min_rr = MIN_RR_RATIO 
+        # Filtro de Distancia (Anti-Chasing): No entrar si el precio está a más de 1.2 ATR de la media
+        self.max_dist_atr = 1.2 
 
     async def calculate_signal(self, mtf_data, current_regime=None, user_levels=None, spread_points=0, spread_dist=0, **kwargs):
         """
@@ -138,15 +140,21 @@ class PSTScalperPro:
         # Filtro Institucional EMA50
         c_ema50 = ema50.iloc[-1]
 
-        # DISPARO BASE: Rotura + Alineación M5 + Spread OK + RSI Libre
-        is_cross_up = (p_p_price <= p_p_ema21) and (p_c_price > (p_ema21 + break_threshold)) and was_clearly_below and trend_m5 == 1 and is_spread_ok and curr_rsi < 70
-        is_cross_down = (p_p_price >= p_p_ema21) and (p_c_price < (p_ema21 - break_threshold)) and was_clearly_above and trend_m5 == -1 and is_spread_ok and curr_rsi > 30
+        # --- NEW: FILTRO DE DISTANCIA (PULLBACK/ANTI-CHASING) ---
+        dist_ema21 = abs(p_c_price - p_ema21)
+        is_near_ema21 = dist_ema21 <= (curr_atr * self.max_dist_atr)
+
+        # DISPARO BASE: Rotura + Alineación M5 + Spread OK + RSI Libre + Cerca de EMA21
+        is_cross_up = (p_p_price <= p_p_ema21) and (p_c_price > (p_ema21 + break_threshold)) and was_clearly_below and trend_m5 == 1 and is_spread_ok and curr_rsi < 70 and is_near_ema21
+        is_cross_down = (p_p_price >= p_p_ema21) and (p_c_price < (p_ema21 - break_threshold)) and was_clearly_above and trend_m5 == -1 and is_spread_ok and curr_rsi > 30 and is_near_ema21
 
         if is_cross_up:
-            logger.info(f"🔍 [SET-UP UP] Rotura alcista confirmada. Tendencia M5 OK. Spread OK.")
+            logger.info(f"🔍 [SET-UP UP] Rotura alcista (Pullback OK). Tendencia M5 OK. Spread OK.")
             mode_label = "ROTURA_ALZA"
             score = 50 # Base reducida para exigir confirmaciones extras
             factors_detailed.append({"k": "Disparador", "v": "Cierre > EMA21 ↑", "score": 50})
+            factors_detailed.append({"k": "Pullback", "v": f"Distancia {dist_ema21/curr_atr:.1f} ATR OK", "score": 10})
+            score += 10
             
             # Filtro 1: Squeeze (Indica explosión de volatilidad inminente)
             if is_squeeze:
@@ -247,10 +255,12 @@ class PSTScalperPro:
                 entry = 1
 
         elif is_cross_down:
-            logger.info(f"🔍 [SET-UP DOWN] Rotura bajista confirmada. Tendencia M5 OK. Spread OK.")
+            logger.info(f"🔍 [SET-UP DOWN] Rotura bajista (Pullback OK). Tendencia M5 OK. Spread OK.")
             mode_label = "ROTURA_BAJA"
             score = 50 # Base reducida para exigir confirmaciones extras
             factors_detailed.append({"k": "Disparador", "v": "Cierre < EMA21 ↓", "score": 50})
+            factors_detailed.append({"k": "Pullback", "v": f"Distancia {dist_ema21/curr_atr:.1f} ATR OK", "score": 10})
+            score += 10
 
             # Filtro 1: Squeeze
             if is_squeeze:
@@ -459,7 +469,10 @@ class PSTScalperPro:
             
             # Mensajes de aviso originales si aplica
             if was_clearly_below and c_price > c_ema21:
-                factors_detailed.append({"k": "Aviso", "v": "Rotura Débil (Buffer)", "score": 0, "desc": "El precio cruzó la EMA21 pero sin la fuerza o el margen necesario."})
+                if not is_near_ema21:
+                     factors_detailed.append({"k": "Aviso", "v": "ENTRY EXTENDIDA (Anti-Chase)", "score": 0, "desc": "El precio está demasiado lejos de la EMA21. Esperando pullback."})
+                else:
+                     factors_detailed.append({"k": "Aviso", "v": "Rotura Débil (Buffer)", "score": 0, "desc": "El precio cruzó la EMA21 pero sin la fuerza o el margen necesario."})
             elif was_clearly_above and c_price < c_ema21:
                 factors_detailed.append({"k": "Aviso", "v": "Rotura Débil (Buffer)", "score": 0, "desc": "El precio cruzó la EMA21 pero sin la fuerza o el margen necesario."})
 
@@ -548,13 +561,12 @@ class PSTScalperPro:
 
     def check_exit_signal(self, df: pd.DataFrame, p_type: str) -> bool:
         """
-        Salida dinámica: Si el precio cierra al otro lado de la EMA14, cerramos.
-        Esto permite capturar swings largos en un scalper M1 dando más respiro al precio.
+        Salida dinámica: Si el precio cierra al otro lado de la EMA21 (más suave que EMA14)
         """
-        if df is None or len(df) < 15: return False
+        if df is None or len(df) < 25: return False
         
-        # Calculamos EMA14 de salida
-        ema_exit = ta.ema(df['close'], length=14)
+        # Calculamos EMA21 de salida (Suavizada para v1.3.9)
+        ema_exit = ta.ema(df['close'], length=21)
         if ema_exit is None: return False
         
         c_price = df['close'].iloc[-2] # Vela que acaba de cerrar

@@ -451,7 +451,7 @@ class PSTExecutor:
                     from ..strategies.pst_scalper_pro import PSTScalperPro
                     scalper_strat = PSTScalperPro()
                     if scalper_strat.check_exit_signal(df, p_type):
-                         logger.info(f"🛑 [SCALPER EXIT] {symbol} (Ticket: {ticket}) - Cruce EMA9 (Trailing Dinámico).")
+                         logger.info(f"🛑 [SCALPER EXIT] {symbol} (Ticket: {ticket}) - Cruce EMA21 (Trailing Dinámico v1.3.9).")
                          request = {
                              "action": mt5.TRADE_ACTION_DEAL,
                              "position": ticket,
@@ -469,7 +469,7 @@ class PSTExecutor:
                          if res.retcode != mt5.TRADE_RETCODE_DONE:
                              logger.error(f"❌ Error cerrando por EMA9: {res.comment}")
                          else:
-                             logger.info(f"✅ [SCALPER EXIT DONE] {symbol} ticket {ticket} cerrado por EMA9.")
+                             logger.info(f"✅ [SCALPER EXIT DONE] {symbol} ticket {ticket} cerrado por EMA21.")
                          continue # Siguiente posición, esta ya se cerró
 
                 elif "PST_PST-Mean-Reversion" in p.comment:

@@ -41,7 +41,7 @@ TRAIL_ATR_MULTIPLIER = 2.5   # Trailing Stop a 2.5 ATR
 SL_ATR_MULTIPLIER = 2.5      # Multiplicador ATR para Stop Loss
 TP_ATR_MULTIPLIER = 6.0      # Fallback global (Restaurado)
 MAX_SCALPER_SL_POINTS = 15   # RIESGO MÁXIMO EN PUNTOS (Subido de 10 a 15 por User Req)
-MIN_RR_RATIO = 1.4           # Ratio R:R mínimo (Subido de 1.3 a 1.4 por User Req)
+MIN_RR_RATIO = 1.6           # Ratio R:R mínimo (Subido de 1.4 a 1.6 para mejorar AvgWin en Scalping)
 
 TP_ATR_BY_CLASS = {
     "CRYPTO": 4.0,           
