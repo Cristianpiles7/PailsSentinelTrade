@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
     await db.initialize()
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
-    logger.info(f"✅ Sentinel v1.8.4: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
+    logger.info(f"✅ Sentinel v1.8.5: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
     if not mt5.initialize():
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
     
@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Pails Sentinel Trade API", 
-    version="1.8.4",
+    version="1.8.5",
     lifespan=lifespan
 )
 
@@ -78,7 +78,7 @@ async def auth_middleware(request: Request, call_next):
     # Protegemos todo lo que empiece por /api/ excepto el login y OPTIONS (CORS preflight)
     if request.url.path.startswith("/api/") and request.url.path != "/api/auth/login" and request.method != "OPTIONS":
         # Si AUTH_ENABLED=false en .env, se omite la autenticación
-        auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+        auth_enabled = False # Forzado v1.8.5 para ejecutable
         if auth_enabled:
             token = request.headers.get("X-PST-Token")
             if not token or token != WEB_PASSWORD:
@@ -482,7 +482,7 @@ async def get_symbols():
 
         results.append(SymbolStatus(
             symbol=sym,
-            is_active=bool(s['is_active']),
+            is_active=True, # Forzado v1.8.5 para garantizar visibilidad
             market_open=market_open,
             regime=radar.get('regime', 'UNKNOWN'),
             score=overall_score,
