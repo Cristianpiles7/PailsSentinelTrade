@@ -41,6 +41,8 @@ WEB_PASSWORD = os.getenv("WEB_PASSWORD", "PstAdmin01")
 async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
     await db.initialize()
+    db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
+    logger.info(f"✅ Sentinel v1.8.3: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
     if not mt5.initialize():
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
     
@@ -57,7 +59,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Pails Sentinel Trade API", 
-    version="1.5.0",
+    version="1.8.3",
     lifespan=lifespan
 )
 
@@ -1116,13 +1118,8 @@ def start_app():
     import socket
     import sys
 
-    # Encontrar un puerto libre dinámicamente para evitar bloqueos
-    def find_free_port():
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('127.0.0.1', 0))
-            return s.getsockname()[1]
-            
-    port = find_free_port()
+    # v1.8.3: Puerto Fijo 8000 para mantener persistencia de sesión (localStorage)
+    port = int(os.getenv("API_PORT", 8000))
     host = "127.0.0.1"
 
     def run_server():

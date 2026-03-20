@@ -4,31 +4,40 @@ import sys
 from dotenv import load_dotenv
 
 def get_db_path():
+    """Calcula la ruta de la base de datos buscando la persistencia de forma inteligente (Autodiscovery v1.8.3)."""
     if hasattr(sys, '_MEIPASS'):
         # En el ejecutable (PyInstaller)
         base_persist_dir = os.path.dirname(os.path.abspath(sys.executable))
     else:
-        # En desarrollo, subimos un nivel para encontrar el .env raíz (fuera del repo)
+        # En desarrollo, el repo está en PailsSentinelTrade/PailsSentinelTrade
         current_file = os.path.abspath(__file__)
         repo_root = os.path.dirname(os.path.dirname(current_file))
-        base_persist_dir = os.path.dirname(repo_root) # Carpeta "PailsSentinelTrade" raíz
+        base_persist_dir = os.path.dirname(repo_root) 
         
-        # Cargar variables de entorno desde el .env externo
+        # Cargar variables de entorno desde el .env raíz si existe
         env_path = os.path.join(base_persist_dir, ".env")
-        load_dotenv(env_path)
-        
-    # Variables de Configuración Global
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    IS_AI_ENABLED = bool(GEMINI_API_KEY)
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+        else:
+            # Reintento: quizá el .env está un nivel más arriba o en el repo_root
+            load_dotenv(os.path.join(repo_root, ".env"))
+            
+    # Candidatos de ruta (v1.8.3 Autodiscovery)
+    candidates = [
+        os.getenv("DB_PATH"), # 1. Prioridad: Variable de entorno
+        os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db"), # 2. Ruta calculada estándar
+        os.path.join(os.path.dirname(base_persist_dir), "PST_Core", "data", "pst_trading.db"), # 3. Un nivel arriba (Desktop/BOLSA/...)
+        os.path.join(os.path.dirname(os.path.dirname(base_persist_dir)), "PST_Core", "data", "pst_trading.db") # 4. Dos niveles arriba
+    ]
     
-    # Construir ruta por defecto para la DB
-    default_path = os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db")
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            # Comprobamos si es la DB pesada (la de 37MB que mencionas)
+            if os.path.getsize(candidate) > 1000 * 1024:
+                return os.path.abspath(candidate)
     
-    # Prioridad: Variable de entorno > Ruta calculada
-    final_path = os.getenv("DB_PATH", default_path)
-    
-    # Asegurar que sea una ruta absoluta real
-    return os.path.abspath(final_path)
+    # Si no se encuentra ninguna "buena", devolvemos la estándar (se creará de cero si es necesario)
+    return os.path.abspath(os.path.join(base_persist_dir, "PST_Core", "data", "pst_trading.db"))
 
 DB_PATH = get_db_path()
 
