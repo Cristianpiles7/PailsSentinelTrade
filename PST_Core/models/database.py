@@ -128,6 +128,7 @@ class PSTDatabase:
             # Valores por defecto
             await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('loss_cooldown_minutes', '15')")
             await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('hysteresis_minutes', '15')")
+            await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('daily_drawdown_locked', '0')")
             await db.commit()
             # Tabla de Niveles del Usuario (Trading Híbrido)
             await db.execute("""
@@ -246,9 +247,31 @@ class PSTDatabase:
                     await db.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_def}")
                 except: pass # Ya existe
 
+            # --- NUEVO: SIEMBRA ROBUSTA DE SÍMBOLOS Y ESTRATEGIAS (v1.4.1) ---
+            default_symbols = [
+                ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('USDJPY', 'FOREX'),
+                ('AUDUSD', 'FOREX'), ('USDCHF', 'FOREX'), ('USDCAD', 'FOREX'),
+                ('XAUUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
+                ('NAS100', 'INDEX'), ('US30', 'INDEX'), ('US500.cash', 'INDEX'),
+                ('GER40', 'INDEX')
+            ]
+            
+            for sym, stype in default_symbols:
+                # 1. Asegurar símbolo en config global
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, min_rr) 
+                    VALUES (?, ?, 1, 1.6)
+                """, (sym, stype))
+                
+                # 2. Configurar Scalper Pro (15€ Riesgo + BE/TS Activos)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies 
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr)
+                    VALUES (?, 'PST-Scalper-Pro', 1, 'AMT', 15.0, 1, 1, 1.1, 2.5, 1.6)
+                """, (sym,))
 
             await db.commit()
-            logger.info(f"✅ Base de Datos Inicializada en {self.db_path}")
+            logger.info(f"✅ Base de Datos Inicializada y Sembrada (v1.4.1) en {self.db_path}")
 
     async def add_log(self, level, message, source="SYSTEM"):
         """Añade un mensaje de log a la base de datos."""
