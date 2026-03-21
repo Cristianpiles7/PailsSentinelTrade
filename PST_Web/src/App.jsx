@@ -1765,13 +1765,13 @@ function App() {
                     <div className="grid grid-cols-4 gap-2 bg-black/20 p-3 rounded-2xl border border-white/5 relative z-10">
                       <div className="flex flex-col items-center justify-center border-r border-white/5 px-1 min-w-[65px]">
                         <div className="flex flex-col items-center mb-1">
-                          <span className="text-[7px] font-black text-zinc-600 uppercase">Day</span>
+                          <span className="text-[7px] font-black text-zinc-600 uppercase">PNL 24H</span>
                           <span className={`text-[10px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                           </span>
                         </div>
                         <div className="flex flex-col items-center border-t border-white/5 pt-1 w-full">
-                          <span className="text-[7px] font-black text-zinc-600 uppercase">All</span>
+                          <span className="text-[7px] font-black text-zinc-600 uppercase">TOTAL PNL</span>
                           <span className={`text-[9px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
                           </span>

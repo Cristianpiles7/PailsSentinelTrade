@@ -443,14 +443,18 @@ class PSTExecutor:
                 if "PST_PST-EMA-Flow" in p.comment:
                     from ..strategies.pst_ema_flow import PSTEMAFlow
                     ema_strat = PSTEMAFlow()
-                    if ema_strat.check_exit_signal(df, p_type):
+                    # Preparar mtf_data para EMA Flow (usando M5 como base)
+                    mtf_data_exit = {"m5": df, "m1": await fetch_rates_async(symbol, 1, 50)}
+                    if ema_strat.check_exit_signal(mtf_data_exit, p_type):
                          logger.info(f"🛑 [DYNAMIC EXIT] {symbol} (Ticket: {ticket}) - Tendencia EMA Flow invalidada.")
                          # Cerramos a mercado...
                 
                 if "PST_PST-Scalper-Pro" in p.comment:
                     from ..strategies.pst_scalper_pro import PSTScalperPro
                     scalper_strat = PSTScalperPro()
-                    if scalper_strat.check_exit_signal(df, p_type):
+                    # Preparar mtf_data para Scalper (requiere M1 y M5 para v3.1)
+                    mtf_data_exit = {"m5": df, "m1": await fetch_rates_async(symbol, 1, 50)}
+                    if scalper_strat.check_exit_signal(mtf_data_exit, p_type):
                          logger.info(f"🛑 [SCALPER EXIT] {symbol} (Ticket: {ticket}) - Cruce EMA21 (Trailing Dinámico v1.3.9).")
                          request = {
                              "action": mt5.TRADE_ACTION_DEAL,
@@ -532,7 +536,9 @@ class PSTExecutor:
                 if "Scalper" in p.comment:
                     # Si el trade lleva más de 45 min abierto, cerramos si no hay profit claro
                     time_open = datetime.now() - datetime.fromtimestamp(p.time_setup if hasattr(p, 'time_setup') else p.time)
-                    if time_open.total_seconds() > (45 * 60): # 45 Minutos
+                    # --- FIX: Solo cerrar por timeout si el mercado está abierto ---
+                    is_full_tradable = s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL if s_info else False
+                    if time_open.total_seconds() > (45 * 60) and is_full_tradable: # 45 Minutos
                         logger.warning(f"⏳ [TIME-OUT] Scalp {symbol} (Ticket: {ticket}) excedió 45 min. Cerrando por estancamiento.")
                         close_req = {
                             "action": mt5.TRADE_ACTION_DEAL,

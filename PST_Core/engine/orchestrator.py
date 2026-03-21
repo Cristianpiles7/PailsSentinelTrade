@@ -454,6 +454,8 @@ class SymbolTask:
                             "market_open": False
                         }
                         await self.db.log_regime(self.symbol, mode, adx, tech_data=json.dumps(tech_data))
+                        # --- FIX: Asegurar que el radar se actualice con score 0 si está cerrado ---
+                        await self.db.save_radar_snapshot(self.symbol, 0, mode, 0, factors=[])
                         await asyncio.sleep(self.interval)
                         continue
 
@@ -761,12 +763,14 @@ async def sync_trades_task(db: PSTDatabase):
             from .mt5_async import get_history_deals_async
             import MetaTrader5 as mt5 # Necesario para constantes si no están en mt5_async
             
+            # Sincronizamos los últimos 30 días para reconstruir historial completo si hace falta
+            deals = await get_history_deals_async(days=30)
+            
             # Obtener deals cerrados (Últimos 30 días para cubrir todo el mes)
             # Esto permite "descubrir" operaciones antiguas si se borró la DB o se operó desde el móvil
             deals = await get_history_deals_async(days=30)
             
             if deals:
-                logger.debug(f"🔍 Escaneando historial mt5 (Num deals: {len(deals)})...") 
                 count_synced = 0
                 count_imported = 0
                 
@@ -775,89 +779,51 @@ async def sync_trades_task(db: PSTDatabase):
                     # Entry=1 (DEAL_ENTRY_OUT)
                     # Entry=2 (DEAL_ENTRY_INOUT) - Reversiones
                     if d.entry in [1, 2]:
-                        # 1. Verificar si existe el trade en DB local
-                        trade_exists = await db.check_trade_exists(d.position_id)
+                        total_pnl = d.profit + d.swap + d.commission
                         
-                        if trade_exists:
-                            # Si existe, verificamos si está abierto (price_out = 0) para cerrarlo
-                            is_open = await db.is_trade_open(d.position_id)
-                            if is_open:
-                                total_pnl = d.profit + d.swap + d.commission
-                                await db.update_trade_cierre(d.position_id, d.price, total_pnl)
-                                logger.info(f"✅ [SYNC] Sincronizado CIERRE: {d.symbol} (Ticket {d.position_id}) | PnL Real: {total_pnl:.2f} (Profit: {d.profit}, Swap: {d.swap}, Comm: {d.commission})")
-                                
-                                # --- NEW: TELEGRAM CLOSURE ALERT (FASE 52) ---
-                                trade_type_str = "BUY" if d.type == 1 else "SELL"
-                                asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
-                                
-                                # COOLDOWN TRIGGER: Si fue pérdida REAL (superando tolerancia de -2.0)
-                                # Obtener configuración dinámica (v1.3.4)
-                                loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
-                                hyst_mins = int(await db.get_config('hysteresis_minutes', '15'))
-                                deal_time = datetime.fromtimestamp(d.time)
-                                
-                                if total_pnl < -2.0: # TOLERANCIA BE
-                                    from ..utils.cooldown_manager import cooldown_mgr
-                                    cooldown_mgr.register_loss(d.symbol, duration_minutes=loss_cd_mins, base_time=deal_time)
-                                else:
-                                    # Hysteresis para trades en ganancia/BE
-                                    from ..utils.cooldown_manager import cooldown_mgr
-                                    cooldown_mgr.register_trade_finish(d.symbol, duration_minutes=hyst_mins, base_time=deal_time)
-                                    
-                                count_synced += 1
-                        else:
-                            # 2. Si NO existe, es una operación externa/antigua -> IMPORTAR
-                            trade_data = {
-                                "symbol": d.symbol,
-                                "type": "BUY" if d.type == 1 else "SELL", # DEAL_TYPE_BUY=0, SELL=1. Si cierras un BUY(0), el deal es SELL(1).
-                                "volume": d.volume,
-                                "price_in": 0.0, # Desconocido sin buscar deal entrada
-                                "price_out": d.price,
-                                "sl": 0.0,
-                                "tp": 0.0,
-                                "profit": d.profit + d.swap + d.commission,
-                                "time_in": str(datetime.fromtimestamp(d.time)), # Usamos time salida como aprox
-                                "time_out": str(datetime.fromtimestamp(d.time)),
-                                "regime_at_entry": "EXTERNAL",
-                                "strategy_name": "AUTO_SYNC",
-                                "ticket": d.position_id,
-                                "is_partial_closed": 0
-                            }
-                            await db.save_trade(trade_data)
-                            logger.info(f"📥 Importado AUTOMÁTICO: {d.symbol} (Ticket {d.position_id}) | PnL: {d.profit}")
-                            count_imported += 1
+                        # PASO 1: ¿Existe un trade del BOT con position_id? → ACTUALIZAR
+                        trade_bot_open = await db.is_trade_open(d.position_id)
+                        if trade_bot_open:
+                            await db.update_trade_cierre(d.position_id, d.price, total_pnl)
+                            logger.info(f"[SYNC] Cierre bot: {d.symbol} (PosID {d.position_id}) | PnL: {total_pnl:.2f}")
+                            
+                            trade_type_str = "BUY" if d.type == 1 else "SELL"
+                            asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
+                            
+                            loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
+                count = await db.sync_mt5_history(deals)
+                if count > 0:
+                    logger.info(f"🔄 [SYNC SUCCESS] {count} operaciones actualizadas/importadas desde MT5.")
+            
+            # --- NEW: STALE TRADES AUTO-CLEANUP ---
+            # Buscamos trades que la DB cree que están abiertos
+            open_db_trades = await db.get_active_trades()
+            if open_db_trades:
+                import MetaTrader5 as mt5 # Ref
+                current_positions = mt5.positions_get()
+                active_tickets = [p.ticket for p in current_positions] if current_positions else []
                 
-                if count_synced > 0 or count_imported > 0:
-                    logger.info(f"🔄 Sync Report: {count_synced} cerrados, {count_imported} importados.")
-                
-                # --- NEW: STALE TRADES AUTO-CLEANUP ---
-                # Buscamos trades que la DB cree que están abiertos
-                open_db_trades = await db.get_active_trades()
-                if open_db_trades:
-                    import MetaTrader5 as mt5 # Ref
-                    current_positions = mt5.positions_get()
-                    active_tickets = [p.ticket for p in current_positions] if current_positions else []
-                    
-                    for t in open_db_trades:
-                        ticket = t.get('ticket')
-                        if ticket and ticket not in active_tickets:
-                            # El trade no está en MT5. Si es viejo (> 12h), lo cerramos "en falso" para liberar el bot
-                            try:
-                                time_in = datetime.fromisoformat(t['time_in'])
+                for t in open_db_trades:
+                    ticket = t.get('ticket')
+                    if ticket and ticket not in active_tickets:
+                        # El trade no está en MT5. Si es viejo (> 12h), lo cerramos "en falso" para liberar el bot
+                        try:
+                            # Intentar parsear fecha ISO de DB
+                            from datetime import datetime
+                            time_in_str = t.get('time_in')
+                            if time_in_str:
+                                # Truncar si tiene microsegundos para ser compatible
+                                time_in = datetime.fromisoformat(time_in_str.split('.')[0])
                                 if (datetime.now() - time_in).total_seconds() > 43200: # 12 horas
                                     logger.warning(f"🧹 [CLEANUP] Cerrando trade huérfano en DB: {t['symbol']} (Ticket {ticket})")
                                     await db.update_trade_cierre(ticket, 0.0, 0.0)
-                            except:
-                                pass # Formato de fecha inv. o error
-            else:
-                 logger.debug("🔍 Escaneando historial mt5: 0 deals encontrados.")
+                        except Exception as ex:
+                            logger.debug(f"DEBUG: Error en cleanup de trade {ticket}: {ex}")
             
             await asyncio.sleep(60) # Sincronizar cada minuto
         except Exception as e:
             logger.error(f"❌ Error en sincronización robusta: {e}")
-            import traceback
-            traceback.print_exc()
-            await asyncio.sleep(30)
+            await asyncio.sleep(60)
 
 async def global_trade_management(executor: PSTExecutor):
     """Tarea periódica para gestionar todas las posiciones abiertas y el Drawdown Diario."""

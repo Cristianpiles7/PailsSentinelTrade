@@ -97,11 +97,12 @@ async def modify_position_async(ticket: int, sl: float, tp: float):
     return await asyncio.to_thread(mt5.order_send, request)
 
 async def get_history_deals_async(days=1):
-    """Obtiene deals del historial para sincronizar cierres."""
-    from datetime import datetime, timedelta
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
-    return await asyncio.to_thread(mt5.history_deals_get, start_date, end_date)
+    """Obtiene deals del historial para sincronizar cierres de forma robusta."""
+    import time
+    # Importante: Algunos brokers tienen el reloj adelantado. Usamos +24h de margen.
+    end_time = int(time.time()) + 86400 
+    start_time = end_time - (3600 * 24 * days)
+    return await asyncio.to_thread(mt5.history_deals_get, start_time, end_time)
 
 async def get_mtf_data_async(symbol: str, include_m1: bool = False):
     """Obtiene datos Multi-Timeframe (M1, M5, M15, H1, H4) en paralelo."""

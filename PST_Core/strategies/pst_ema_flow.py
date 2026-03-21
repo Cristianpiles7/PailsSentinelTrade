@@ -1125,11 +1125,14 @@ class PSTEMAFlow:
             "metadata": metadata
         }
 
-    def check_exit_signal(self, df, position_type):
+    def check_exit_signal(self, mtf_data, position_type):
         """
         Detecta si la tesis de tendencia se ha invalidado.
         Nueva Lógica V7: Cierre por EMA50 + Confirmación de Volumen y ADX (User Req).
         """
+        # Extraer DF base (M5) de mtf_data si es un dict, sino usarlo directo
+        df = mtf_data.get('m5') if isinstance(mtf_data, dict) else mtf_data
+        
         if df is None or len(df) < 50: return False # Necesitamos datos para EMA50
         
         c_close = df['close'].iloc[-1]

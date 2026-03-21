@@ -9,18 +9,23 @@ def get_db_path():
         # En el ejecutable (PyInstaller)
         base_persist_dir = os.path.dirname(os.path.abspath(sys.executable))
     else:
-        # En desarrollo, el repo está en PailsSentinelTrade/PailsSentinelTrade
-        current_file = os.path.abspath(__file__)
-        repo_root = os.path.dirname(os.path.dirname(current_file))
-        base_persist_dir = os.path.dirname(repo_root) 
+        # Búsqueda robusta del .env (v1.8.5)
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_persist_dir = os.path.dirname(repo_root) # Por compatibilidad con candidatos de abajo
         
-        # Cargar variables de entorno desde el .env raíz si existe
-        env_path = os.path.join(base_persist_dir, ".env")
-        if os.path.exists(env_path):
-            load_dotenv(env_path)
+        search_dirs = [
+            repo_root, 
+            base_persist_dir, 
+            os.getcwd()
+        ]
+        for d in search_dirs:
+            p = os.path.join(d, ".env")
+            if os.path.exists(p):
+                print(f"DEBUG: Cargando .env desde {p}")
+                load_dotenv(p, override=True)
+                break
         else:
-            # Reintento: quizá el .env está un nivel más arriba o en el repo_root
-            load_dotenv(os.path.join(repo_root, ".env"))
+            print("DEBUG: No se encontro archivo .env en las rutas buscadas.")
             
     # Candidatos de ruta (v1.8.3 Autodiscovery)
     candidates = [
@@ -55,8 +60,8 @@ BE_ATR_MULTIPLIER = 2.0      # Activar Breakeven a 2.0 ATR (Restaurado)
 TRAIL_ATR_MULTIPLIER = 2.5   # Trailing Stop a 2.5 ATR
 SL_ATR_MULTIPLIER = 2.5      # Multiplicador ATR para Stop Loss
 TP_ATR_MULTIPLIER = 6.0      # Fallback global (Restaurado)
-MAX_SCALPER_SL_POINTS = 15   # RIESGO MÁXIMO EN PUNTOS (Subido de 10 a 15 por User Req)
-MIN_RR_RATIO = 1.6           # Ratio R:R mínimo (Subido de 1.4 a 1.6 para mejorar AvgWin en Scalping)
+MAX_SCALPER_SL_POINTS = 35   # RIESGO MÁXIMO EN PUNTOS (Subido de 15 a 35 para evitar ruido)
+MIN_RR_RATIO = 1.8           # Ratio R:R mínimo (Subido de 1.6 a 1.8 para mejorar AvgWin)
 
 TP_ATR_BY_CLASS = {
     "CRYPTO": 4.0,           

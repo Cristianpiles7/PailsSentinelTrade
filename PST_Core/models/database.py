@@ -411,8 +411,8 @@ class PSTDatabase:
                 await db.execute('''
                     UPDATE trades 
                     SET price_out = ?, profit = ?, time_out = ?
-                    WHERE ticket = ? AND price_out = 0
-                ''', (price_out, profit, str(datetime.now()), ticket))
+                    WHERE ticket = ? AND (price_out = 0 OR price_out IS NULL)
+                ''', (price_out, profit, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), ticket))
                 await db.commit()
         except Exception as e:
             logger.error(f"❌ Error update_trade_cierre: {e}")
@@ -595,10 +595,10 @@ class PSTDatabase:
             return False
 
     async def is_trade_open(self, ticket: int) -> bool:
-        """Verifica si el trade está abierto (price_out = 0)."""
+        """Verifica si el trade está abierto (price_out = 0 o NULL)."""
         try:
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
-                async with db.execute("SELECT 1 FROM trades WHERE ticket = ? AND price_out = 0", (ticket,)) as cursor:
+                async with db.execute("SELECT 1 FROM trades WHERE ticket = ? AND (price_out = 0 OR price_out IS NULL)", (ticket,)) as cursor:
                     result = await cursor.fetchone()
                     return result is not None
         except Exception as e:
@@ -987,42 +987,92 @@ class PSTDatabase:
             logger.error(f"❌ Error get_today_profit_by_symbol: {e}")
             return {}
 
-    async def sync_mt5_history(self, deals):
-        """Sincroniza deals de MT5 con la tabla trades para incluir cierres externos."""
+    async def sync_mt5_history(self, deals, days_back=2):
+        """
+        Sincroniza deals de MT5 con la tabla trades. 
+        Maneja trades del bot (por position_id) y externos/manuales.
+        """
         if not deals:
-            return
+            return 0
+        
+        count_synced = 0
+        count_imported = 0
+        
         try:
             from datetime import datetime
+            import MetaTrader5 as mt5
+            
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
                 for d in deals:
-                    # Solo nos interesan los deals de salida (ENTRY_OUT = 1)
-                    if d.entry != 1: continue
+                    # 1. Filtrar solo deals de SALIDA (Cierres totales o parciales)
+                    # ENTRY_OUT=1, ENTRY_INOUT=2 (reversión), ENTRY_OUT_BY=3 (cierre por contra)
+                    if d.entry not in [1, 2, 3]: 
+                        continue
                     
-                    # Verificar si ya existe este ticket en la DB
-                    async with db.execute("SELECT 1 FROM trades WHERE ticket = ?", (d.position_id,)) as cursor:
-                        exists = await cursor.fetchone()
+                    time_out_dt = datetime.fromtimestamp(d.time)
+                    time_out_str = time_out_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    total_pnl = d.profit + d.swap + d.commission
                     
-                    time_out = datetime.fromtimestamp(d.time).strftime('%Y-%m-%d %H:%M:%S')
-                    trade_type = "BUY" if d.type == 1 else "SELL" # Inverso al deal de cierre
+                    # PASO 1: ¿Es un trade del BOT? (Buscamos ticket = position_id)
+                    # El bot guarda apertura con ticket = position_id
+                    async with db.execute(
+                        "SELECT id FROM trades WHERE ticket = ? AND (price_out IS NULL OR price_out = 0)",
+                        (d.position_id,)
+                    ) as cur:
+                        bot_trade = await cur.fetchone()
                     
-                    if exists:
-                        # Si existe, actualizamos los datos de cierre si Price Out es 0
+                    if bot_trade:
+                        # Es un trade del bot → ACTUALIZAR con datos de cierre
                         await db.execute("""
-                            UPDATE trades 
-                            SET price_out = ?, profit = ?, time_out = ?
-                            WHERE ticket = ? AND (price_out = 0 OR price_out IS NULL)
-                        """, (d.price, d.profit, time_out, d.position_id))
-                    else:
-                        # Si no existe, es un cierre de un trade que el bot no registró (externo)
-                        # Intentamos estimar el precio de entrada (deal original) o lo dejamos en 0
-                        # Por ahora lo insertamos como trade cerrado para que sume al PNL diario
-                        await db.execute("""
-                            INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_out, ticket, strategy_name)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (d.symbol, trade_type, d.volume, 0.0, d.price, d.profit, time_out, d.position_id, "External/Manual"))
-                
-                await db.commit()
-                return True
+                            UPDATE trades SET price_out = ?, profit = ?, time_out = ?
+                            WHERE id = ?
+                        """, (d.price, float(total_pnl), time_out_str, bot_trade[0]))
+                        await db.commit()
+                        count_synced += 1
+                        logger.info(f"✅ [SYNC-BOT] Cerrado {d.symbol} (Ticket {d.position_id}) | PnL: {total_pnl:.2f}")
+                        continue
+                    
+                    # PASO 2: ¿Ya importamos este deal específico anteriormente?
+                    # Buscamos en el ticket si es un trade de AUTO_SYNC ya existente
+                    # O si por casualidad ya se cerró un bot trade con este position_id
+                    async with db.execute("SELECT 1 FROM trades WHERE ticket = ? OR (ticket = ? AND price_out > 0)", (d.ticket, d.position_id)) as cur:
+                        already_exists = await cur.fetchone()
+                    
+                    if already_exists:
+                        continue
+                    
+                    # PASO 3: Trade externo/manual → Importar buscando su apertura para ser PRO
+                    trade_type = "BUY" if d.type == 1 else "SELL" # El deal OUT tiene tipo opuesto a la posición
+                    
+                    # Intentar buscar el deal de apertura (ENTRY_IN) para tener price_in y time_in reales
+                    time_in_str = time_out_str
+                    price_in = 0.0
+                    
+                    try:
+                        import time as _time
+                        # Buscamos deals de entrada para esta posición
+                        # Ampliamos el rango a 30 días para la apertura
+                        h_end = d.time + 10
+                        h_start = d.time - (3600 * 24 * 30)
+                        pos_deals = mt5.history_deals_get(h_start, h_end, position=d.position_id)
+                        if pos_deals:
+                            for pd in pos_deals:
+                                if pd.entry == 0: # ENTRY_IN
+                                    price_in = pd.price
+                                    time_in_str = datetime.fromtimestamp(pd.time).strftime('%Y-%m-%d %H:%M:%S')
+                                    break
+                    except:
+                        pass # Fallback a time_out si falla la búsqueda
+
+                    await db.execute("""
+                        INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_in, time_out, ticket, strategy_name, is_partial_closed)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (d.symbol, trade_type, d.volume, price_in, d.price, float(total_pnl), time_in_str, time_out_str, d.ticket, "AUTO_SYNC", 0))
+                    await db.commit()
+                    count_imported += 1
+                    logger.info(f"📥 [SYNC-EXT] Importado manual/externo: {d.symbol} (ID {d.position_id}) | PnL: {total_pnl:.2f}")
+            
+            return count_synced + count_imported
         except Exception as e:
             logger.error(f"❌ Error sync_mt5_history: {e}")
-            return False
+            return 0

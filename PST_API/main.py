@@ -78,7 +78,7 @@ async def auth_middleware(request: Request, call_next):
     # Protegemos todo lo que empiece por /api/ excepto el login y OPTIONS (CORS preflight)
     if request.url.path.startswith("/api/") and request.url.path != "/api/auth/login" and request.method != "OPTIONS":
         # Si AUTH_ENABLED=false en .env, se omite la autenticación
-        auth_enabled = False # Forzado v1.8.5 para ejecutable
+        auth_enabled = os.getenv("AUTH_ENABLED", "false").lower() != "false"
         if auth_enabled:
             token = request.headers.get("X-PST-Token")
             if not token or token != WEB_PASSWORD:
@@ -128,18 +128,19 @@ async def get_account():
     if not status:
         raise HTTPException(status_code=503, detail="Error fetching status from MT5")
     
-    # --- NEW: Sincronización de historial de hoy (v1.8.0) ---
-    from datetime import datetime, time, timedelta
-    today_start_dt = datetime.combine(datetime.now().date(), time.min)
-    today_start = today_start_dt.strftime('%Y-%m-%d %H:%M:%S')
-    
+    # --- Sincronización de historial con timestamps UNIX (v1.8.5) ---
+    import time as _time
+    _end_ts = int(_time.time()) + 86400 # Margen amplio para brokers adelantados
+    _start_ts = _end_ts - (3600 * 24 * 30) # Últimos 30 días para historial completo
     try:
-        # Sincronizar cierres de hoy desde MT5 a la DB
-        deals = mt5.history_deals_get(today_start_dt, datetime.now())
+        deals = mt5.history_deals_get(_start_ts, _end_ts)
         if deals:
             await db.sync_mt5_history(deals)
     except Exception as e:
         logger.error(f"⚠️ Error sincronizando historial en API: {e}")
+
+    from datetime import datetime, time, timedelta
+    today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
 
     closed_today = 0.0
     try:
@@ -151,7 +152,7 @@ async def get_account():
     except Exception as e:
         logger.error(f"❌ Error calculando closed_today en API: {e}")
 
-    profit_p = status["equity"] - status["balance"] # Flotante
+    profit_p = status["equity"] - status["balance"] # Flotante (posiciones abiertas)
     daily_total = closed_today + profit_p
     margin_p = status.get("margin", 0.0)
     
@@ -329,11 +330,12 @@ async def get_symbols():
     if not ensure_mt5_connected():
          raise HTTPException(status_code=503, detail="MetaTrader 5 not connected")
          
-    # --- PROACTIVE SYNC v1.8.3: Asegurar que la DB tenga los cierres de hoy ---
+    # --- PROACTIVE SYNC v1.8.5: Asegurar que la DB tenga los cierres de hoy ---
     try:
-        from datetime import datetime, time, timedelta
-        today_start_dt = datetime.combine(datetime.now().date(), time.min)
-        deals = mt5.history_deals_get(today_start_dt, datetime.now())
+        import time as _time
+        _end_ts = int(_time.time()) + 86400
+        _start_ts = _end_ts - (3600 * 24 * 30) # Últimos 30 días
+        deals = mt5.history_deals_get(_start_ts, _end_ts)
         if deals:
             await db.sync_mt5_history(deals)
     except Exception as e:
@@ -341,22 +343,24 @@ async def get_symbols():
 
     symbols_cfg = await db.get_all_symbols_config()
     radar_data = await db.get_radar_data()
-    profit_24h_map = await db.get_24h_profit_by_symbol()
     today_realized_map = await db.get_today_profit_by_symbol()
     total_realized_map = await db.get_all_time_profit_by_symbol()
-    
-    # Normalización para evitar fallos por sufijos de broker (.m, .pro, etc)
+    profit_24h_map = await db.get_24h_profit_by_symbol()
+
+    def get_val_tolerant(m, s):
+        """Busca un valor en un mapa probando el símbolo tal cual, en mayúsculas, y su base."""
+        if not m or not s: return 0.0
+        s_up = str(s).upper().strip()
+        s_base = s_up.split('.')[0]
+        return m.get(s, m.get(s_up, m.get(s_base, 0.0)))
+
+    # Mapeo de P&L flotante (sólo posiciones ABIERTAS)
     positions = mt5.positions_get()
     pnl_map = {}
     if positions:
         for p in positions:
             sym_p = p.symbol.upper().strip()
             pnl_map[sym_p] = pnl_map.get(sym_p, 0.0) + p.profit
-            # También guardamos la base sin sufijos comunes si detectamos uno
-            for suffix in [".m", ".pro", ".ecn", ".x", "i"]:
-                if sym_p.endswith(suffix.upper()):
-                    base = sym_p[:-len(suffix)]
-                    pnl_map[base] = pnl_map.get(base, 0.0) + p.profit
 
     results = []
     for s in symbols_cfg:
@@ -476,22 +480,28 @@ async def get_symbols():
                 # Si no hay activas, mostrar el máximo general pero con precaución
                 overall_score = max([v.score for v in factors_map.values()]) if factors_map else 0.0
 
-        floating_now = pnl_map.get(sym_norm, 0.0)
-        today_realized = today_realized_map.get(sym_norm, 0.0)
-        total_realized = total_realized_map.get(sym_norm, 0.0)
+        floating_now = get_val_tolerant(pnl_map, sym)
+        today_realized = get_val_tolerant(today_realized_map, sym)
+        total_realized = get_val_tolerant(total_realized_map, sym)
+        
+        # PNL Mapping
+
+        # --- FIX: Forzar score 0 si el mercado está cerrado ---
+        if not market_open:
+            overall_score = 0.0
 
         results.append(SymbolStatus(
             symbol=sym,
-            is_active=True, # Forzado v1.8.5 para garantizar visibilidad
+            is_active=bool(s['is_active']), # Restaurado filtrado por DB
             market_open=market_open,
             regime=radar.get('regime', 'UNKNOWN'),
             score=overall_score,
             signal_direction=radar.get('signal_direction', 'NONE'),
             price=price,
             floating_pnl=floating_now,
-            daily_pnl=today_realized + floating_now,
-            total_pnl=total_realized + floating_now,
-            profit_24h=profit_24h_map.get(sym_norm, 0.0),
+            daily_pnl=today_realized,
+            total_pnl=total_realized,
+            profit_24h=get_val_tolerant(profit_24h_map, sym),
             daily_change_pct=daily_change,
             sparkline=spark_data,
             factors=factors_list,
@@ -499,6 +509,10 @@ async def get_symbols():
             telemetry=calculate_symbol_telemetry(sym),
             active_strategy=radar.get("active_strategy", "PST-Auto")
         ))
+    
+    # --- FIX: Ordenar resultados: 1. Abiertos primero, 2. Puntuación desc ---
+    results.sort(key=lambda x: (x.market_open, x.score), reverse=True)
+    
     return results
 
 @app.get("/api/news/upcoming", tags=["News"])
@@ -789,15 +803,23 @@ async def close_trade(payload: dict):
         from PST_Core.engine.mt5_async import close_position_async
         ticket = int(payload.get("ticket", 0))
         if not ticket:
-            return APIResponse(status="error", message="Ticket inválido")
+            return APIResponse(status="error", message="Ticket invalido")
+        
+        # Capturar datos de la posicion ANTES de cerrar (precio actual + profit flotante)
+        pos_before = mt5.positions_get(ticket=ticket)
+        pre_profit = pos_before[0].profit if pos_before else 0.0
+        pre_price  = pos_before[0].price_current if pos_before else 0.0
+        
         result = await close_position_async(ticket)
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-            logger.info(f"✅ Posición {ticket} cerrada manualmente.")
-            return APIResponse(status="success", message=f"Posición {ticket} cerrada correctamente")
+            # Actualizar DB inmediatamente con los datos capturados antes del cierre
+            await db.update_trade_cierre(ticket, pre_price, pre_profit)
+            logger.info(f"Posicion {ticket} cerrada y DB actualizada | PnL: {pre_profit:.2f}")
+            return APIResponse(status="success", message=f"Posicion {ticket} cerrada correctamente")
         err = result.comment if result else "Sin respuesta de MT5"
         return APIResponse(status="error", message=f"Error al cerrar: {err}")
     except Exception as e:
-        logger.error(f"❌ Error close_trade: {e}")
+        logger.error(f"Error close_trade: {e}")
         return APIResponse(status="error", message=str(e))
 
 @app.post("/api/trades/manual", response_model=APIResponse, tags=["Trading"])
@@ -926,6 +948,11 @@ async def close_symbol_trades(symbol: str):
             order_type = mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
             price = tick.bid if p.type == mt5.ORDER_TYPE_BUY else tick.ask
             
+            # Capturar profit actual ANTES de enviar el cierre
+            pre_profit = p.profit
+            pre_price  = price
+            pre_ticket = p.ticket
+            
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": p.symbol,
@@ -941,6 +968,9 @@ async def close_symbol_trades(symbol: str):
             res = mt5.order_send(request)
             if res.retcode == mt5.TRADE_RETCODE_DONE:
                 closed_count += 1
+                # Actualizar DB inmediatamente con el profit capturado antes del cierre
+                await db.update_trade_cierre(pre_ticket, pre_price, pre_profit)
+                logger.info(f"Cierre {p.symbol} ticket:{pre_ticket} | PnL: {pre_profit:.2f}")
                 
         return APIResponse(status="success", message=f"Closed {closed_count} positions for {symbol}")
     except Exception as e:
