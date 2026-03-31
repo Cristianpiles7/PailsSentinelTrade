@@ -1219,7 +1219,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V1.8.5 PRECISIÓN</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V1.8.7 SMC</span>
 
 
 
@@ -1691,7 +1691,7 @@ function App() {
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
                           <div className="flex gap-1 mt-0.5">
-                            {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro"].map(strat => {
+                            {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Liquidity-Hunter"].map(strat => {
                               const score = s.factors_map?.[strat]?.score || 0;
                               return (
                                 <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
@@ -1812,9 +1812,9 @@ function App() {
 
                     {/* Core Strategies Scores */}
                     <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro"].map(strat => {
+                      {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Liquidity-Hunter"].map(strat => {
                         const score = s.factors_map?.[strat]?.score || 0;
-                        const label = strat.replace("PST-", "").replace("Scalper-Pro", "Scalp").replace("TrendMaster", "Trend Master").replace("EMA-Flow", "Flow").toUpperCase();
+                        const label = strat.replace("PST-", "").replace("Scalper-Pro", "Scalp").replace("TrendMaster", "Trend Master").replace("EMA-Flow", "Flow").replace("Liquidity-Hunter", "Liq-Hunter").toUpperCase();
                         return (
                           <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
                             <span className="text-[6px] font-black text-zinc-600 mb-0.5">{label}</span>
@@ -2156,7 +2156,7 @@ function App() {
                       const allStrategies = Object.keys(sym.factors_map);
                       const strategies = allStrategies.filter(s => {
                         const name = String(s).toUpperCase();
-                        if (name.includes('LIQUIDITY-HUNTER') || name.includes('CHANNEL')) return false;
+                        if (name.includes('CHANNEL')) return false;
                         return true;
                       });
                       if (strategies.length === 0) return null;
@@ -3229,11 +3229,12 @@ function App() {
                   const STRAT_NAME_MAP = {
                     "PST-EMA-Flow": "EMA Flow",
                     "PST-TrendMaster": "Trend Master",
-                    "PST-Scalper-Pro": "Scalper Pro"
+                    "PST-Scalper-Pro": "Scalper Pro",
+                    "PST-Liquidity-Hunter": "Liquidity Hunter"
                   };
 
-                  // Obtener solo las estrategias CORE solicitadas: EMA Flow, TrendMaster y Scalper Pro
-                  const CORE_STRATS = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro"];
+                  // Obtener solo las estrategias CORE solicitadas: EMA Flow, TrendMaster, Scalper Pro y Liquidity Hunter
+                  const CORE_STRATS = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Liquidity-Hunter"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
@@ -3295,7 +3296,7 @@ function App() {
                             const stratData = symbolStrats[strat];
 
                             // Lógica de activación por defecto
-                            const isCore = ["PST-EMA-Flow", "PST-TrendMaster"].includes(strat); // TrendMaster activa por defecto
+                            const isCore = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Liquidity-Hunter"].includes(strat); // TrendMaster y SMC activa por defecto
                             const isEnabled = stratData ? (!!stratData.is_active) : isCore;
 
                             // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)

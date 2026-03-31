@@ -113,6 +113,7 @@ ENABLED_STRATEGIES = [
     "PST-TrendMaster", # NEW: Activada por defecto v1.8.6
     "PST-Channel-Master",
     "PST-Scalper-Pro", # NEW
+    "PST-Liquidity-Hunter", # NEW SMC Order Blocks
     "PST-AI-Oracle-gemini",
     "PST-AI-Oracle-groq",
     "PST-AI-Oracle-ollama"

@@ -573,14 +573,29 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
 
         chart.subscribeClick(clickHandler);
         chart.subscribeCrosshairMove(moveHandler);
-        chart.timeScale().subscribeVisibleLogicalRangeChange(viewportHandler);
-        chart.timeScale().subscribeSizeChange(viewportHandler);
+        const ts = chart.timeScale();
+        
+        // Compatibilidad entre distintas versiones de lightweight-charts (v3, v4, v5)
+        if (typeof ts.subscribeVisibleLogicalRangeChange === 'function') {
+            ts.subscribeVisibleLogicalRangeChange(viewportHandler);
+        } else if (typeof ts.subscribeLogicalRangeChange === 'function') {
+            ts.subscribeLogicalRangeChange(viewportHandler);
+        } else if (typeof ts.subscribeVisibleTimeRangeChange === 'function') {
+            ts.subscribeVisibleTimeRangeChange(viewportHandler);
+        }
+        
+        if (typeof ts.subscribeSizeChange === 'function') {
+            ts.subscribeSizeChange(viewportHandler);
+        }
 
         return () => {
             chart.unsubscribeClick(clickHandler);
             chart.unsubscribeCrosshairMove(moveHandler);
-            chart.timeScale().unsubscribeVisibleLogicalRangeChange(viewportHandler);
-            chart.timeScale().unsubscribeSizeChange(viewportHandler);
+            if (typeof ts.unsubscribeVisibleLogicalRangeChange === 'function') ts.unsubscribeVisibleLogicalRangeChange(viewportHandler);
+            else if (typeof ts.unsubscribeLogicalRangeChange === 'function')    ts.unsubscribeLogicalRangeChange(viewportHandler);
+            else if (typeof ts.unsubscribeVisibleTimeRangeChange === 'function') ts.unsubscribeVisibleTimeRangeChange(viewportHandler);
+            
+            if (typeof ts.unsubscribeSizeChange === 'function') ts.unsubscribeSizeChange(viewportHandler);
         };
     }, [isDrawingMode, currentLine]); // Re-bind con el currentLine correcto
 
