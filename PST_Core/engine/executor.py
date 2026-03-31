@@ -38,46 +38,16 @@ class PSTExecutor:
             "Scalping Pro (Micro-Reversión)": "PST-Scalper-Pro",
             "Flujo EMA (Tendencia)": "PST-EMA-Flow",
             "Canal Maestro (T. Híbrido)": "PST-Channel-Master",
+            "TrendMaster (Line Breakout)": "PST-TrendMaster",
             "Reversión a la Media (Rangos)": "PST-Mean-Reversion",
-            "Liquidez Sentinel (Institucional)": "PST-Liquidity-Hunter"
+            "Liquidez Sentinel (Institucional)": "PST-Liquidity-Hunter",
+            "Scalp": "PST-Scalper-Pro" # Alias de seguridad (v1.8.7)
         }
         if strategy_name in reverse_map:
             raw_name = reverse_map[strategy_name]
 
-        # --- CATEGORY & RISK LIMITS ---
-        strategy_category = STRATEGY_CATEGORIES.get(raw_name, "CORE")
-        max_for_cat = MAX_POSITIONS_PER_CATEGORY.get(strategy_category, 1)
-        
-        all_positions = await get_positions_async(symbol=symbol)
-        cat_count = 0
-        total_risk_pct = 0
-        
-        if all_positions:
-            for p in all_positions:
-                # Extraer nombre de estrategia del comentario
-                p_strat = p.comment.replace("PST_", "").replace("PST-", "")
-                # Buscar categoría (usamos coincidencia parcial o limpia)
-                p_cat = "CORE"
-                for s_name_cfg, s_cat in STRATEGY_CATEGORIES.items():
-                    if s_name_cfg.replace("PST-", "") in p_strat:
-                        p_cat = s_cat
-                        break
-                
-                if p_cat == strategy_category:
-                    cat_count += 1
-                
-                # Sumar riesgo solo si es el mismo símbolo
-                # (Asumimos riesgo fijo de 0.25% por posición abierta si no hay metadata)
-                total_risk_pct += 0.25
-
-            if cat_count >= max_for_cat:
-                logger.info(f"🚫 [LIMIT] {symbol} ya tiene {cat_count} pos de tipo {strategy_category}. Bloqueando {raw_name}.")
-                return None
-            
-            # Bloqueo por exposición total
-            if total_risk_pct >= MAX_SYMBOL_EXPOSURE_PCT:
-                logger.warning(f"⚠️ [SYMBOL GUARD] {symbol} exposición total ({total_risk_pct}%) excede límite ({MAX_SYMBOL_EXPOSURE_PCT}%).")
-                return None
+        # --- CATEGORY & RISK LIMITS (MOVED TO PortfolioManager.can_open_trade) --- 
+        # Ya validado en orquestador vía can_open_trade antes de disparar el executor.
 
         # 1. Obtener Info del Símbolo y Parámetros
         mt5.symbol_select(symbol, True)
@@ -127,6 +97,17 @@ class PSTExecutor:
         
         real_sl_atr = atr_unit * sl_m
         real_tp_atr = atr_unit * tp_m
+
+        # --- PROTECCIÓN DE SPREAD (v1.8.7) ---
+        # Si el spread consume más del 35% del SL, la operación no es rentable de inicio
+        spread_pts = s_info.spread
+        point = s_info.point
+        spread_dist = spread_pts * point
+        max_spread_allowed = real_sl_atr * 0.35
+        
+        if spread_dist > max_spread_allowed:
+            logger.warning(f"🛑 [SPREAD BLOCK] {symbol} rechazado. Spread {spread_dist:.5f} > Max permitido {max_spread_allowed:.5f} (35% SL)")
+            return
 
         # 1.3 Obtener parámetros TS/BE de la base de datos
         use_trailing = strat_cfg.get("use_trailing", 0) == 1
@@ -179,6 +160,15 @@ class PSTExecutor:
                     structural_sl_found = True
                     logger.debug(f"📐 SL Estructural (SELL) fijado en {sl_price:.5f} (Swing High)")
 
+        # --- OVERRIDE: SL STRICTO DESDE ESTRATEGIA (v4.0 Scalper) ---
+        if metadata and metadata.get("target_price_sl", 0) > 0:
+            custom_sl = metadata["target_price_sl"]
+            # Validar que esté del lado correcto
+            if (signal_type == "BUY" and custom_sl < price) or (signal_type == "SELL" and custom_sl > price):
+                sl_price = custom_sl
+                structural_sl_found = True
+                logger.debug(f"📐 SL Dinámico (Estrategia) fijado en {sl_price:.5f}")
+
         # Fallback al SL técnico estricto si el estructural es loco o no hay datos
         if not structural_sl_found:
              sl_price = price - real_sl_atr if signal_type == "BUY" else price + real_sl_atr
@@ -224,8 +214,12 @@ class PSTExecutor:
         real_tp_atr_adj = real_tp_atr * tp_adjustment
 
         tp_price = 0
-        if metadata and metadata.get("tp_target", 0) > 0:
-            tp_price = metadata["tp_target"]
+        target_tp = metadata.get("target_price_tp", 0) if metadata else 0
+        if not target_tp and metadata:
+             target_tp = metadata.get("tp_target", 0)
+             
+        if target_tp > 0:
+            tp_price = target_tp
             # Fallback de seguridad: si el tp_price está detrás del precio actual, usar multiplicador
             if (signal_type == "BUY" and tp_price <= price) or (signal_type == "SELL" and tp_price >= price):
                 logger.warning(f"⚠️ [TP TÉCNICO] TP objetivo ({tp_price:.5f}) inválido para precio actual ({price:.5f}). Usando mult ({tp_m}x).")
@@ -262,6 +256,9 @@ class PSTExecutor:
                 tp_price = price + tp_dist if signal_type == "BUY" else price - tp_dist
                 rr_actual = min_rr
 
+        # Limpiar comentario de caracteres especiales (MT5 es estricto)
+        clean_comment = "".join(c if c.isalnum() or c == "_" else "_" for c in f"PST_{raw_name}")
+        
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -271,7 +268,7 @@ class PSTExecutor:
             "sl": round(sl_price, s_info.digits),
             "tp": round(tp_price, s_info.digits),
             "magic": 666, # Magic Number PST
-            "comment": f"PST_{raw_name}"[:31],
+            "comment": clean_comment[:31],
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
@@ -392,26 +389,10 @@ class PSTExecutor:
                 if use_be:
                     is_sl_at_be = (p_type == "BUY" and p.sl >= p.price_open) or (p_type == "SELL" and p.sl <= p.price_open and p.sl > 0)
                     
-                    # --- NEW: BE DINÁMICO POR R:R (Solo Scalper) ---
-                    # Para el Scalper, retrasamos el BE hasta el 1.1 R:R para dar aire
-                    if "Scalper" in p.comment:
-                        # Recuperar SL inicial de la DB para calcular R:R real
-                        active_db_trades = await self.db.get_active_trades()
-                        db_trade = next((t for t in active_db_trades if t['ticket'] == ticket), None)
-                        if db_trade:
-                            sl_in_db = db_trade.get('sl', 0)
-                            sl_dist_initial = abs(p.price_open - sl_in_db)
-                            if sl_dist_initial > 0:
-                                current_rr = (profit_points * s_info.point) / sl_dist_initial
-                                if current_rr >= 1.0 and not is_sl_at_be:
-                                    new_sl = p.price_open + (2 * s_info.point) if p_type == "BUY" else p.price_open - (2 * s_info.point)
-                                    logger.info(f"🛡️ [BREAKEVEN R:R] {symbol} ticket {ticket} alcanzó 1.0 R:R. Protegiendo entrada.")
+                    if profit_points > (atr_points * be_mult) and not is_sl_at_be:
+                        new_sl = p.price_open + (2 * s_info.point) if p_type == "BUY" else p.price_open - (2 * s_info.point)
+                        logger.info(f"🛡️ [BREAKEVEN ATR] {symbol} (Ticket: {ticket}). Asegurando entrada.")
 
-                    else:
-                        # Lógica original por ATR para otras estrategias
-                        if profit_points > (atr_points * be_mult) and not is_sl_at_be:
-                            new_sl = p.price_open + (2 * s_info.point) if p_type == "BUY" else p.price_open - (2 * s_info.point)
-                            logger.info(f"🛡️ [BREAKEVEN ATR] {symbol} (Ticket: {ticket}). Asegurando entrada.")
 
                 # B. LÓGICA DE TRAILING STOP (Condicional)
                 if use_ts:
@@ -489,48 +470,42 @@ class PSTExecutor:
                         # pero como termina el loop para este p, solo hay que tenerlo en cuenta si hubiera más lógica
 
                 # D. LÓGICA DE CIERRES PARCIALES (FASE 58)
-                # Buscamos si el trade ya tuvo un cierre parcial en la DB
-                active_db_trades = await self.db.get_active_trades()
-                db_trade = next((t for t in active_db_trades if t['ticket'] == ticket), None)
-                
-                if db_trade and not db_trade.get('is_partial_closed', 0):
-                    # Calculamos el el R:R actual
-                    sl_dist_initial = abs(p.price_open - p.sl_initial) if hasattr(p, 'sl_initial') else (atr_points * be_mult * s_info.point)
-                    # Nota: sl_initial no existe en el objeto position de mt5. 
-                    # Lo estimamos o lo recuperamos de la DB.
-                    sl_in_db = db_trade.get('sl', 0)
-                    sl_dist_initial = abs(p.price_open - sl_in_db)
+                # Desactivado para Scalper Pro por petición (v4.1)
+                if "Scalper" not in p.comment:
+                    active_db_trades = await self.db.get_active_trades()
+                    db_trade = next((t for t in active_db_trades if t['ticket'] == ticket), None)
                     
-                    if sl_dist_initial > 0:
-                        current_rr = profit_points * s_info.point / sl_dist_initial
+                    if db_trade and not db_trade.get('is_partial_closed', 0):
+                        sl_in_db = db_trade.get('sl', 0)
+                        sl_dist_initial = abs(p.price_open - sl_in_db)
                         
-                        # R:R de Cierre Parcial: 1.0 (1:1) para Scalper para asegurar ganancias rápido
-                        partial_rr_threshold = 1.0 if "Scalper" in p.comment else 1.0
-                        
-                        if current_rr >= partial_rr_threshold:
-                            # ¡DIPARAR CIERRE PARCIAL DEL 50%!
-                            partial_vol = round(p.volume / 2, 2)
-                            if partial_vol >= s_info.volume_min:
-                                logger.info(f"🛡️ [PARTIAL CLOSE] {symbol} alcanzó {partial_rr_threshold} RR. Cerrando {partial_vol} lotes (50%).")
-                                
-                                close_request = {
-                                    "action": mt5.TRADE_ACTION_DEAL,
-                                    "position": ticket,
-                                    "symbol": symbol,
-                                    "volume": partial_vol,
-                                    "type": mt5.ORDER_TYPE_SELL if p_type == "BUY" else mt5.ORDER_TYPE_BUY,
-                                    "price": s_info.bid if p_type == "BUY" else s_info.ask,
-                                    "magic": 666,
-                                    "comment": "PST_PartialClose_50",
-                                    "type_time": mt5.ORDER_TIME_GTC,
-                                    "type_filling": mt5.ORDER_FILLING_IOC,
-                                }
-                                res = await send_order_async(close_request)
-                                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                                    await self.db.mark_trade_partial_closed(ticket)
-                                    # Forzamos Breakeven inmediato
-                                    new_sl = p.price_open + (2 * s_info.point) if p_type == "BUY" else p.price_open - (2 * s_info.point)
-                                    logger.info(f"🛡️ [PARTIAL BE] {symbol} SL movido a Breakeven tras cierre parcial.")
+                        if sl_dist_initial > 0:
+                            current_rr = profit_points * s_info.point / sl_dist_initial
+                            partial_rr_threshold = 1.0
+                            
+                            if current_rr >= partial_rr_threshold:
+                                partial_vol = round(p.volume / 2, 2)
+                                if partial_vol >= s_info.volume_min:
+                                    logger.info(f"🛡️ [PARTIAL CLOSE] {symbol} alcanzó {partial_rr_threshold} RR. Cerrando {partial_vol} lotes (50%).")
+                                    
+                                    close_request = {
+                                        "action": mt5.TRADE_ACTION_DEAL,
+                                        "position": ticket,
+                                        "symbol": symbol,
+                                        "volume": partial_vol,
+                                        "type": mt5.ORDER_TYPE_SELL if p_type == "BUY" else mt5.ORDER_TYPE_BUY,
+                                        "price": s_info.bid if p_type == "BUY" else s_info.ask,
+                                        "magic": 666,
+                                        "comment": "PST_PartialClose_50",
+                                        "type_time": mt5.ORDER_TIME_GTC,
+                                        "type_filling": mt5.ORDER_FILLING_IOC,
+                                    }
+                                    res = await send_order_async(close_request)
+                                    if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                                        await self.db.mark_trade_partial_closed(ticket)
+                                        # Forzamos Breakeven inmediato
+                                        new_sl = p.price_open + (2 * s_info.point) if p_type == "BUY" else p.price_open - (2 * s_info.point)
+                                        logger.info(f"🛡️ [PARTIAL BE] {symbol} SL movido a Breakeven tras cierre parcial.")
 
                 # F. LÓGICA DE TIME-OUT (Exclusivo Scalping)
                 if "Scalper" in p.comment:

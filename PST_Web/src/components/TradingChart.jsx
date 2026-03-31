@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { RefreshCw, Pencil, Trash2 } from 'lucide-react';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries } from 'lightweight-charts';
 
 // Helper: Calculate EMA
@@ -76,6 +76,159 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
     const seriesRef = useRef({});
     const lastSymbolRef = useRef();
     const priceLinesRef = useRef([]);
+
+    // Drawing State (SVG Overlay)
+    const [isDrawingMode, setIsDrawingMode] = useState(false);
+    const [trendLines, setTrendLines] = useState([]);
+    const [currentLine, setCurrentLine] = useState(null);
+    const [viewportTick, setViewportTick] = useState(0);
+    const [selectedLineId, setSelectedLineId] = useState(null);
+    const [draggingPoint, setDraggingPoint] = useState(null);
+
+    // Clear lines when symbol changes and Fetch from DB
+    useEffect(() => {
+        let isMounted = true;
+        setTrendLines([]);
+        setCurrentLine(null);
+        setIsDrawingMode(false);
+        
+        // Fetch saved lines from DB
+        const loadLines = async () => {
+            try {
+                const token = localStorage.getItem('pst_token') || '';
+                const base = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
+                console.log(`[PST] Cargando líneas para ${symbol}...`);
+                const res = await fetch(`${base}/user_levels/${symbol}`, {
+                    headers: { 'X-PST-Token': token }
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const remoteLines = await res.json();
+                
+                if (isMounted && Array.isArray(remoteLines)) {
+                    console.log(`[PST] Líneas recibidas para ${symbol}:`, remoteLines);
+                    setTrendLines(remoteLines);
+                }
+            } catch (e) { 
+                if (isMounted) console.error('[PST] Error fetching user lines:', e);
+            }
+        };
+        loadLines();
+        return () => { isMounted = false; };
+    }, [symbol]);
+
+    // Helper to Auto Save
+    const saveLinesToDB = async (linesToSave) => {
+        try {
+            const token = localStorage.getItem('pst_token') || '';
+            const base = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
+            console.log(`[PST] Guardando ${linesToSave.length} líneas en DB...`);
+            const res = await fetch(`${base}/user_levels/${symbol}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-PST-Token': token },
+                body: JSON.stringify({ lines: linesToSave })
+            });
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(`HTTP ${res.status}: ${errorData.detail || 'Unknown Error'}`);
+            }
+            console.log(`[PST] Guardado exitoso para ${symbol}`);
+        } catch (e) { console.error('[PST] Error saving user lines:', e) }
+    };
+
+    // Helper para extraer time y logical dado un X
+    const getPointFromX = (x) => {
+        const chart = chartRef.current;
+        let time = chart.timeScale().coordinateToTime(x);
+        const logical = chart.timeScale().coordinateToLogical(x);
+        
+        if (time === null && logical !== null && data && data.length > 0) {
+            const lastBarTime = data[data.length - 1].time;
+            const lastBarCoord = chart.timeScale().timeToCoordinate(lastBarTime);
+            const lastBarLogical = chart.timeScale().coordinateToLogical(lastBarCoord);
+            if (lastBarLogical !== null) {
+                const diffLogical = logical - lastBarLogical;
+                time = lastBarTime + (diffLogical * 300);
+            }
+        }
+        return { time, logical };
+    };
+
+    // Global KeyListener for Deletion and Deselection
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedLineId !== null) {
+                    setTrendLines(prev => {
+                        const updated = prev.filter(l => l.id !== selectedLineId);
+                        saveLinesToDB(updated);
+                        return updated;
+                    });
+                    setSelectedLineId(null);
+                }
+            }
+            if (e.key === 'Escape') {
+                setSelectedLineId(null);
+                setIsDrawingMode(false);
+                setCurrentLine(null);
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [selectedLineId, symbol]);
+
+    // Global Click Listener for Deselection
+    useEffect(() => {
+        const handleGlobalClick = (e) => {
+            const tags = ['line', 'circle', 'rect', 'text', 'g'];
+            if (!tags.includes(e.target.tagName.toLowerCase())) {
+                setSelectedLineId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleGlobalClick);
+        return () => document.removeEventListener('mousedown', handleGlobalClick);
+    }, []);
+
+    // Dragging Logic
+    useEffect(() => {
+        const handleMouseMove = (e) => {
+            if (!draggingPoint || !chartRef.current || !seriesRef.current?.candlestick) return;
+            const containerRect = chartContainerRef.current.getBoundingClientRect();
+            const x = e.clientX - containerRect.left;
+            const y = e.clientY - containerRect.top;
+
+            const { time, logical } = getPointFromX(x);
+            const price = seriesRef.current.candlestick.coordinateToPrice(y);
+
+            setTrendLines(prev => prev.map(line => {
+                if (line.id !== draggingPoint.lineId) return line;
+                const newPoint = { time, logical, price };
+                if (draggingPoint.pointKey === 'p1') return { ...line, p1: newPoint };
+                if (draggingPoint.pointKey === 'p2') return { ...line, p2: newPoint };
+                // O arrastrar linea entera
+                return line;
+            }));
+        };
+
+        const handleMouseUp = () => {
+            if (draggingPoint) {
+                setDraggingPoint(null);
+                // Cuando terminamos el D&D, auto guardamos
+                setTrendLines(prev => {
+                    saveLinesToDB(prev);
+                    return prev;
+                });
+            }
+        };
+
+        if (draggingPoint) {
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        }
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [draggingPoint]);
 
     useEffect(() => {
         if (!chartContainerRef.current || !data || data.length === 0) return;
@@ -365,6 +518,212 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
         return () => { };
     }, [data, activeTrade, symbol, replayTrade]);
 
+    // Handle Clicks, Mouse Move and Panning for SVG Drawing
+    useEffect(() => {
+        if (!chartRef.current || !seriesRef.current.candlestick) return;
+        const chart = chartRef.current;
+        const series = seriesRef.current.candlestick;
+
+        const clickHandler = (param) => {
+            if (!param.point) return;
+            if (!isDrawingMode) return;
+
+            const price = series.coordinateToPrice(param.point.y);
+            const { time, logical } = getPointFromX(param.point.x);
+            
+            if (price !== null && (time !== undefined || logical !== undefined)) {
+                if (!currentLine) {
+                    // Primer clic (Inicio de línea)
+                    setCurrentLine({
+                        p1: { time, logical, price },
+                        p2: { x: param.point.x, y: param.point.y }
+                    });
+                } else {
+                    // Segundo clic (Fin de línea)
+                    const newLine = {
+                        id: Date.now(),
+                        p1: currentLine.p1,
+                        p2: { time, logical, price },
+                        mode: 'BOTH'
+                    };
+                    setTrendLines(prev => {
+                        const updated = [...prev, newLine];
+                        saveLinesToDB(updated);
+                        return updated;
+                    });
+                    
+                    setCurrentLine(null);
+                    setIsDrawingMode(false); 
+                }
+            }
+        };
+
+        const moveHandler = (param) => {
+            if (!isDrawingMode || !currentLine) return;
+            if (param.point) {
+                setCurrentLine(prev => prev ? ({
+                    ...prev,
+                    p2: { x: param.point.x, y: param.point.y }
+                }) : null);
+            }
+        };
+
+        // Forzar renderizado SVG cuando el usuario mueva o haga zoom
+        const viewportHandler = () => setViewportTick(t => t + 1);
+
+        chart.subscribeClick(clickHandler);
+        chart.subscribeCrosshairMove(moveHandler);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(viewportHandler);
+        chart.timeScale().subscribeSizeChange(viewportHandler);
+
+        return () => {
+            chart.unsubscribeClick(clickHandler);
+            chart.unsubscribeCrosshairMove(moveHandler);
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(viewportHandler);
+            chart.timeScale().unsubscribeSizeChange(viewportHandler);
+        };
+    }, [isDrawingMode, currentLine]); // Re-bind con el currentLine correcto
+
+    // Helper para transformar (time/price) a pixeles X,Y
+    const getPointCoords = (point, chart, series) => {
+        if (!chart || !series || !point) return { x: 0, y: 0 };
+        if (point.x !== undefined && point.y !== undefined) return { x: point.x, y: point.y };
+        
+        let x = null;
+        if (point.time !== undefined && point.time !== null) {
+            x = chart.timeScale().timeToCoordinate(point.time);
+            
+            // Si devuelve null, significa que point.time está en el futuro o un hueco que no está en las velas.
+            if (x === null && data && data.length > 0) {
+                const lastBar = data[data.length - 1];
+                const diffSeconds = point.time - lastBar.time;
+                // Calculamos desplazamiento logico asumiendo resolucion M5 (300)
+                const diffLogical = diffSeconds / 300; 
+                
+                const lastBarCoord = chart.timeScale().timeToCoordinate(lastBar.time);
+                let lastBarLogical = null;
+                if (lastBarCoord !== null) {
+                    lastBarLogical = chart.timeScale().coordinateToLogical(lastBarCoord);
+                }
+                
+                if (lastBarLogical !== null) {
+                    x = chart.timeScale().logicalToCoordinate(lastBarLogical + diffLogical);
+                }
+            }
+        } 
+        
+        if (x === null && point.logical !== undefined && point.logical !== null) {
+            x = chart.timeScale().logicalToCoordinate(point.logical);
+        }
+        
+        const y = series.priceToCoordinate(point.price);
+        return { x: x || 0, y: y || 0 };
+    };
+
+    // Renderizado manual de los trazos SVG
+    const renderSVGOverlay = () => {
+        const chart = chartRef.current;
+        const series = seriesRef.current?.candlestick;
+        if (!chart || !series) return null;
+
+        return (
+            <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                {trendLines.map(line => {
+                    const isSelected = selectedLineId === line.id;
+                    const p1 = getPointCoords(line.p1, chart, series);
+                    const p2 = getPointCoords(line.p2, chart, series);
+                    
+                    // Definición de colores según el modo
+                    const modeColors = {
+                        'SUPPORT': '#10b981',
+                        'RESISTANCE': '#ef4444',
+                        'BOTH': '#eab308'
+                    };
+                    const lineColor = isSelected ? "#ffffff" : (modeColors[line.mode] || '#eab308');
+                    const midX = (p1.x + p2.x) / 2;
+                    const midY = (p1.y + p2.y) / 2;
+
+                    return (
+                        <g key={line.id} className="pointer-events-auto">
+                            {/* Hitbox ensanchado transparente para atrapar clics facilmente */}
+                            <line 
+                                x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
+                                stroke="transparent" strokeWidth="15"
+                                className="cursor-pointer"
+                                onClick={(e) => { e.stopPropagation(); setSelectedLineId(line.id); }}
+                            />
+                            {/* Línea visible real */}
+                            <line 
+                                x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} 
+                                stroke={lineColor} 
+                                strokeWidth={isSelected ? "3" : "2"} 
+                                strokeLinecap="round"
+                                className="pointer-events-none"
+                            />
+                            
+                            {/* Etiqueta de Modo (Solo si está seleccionada o para identificar rápido) */}
+                            {isSelected && (
+                                <g 
+                                    transform={`translate(${midX}, ${midY - 20})`}
+                                    className="cursor-pointer select-none"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const nextMode = { 'BOTH': 'SUPPORT', 'SUPPORT': 'RESISTANCE', 'RESISTANCE': 'BOTH' };
+                                        setTrendLines(prev => {
+                                            const updated = prev.map(l => l.id === line.id ? { ...l, mode: nextMode[l.mode || 'BOTH'] } : l);
+                                            saveLinesToDB(updated);
+                                            return updated;
+                                        });
+                                    }}
+                                >
+                                    <rect x="-35" y="-10" width="70" height="20" rx="4" fill="#18181b" stroke={lineColor} strokeWidth="1" />
+                                    <text x="0" y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold" className="uppercase italic">
+                                        {line.mode || 'BOTH'}
+                                    </text>
+                                </g>
+                            )}
+                            {/* Circulos editables de anclaje (solo aparecen cuando está seleccionada) */}
+                            {isSelected && (
+                                <>
+                                    {/* Hitbox P1 */}
+                                    <circle cx={p1.x} cy={p1.y} r="15" fill="transparent" 
+                                        className="cursor-move" 
+                                        onMouseDown={(e) => { e.stopPropagation(); setDraggingPoint({ lineId: line.id, pointKey: 'p1' }); }} 
+                                    />
+                                    <circle 
+                                        cx={p1.x} cy={p1.y} r="6" fill="#ffffff" stroke={lineColor} strokeWidth="2"
+                                        className="pointer-events-none" 
+                                    />
+
+                                    {/* Hitbox P2 */}
+                                    <circle cx={p2.x} cy={p2.y} r="15" fill="transparent" 
+                                        className="cursor-move" 
+                                        onMouseDown={(e) => { e.stopPropagation(); setDraggingPoint({ lineId: line.id, pointKey: 'p2' }); }} 
+                                    />
+                                    <circle 
+                                        cx={p2.x} cy={p2.y} r="6" fill="#ffffff" stroke={lineColor} strokeWidth="2"
+                                        className="pointer-events-none" 
+                                    />
+                                </>
+                            )}
+                        </g>
+                    );
+                })}
+                {currentLine && (
+                    <line 
+                        x1={getPointCoords(currentLine.p1, chart, series).x} 
+                        y1={getPointCoords(currentLine.p1, chart, series).y} 
+                        x2={getPointCoords(currentLine.p2, chart, series).x} 
+                        y2={getPointCoords(currentLine.p2, chart, series).y} 
+                        stroke="#eab308" 
+                        strokeWidth="2" 
+                        strokeDasharray="4 4"
+                    />
+                )}
+            </svg>
+        );
+    };
+
     // Final Cleanup on Unmount
     useEffect(() => {
         return () => {
@@ -378,6 +737,8 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
     return (
         <div className="w-full h-full relative bg-[#050505] rounded-[2rem] border border-zinc-900/50 overflow-hidden shadow-2xl">
             <div ref={chartContainerRef} className="w-full h-full" />
+            {renderSVGOverlay()}
+            
             {!data || data.length === 0 ? (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-50">
                     <div className="flex flex-col items-center gap-3">
@@ -399,6 +760,33 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#22d3ee]" /> BB 20,2</span>
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#a855f7]" /> RSI 14</span>
                 </div>
+            </div>
+
+            {/* Drawing Tools Floating Panel */}
+            <div className="absolute right-8 top-1/2 -translate-y-1/2 flex flex-col gap-3 pointer-events-auto z-20">
+                <button 
+                    onClick={() => {
+                        setIsDrawingMode(!isDrawingMode);
+                        if(isDrawingMode) setCurrentLine(null); // Cancel current draw
+                    }}
+                    className={`p-3 rounded-xl border transition-all duration-300 shadow-xl ${isDrawingMode ? 'bg-indigo-500 text-white border-indigo-400 scale-110 shadow-indigo-500/50 cursor-crosshair' : 'bg-zinc-800/80 text-zinc-400 border-zinc-700 hover:bg-zinc-700 hover:text-white'}`}
+                    title="Dibujar Soporte/Resistencia/Diagonales"
+                >
+                    <Pencil size={20} />
+                </button>
+                {trendLines.length > 0 && (
+                    <button 
+                        onClick={() => {
+                            setTrendLines([]);
+                            setCurrentLine(null);
+                            saveLinesToDB([]); // BORRAMOS BBDD
+                        }}
+                        className="p-3 rounded-xl bg-zinc-800/80 text-rose-500 border border-zinc-700 hover:bg-rose-500/10 transition-all duration-300 shadow-xl"
+                        title="Borrar líneas"
+                    >
+                        <Trash2 size={20} />
+                    </button>
+                )}
             </div>
         </div>
     );

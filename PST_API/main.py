@@ -23,6 +23,7 @@ if project_root not in sys.path:
 from PST_Core.models.database import PSTDatabase
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_API.schemas import AccountStatus, Trade, SymbolStatus, APIResponse, OHLCBar, ConfigUpdate, ManualOrder, StrategyBreakdown, BotConfigUpdate, PerformanceMetrics, EquityPoint, StrategyPerformance, LoginRequest, RiskProfileRequest, TradeNoteUpdate
+from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
 from dotenv import load_dotenv
@@ -451,7 +452,7 @@ async def get_symbols():
                     # Formato antiguo
                     factors_map[s_name_tech] = StrategyBreakdown(
                         score=0.0,
-                        factors=s_data if isinstance(s_data, list) else [],
+                        factors=s_data if isinstance(s_data, list) else [], # Original line
                         is_active=is_strat_active,
                         risk_mode=s_risk_mode,
                         risk_value=s_risk_value,
@@ -1118,6 +1119,63 @@ async def update_strategy_config(update: StrategyConfigUpdate):
     if not ok:
         raise HTTPException(status_code=500, detail="Error actualizando estrategia")
     return {"status": "success"}
+
+class UserLevelPoint(BaseModel):
+    time: int = None
+    logical: int = None
+    price: float
+
+class UserLevelLine(BaseModel):
+    id: int
+    p1: UserLevelPoint
+    p2: UserLevelPoint
+    mode: str = "BOTH"
+
+class UserLevelsSaveRequest(BaseModel):
+    lines: List[UserLevelLine]
+
+@app.get("/api/user_levels/{symbol}", tags=["Trading"])
+async def get_user_levels_api(symbol: str):
+    """Obtener líneas guardadas dibujadas por el usuario."""
+    try:
+        levels = await db.get_user_levels(symbol)
+        lines = []
+        for lvl in levels:
+            if lvl['type'] == 'DIAGONAL':
+                lines.append({
+                    "id": lvl['id'],
+                    "p1": {
+                        "time": lvl['time1_ts'],
+                        "price": lvl['price'],
+                        "logical": None
+                    },
+                    "p2": {
+                        "time": lvl['time2_ts'],
+                        "price": lvl['price2'],
+                        "logical": None
+                    },
+                    "mode": lvl.get('mode', 'BOTH')
+                })
+        return lines
+    except Exception as e:
+        logger.error(f"Error fetching user levels API: {e}")
+        return []
+
+@app.post("/api/user_levels/{symbol}", tags=["Trading"])
+async def save_user_levels_api(symbol: str, req: UserLevelsSaveRequest):
+    """Sobrescribir las líneas dibujadas para un símbolo."""
+    try:
+        # Convertir r.lines (objetos Pydantic) a lista de dicts para el modelo
+        lines_list = [line.dict() for line in req.lines]
+        ok = await db.save_trend_lines(symbol, lines_list)
+        if ok:
+            return {"status": "success"}
+        raise HTTPException(status_code=500, detail="Error salvando líneas (DB Locked?)")
+    except Exception as e:
+        logger.error(f"Error saving user levels api: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- RISK PROFILES (FASE 35) ---
 @app.get("/api/profiles", tags=["Configuration"])

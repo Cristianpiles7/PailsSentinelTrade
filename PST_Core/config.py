@@ -100,7 +100,7 @@ STRATEGY_CATEGORIES = {
 }
 
 # PARALLEL OPERATIVE LIMITS
-MAX_POSITIONS_PER_CATEGORY = {"CORE": 1, "SCALPING": 1, "AI": 1}
+MAX_POSITIONS_PER_CATEGORY = {"CORE": 2, "SCALPING": 4, "AI": 1}
 MAX_SYMBOL_EXPOSURE_PCT = 1.25  # Riesgo total sumado por activo
 
 # SCALPER DEFAULTS
@@ -110,8 +110,8 @@ SCALPER_RISK_DEFAULT = 0.08 # Reducido a 0.08% para mantener pérdidas entre 5-1
 # Estrategias activas globalmente (Nombres internos estándar)
 ENABLED_STRATEGIES = [
     "PST-EMA-Flow",
+    "PST-TrendMaster", # NEW: Activada por defecto v1.8.6
     "PST-Channel-Master",
-    "PST-Liquidity-Hunter",
     "PST-Scalper-Pro", # NEW
     "PST-AI-Oracle-gemini",
     "PST-AI-Oracle-groq",

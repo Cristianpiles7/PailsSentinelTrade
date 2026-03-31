@@ -5,7 +5,7 @@ from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sy
 from ..models.classifier import RegimeClassifier, RegimeMode
 from ..models.database import PSTDatabase
 from .executor import PSTExecutor
-from ..strategies.pst_channel_master import PSTChannelMaster
+from ..strategies.pst_trendmaster import PSTTrendMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
@@ -50,7 +50,7 @@ class SymbolTask:
         self.active_stalking = {} # FASE 56: {strategy_id: {'direction': 1/-1, 'target_price': float, 'best_score': int}}
         self.classifier = RegimeClassifier()
         # Instanciar estrategias
-        self.channel_master = PSTChannelMaster()
+        self.trend_master = PSTTrendMaster()
         self.ema_flow = PSTEMAFlow()
         self.mean_reversion = PSTMeanReversion()
         self.liquidity_hunter = PSTLiquidityHunter()
@@ -92,8 +92,8 @@ class SymbolTask:
             sym_overrides = await self.db.get_symbol_strategies(self.symbol)
             
             # 3. Filtrar instancias finales
-            # Combinamos _all_strategies y channel_master para el filtrado uniforme
-            pool = self._all_strategies + [self.channel_master]
+            # Combinamos _all_strategies y trend_master para el filtrado uniforme
+            pool = self._all_strategies + [self.trend_master]
             
             self.strategies = []
             for s in pool:
@@ -109,10 +109,10 @@ class SymbolTask:
                 if is_globally_on and is_active:
                     self.strategies.append(s)
 
-            # Mantener orden: Channel Master primero si está activo
-            if self.channel_master in self.strategies:
-                self.strategies.remove(self.channel_master)
-                self.strategies.insert(0, self.channel_master)
+            # Mantener orden: Trend Master primero si está activo
+            if self.trend_master in self.strategies:
+                self.strategies.remove(self.trend_master)
+                self.strategies.insert(0, self.trend_master)
 
         except Exception as e:
             logger.error(f"❌ Error actualizando estrategias para {self.symbol}: {e}")
@@ -122,11 +122,11 @@ class SymbolTask:
     async def run(self):
         logger.debug(f"🚀 Iniciando tarea para {self.symbol}")
         while self.running:
-            # 0.1 Check for Daily Drawdown Lock
-            if await self.portfolio.is_daily_locked():
-                logger.warning(f"🔒 [{self.symbol}] Operativa bloqueada por Drawdown Diario. Esperando...")
-                await asyncio.sleep(60)
-                continue
+            # 0.1 Check for Daily Drawdown Lock (MOVED TO PortfolioManager.can_open_trade)
+            # if await self.portfolio.is_daily_locked():
+            #    logger.warning(f"🔒 [{self.symbol}] Operativa bloqueada por Drawdown Diario. Esperando...")
+            #    await asyncio.sleep(60)
+            #    continue
 
             mtr_m1 = mtr_m5 = mtr_m15 = mtr_h1 = {"rsi": 0, "vol": 0, "adx": 0}
             volatility_factor = 1.0
@@ -375,18 +375,18 @@ class SymbolTask:
                     best_metadata = {}
                     
                     # Definir estrategias "Élite" que siempre queremos monitorear
-                    elite_strats = [self.channel_master] + self.strategies # PSTRSIEquities() Desactivada
+                    elite_strats = [self.trend_master] + self.strategies # PSTRSIEquities() Desactivada
                     
                     # Mapeo de nombres para consistencia
                     STRAT_TRANS = {
-                        "PST-Channel-Master": "Canal Maestro (T. Híbrido)",
-                        "PST-RSI-Equities": "RSI Equities (Multi-Asset)",
-                        "PST-EMA-Flow": "Flujo EMA (Tendencia)",
-                        "PST-Mean-Reversion": "Reversión a la Media (Rangos)",
-                        "PST-Scalper-Pro": "Scalping Pro (Micro-Reversión)",
-                        "PST-AI-Oracle-gemini": "🤖 IA Gemini (Cloud)",
-                        "PST-AI-Oracle-groq": "🚀 IA Groq (Super Sónica)",
-                        "PST-AI-Oracle-ollama": "🏠 IA Ollama (Local)"
+                        "PST-TrendMaster": "Trend Master",
+                        "PST-RSI-Equities": "RSI Equities",
+                        "PST-EMA-Flow": "EMA Flow",
+                        "PST-Mean-Reversion": "Mean Reversion",
+                        "PST-Scalper-Pro": "Scalp",
+                        "PST-AI-Oracle-gemini": "🤖 IA Gemini",
+                        "PST-AI-Oracle-groq": "🚀 IA Groq",
+                        "PST-AI-Oracle-ollama": "🏠 IA Ollama"
                     }
 
                     # Obtener configuración de estrategias para este símbolo (NEW V3.3)
@@ -541,13 +541,14 @@ class SymbolTask:
                             
                             # Inyectar dirección y nombre limpio en metadata para el Radar/HUD
                             s_meta["direction"] = s_result.get("entry", 0)
-                            s_meta["strategy_display"] = STRAT_TRANS.get(s_name_raw, s_name_raw)
-                            s_name = STRAT_TRANS.get(s_name_raw, s_name_raw)
+                            s_display = STRAT_TRANS.get(s_name_raw, s_name_raw)
+                            s_meta["strategy_display"] = s_display
+                            s_name = s_name_raw # Mantener ID técnico original para el Executor
 
                             # Guardar factores y score para el Dashboard (Multi-Strategy Map)
                             all_factors[strat_id] = {
                                 "score": s_score,
-                                "factors": s_meta.get("factors_detailed", [])
+                                "factors": s_result.get("factors_detailed") or s_result.get("metadata", {}).get("factors_detailed", [])
                             }
 
                             # 3. Evaluar Ejecución (Trading Automático)
@@ -566,7 +567,7 @@ class SymbolTask:
                                 is_strat_in_regime = False
 
                             # Si es la Maestra, siempre monitorea
-                            if "ChannelMaster" in type(strat).__name__:
+                            if "TrendMaster" in type(strat).__name__:
                                 is_strat_in_regime = True
 
                             # --- NEW: REGIME BLOCK LOGGING & SCORE CAPPING ---

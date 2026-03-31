@@ -107,6 +107,47 @@ class PortfolioManager:
         """
         Lógica de control de riesgo global (FTMO Friendly) y Pyramiding Institucional.
         """
+        # --- NUEVO: LÍMITES GLOBALES POR CATEGORÍA (v1.8.7) ---
+        from ..config import STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY
+        
+        # Traducir nombre legible si es necesario
+        raw_strat_name = strategy_name or ""
+        reverse_map = {
+            "Scalping Pro (Micro-Reversión)": "PST-Scalper-Pro",
+            "Flujo EMA (Tendencia)": "PST-EMA-Flow",
+            "Canal Maestro (T. Híbrido)": "PST-Channel-Master",
+            "TrendMaster (Line Breakout)": "PST-TrendMaster",
+            "Reversión a la Media (Rangos)": "PST-Mean-Reversion",
+            "Liquidez Sentinel (Institucional)": "PST-Liquidity-Hunter"
+        }
+        if raw_strat_name in reverse_map:
+            raw_strat_name = reverse_map[raw_strat_name]
+
+        strategy_category = STRATEGY_CATEGORIES.get(raw_strat_name, "CORE")
+        max_for_cat = MAX_POSITIONS_PER_CATEGORY.get(strategy_category, 1)
+
+        # Contar posiciones globales de esta categoría
+        global_cat_count = 0
+        if current_positions:
+            for p in current_positions:
+                p_strat = p.comment.replace("PST_", "").replace("PST-", "")
+                p_cat = "CORE"
+                for s_name_cfg, s_cat in STRATEGY_CATEGORIES.items():
+                    if s_name_cfg.replace("PST-", "") in p_strat:
+                        p_cat = s_cat
+                        break
+                if p_cat == strategy_category:
+                    global_cat_count += 1
+
+        if global_cat_count >= max_for_cat:
+            logger.warning(f"🚫 [GLOBAL LIMIT] Límite de {max_for_cat} pos para {strategy_category} alcanzado. Bloqueando {symbol}.")
+            return False
+
+        # --- BLOQUEO DIARIO (v1.8.7) ---
+        if await self.is_daily_locked():
+             logger.warning(f"🔒 [BLOQUEO DIARIO] No se permiten más entradas hoy en {symbol}.")
+             return False
+
         # 0. Evitar duplicados por Símbolo (Filtro Estricto y Robusto)
         target_sym = symbol.upper().strip()
         
@@ -247,11 +288,19 @@ class PortfolioManager:
         # --- 3. VOLATILITY ADJUSTMENT ---
         if current_atr and ma_atr and ma_atr > 0:
              vol_factor = ma_atr / current_atr
+             # AJUSTE: Si es modo MONEY, el ajuste de volatilidad solo puede reducir el riesgo, nunca subirlo del nominal (v1.8.7)
+             if risk_mode == "MONEY":
+                 vol_factor = min(1.0, vol_factor)
              risk_money *= vol_factor
              
         # Cap de seguridad de riesgo monetario (no arriesgar más del triple del riesgo base config)
         base_risk_money = balance * (risk_per_trade_pct / 100)
         risk_money = min(risk_money, base_risk_money * 3)
+
+        # CAP FINAL ESTRICTO para modo MONEY (Petición de usuario: No superar el valor nominal)
+        if risk_mode == "MONEY" and risk_value is not None:
+            risk_money = min(risk_money, risk_value)
+            logger.info(f"💰 [RISK CAP] Aplicado cap de {risk_value}€ para modo MONEY. Riesgo final: {risk_money:.2f}€")
 
         tick_value = symbol_info.trade_tick_value
         if tick_value == 0:
@@ -278,5 +327,5 @@ class PortfolioManager:
         lot = max(symbol_info.volume_min, min(symbol_info.volume_max, raw_lot))
         lot = round(lot / symbol_info.volume_step) * symbol_info.volume_step
         
-        logger.info(f"✅ Lot Final para {symbol}: {round(lot, 2)}")
+        logger.info(f"✅ Lot Final para {symbol}: {round(lot, 2)} (Basado en {risk_mode} {risk_value}€, SL {stop_loss_points} pts)")
         return round(lot, 2)

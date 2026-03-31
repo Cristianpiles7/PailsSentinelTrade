@@ -181,6 +181,10 @@ function App() {
   const [journalSnapshot, setJournalSnapshot] = useState(null)
   const [isJournalLoading, setIsJournalLoading] = useState(false)
 
+  const [perfData, setPerfData] = useState(null)
+  const [equityCurve, setEquityCurve] = useState([])
+  const [stratPerf, setStratPerf] = useState([])
+
   const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
   const activeSymbols = symbols.filter(s => s.is_active)
   const strategies = symbols.length > 0 ? Object.keys(symbols[0].factors_map || {}) : []
@@ -1686,7 +1690,15 @@ function App() {
                             {isBlocked && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" title="GATED" />}
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
-                          <span className="text-[6px] font-black text-zinc-600 uppercase tracking-widest">
+                          <div className="flex gap-1 mt-0.5">
+                            {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro"].map(strat => {
+                              const score = s.factors_map?.[strat]?.score || 0;
+                              return (
+                                <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
+                              );
+                            })}
+                          </div>
+                          <span className="text-[5px] font-black text-zinc-700 uppercase tracking-widest mt-1">
                             {(() => {
                               const factors = s.factors_map ? Object.entries(s.factors_map) : [];
                               if (factors.length === 0) return s.active_strategy || "PST-AUTO";
@@ -1793,6 +1805,20 @@ function App() {
                               <span className={`text-[10px] font-black ${rsiColor}`}>{rsi || '--'}</span>
                               <span className="text-[7px] font-bold text-zinc-500">A:{adx || '--'}</span>
                             </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Core Strategies Scores */}
+                    <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
+                      {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro"].map(strat => {
+                        const score = s.factors_map?.[strat]?.score || 0;
+                        const label = strat.replace("PST-", "").replace("Scalper-Pro", "Scalp").replace("TrendMaster", "Trend Master").replace("EMA-Flow", "Flow").toUpperCase();
+                        return (
+                          <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
+                            <span className="text-[6px] font-black text-zinc-600 mb-0.5">{label}</span>
+                            <span className={`text-[9px] font-black ${score >= 70 ? 'text-indigo-400' : 'text-zinc-500'}`}>{Math.round(score)}</span>
                           </div>
                         );
                       })}
@@ -2128,25 +2154,11 @@ function App() {
 
 
                       const allStrategies = Object.keys(sym.factors_map);
-
-
-
                       const strategies = allStrategies.filter(s => {
-
-
-
                         const name = String(s).toUpperCase();
-
-
-
-                        return !name.includes('CHANNEL') && !name.includes('MASTER');
-
-
-
+                        if (name.includes('LIQUIDITY-HUNTER') || name.includes('CHANNEL')) return false;
+                        return true;
                       });
-
-
-
                       if (strategies.length === 0) return null;
 
 
@@ -3216,12 +3228,12 @@ function App() {
                   // Mapeo de nombres limpios y estratégicos
                   const STRAT_NAME_MAP = {
                     "PST-EMA-Flow": "EMA Flow",
-                    "PST-Mean-Reversion": "Mean Reversion",
+                    "PST-TrendMaster": "Trend Master",
                     "PST-Scalper-Pro": "Scalper Pro"
                   };
 
-                  // Obtener solo las estrategias CORE solicitadas: EMA Flow, Mean Reversion y Scalper Pro
-                  const CORE_STRATS = ["PST-EMA-Flow", "PST-Mean-Reversion", "PST-Scalper-Pro"];
+                  // Obtener solo las estrategias CORE solicitadas: EMA Flow, TrendMaster y Scalper Pro
+                  const CORE_STRATS = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
@@ -3283,7 +3295,7 @@ function App() {
                             const stratData = symbolStrats[strat];
 
                             // Lógica de activación por defecto
-                            const isCore = ["PST-EMA-Flow"].includes(strat); // Mean Reversion ya no es core activa por defecto
+                            const isCore = ["PST-EMA-Flow", "PST-TrendMaster"].includes(strat); // TrendMaster activa por defecto
                             const isEnabled = stratData ? (!!stratData.is_active) : isCore;
 
                             // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)
@@ -3407,15 +3419,15 @@ function App() {
                                       type="text"
                                       value={stratData?.tp_mult || ""}
                                       placeholder={params.tp_mult}
-                                      readOnly={strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro"}
-                                      title={(strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") ? "Usa TP Técnico" : "TP Multiplier"}
+                                      readOnly={strat === "PST-Scalper-Pro"}
+                                      title={(strat === "PST-Scalper-Pro") ? "Usa TP Técnico" : "TP Multiplier"}
                                       onClick={(e) => {
-                                        if (strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") {
+                                        if (strat === "PST-Scalper-Pro") {
                                           // Optional: Show a toast here explaining it uses technical TP
                                         }
                                       }}
                                       onChange={(e) => updateStrategyConfig(s.symbol, strat, 'tp_mult', parseFloat(e.target.value) || null)}
-                                      className={`w-3 bg-transparent outline-none text-center ${(strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
+                                      className={`w-3 bg-transparent outline-none text-center ${(strat === "PST-Scalper-Pro") ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
                                     />
                                   </div>
                                 </div>

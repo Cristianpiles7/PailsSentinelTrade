@@ -125,7 +125,8 @@ class PSTEMAFlow:
                     "strategy": self.STRATEGY_NAME,
                     "score": 0,
                     "total_score": 0,
-                    "score_breakdown": {"Estado": "Esperando Historial (M5 < 55 velas)"}
+                    "score_breakdown": {"Estado": "Esperando Historial (M5 < 55 velas)"},
+                    "factors_detailed": [{"k": "Estado", "v": "Esperando Historial", "score": 0}]
                 }, 
                 "score": 0
             }

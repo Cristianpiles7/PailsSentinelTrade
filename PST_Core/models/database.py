@@ -42,10 +42,9 @@ class PSTDatabase:
                 count = (await cursor.fetchone())[0]
                 if count == 0:
                     default_symbols = [
-                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('USDJPY', 'FOREX'),
+                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'),
                         ('XAUUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
-                        ('NAS100', 'INDEX'), ('US30', 'INDEX'), ('US500.cash', 'INDEX'),
-                        ('GER40', 'INDEX')
+                        ('US500.cash', 'INDEX')
                     ]
                     await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
 
@@ -143,7 +142,8 @@ class PSTDatabase:
                     factors_json TEXT,
                     price2 REAL, -- Para lineas de tendencia
                     time2 TEXT   -- Para lineas de tendencia
-                    , time1 TEXT, time1_ts REAL, time2_ts REAL
+                    , time1 TEXT, time1_ts REAL, time2_ts REAL,
+                    mode TEXT DEFAULT 'BOTH'
                 )
             """)
 
@@ -154,6 +154,7 @@ class PSTDatabase:
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time1 TEXT")
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time1_ts REAL")
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time2_ts REAL")
+                await db.execute("ALTER TABLE user_levels ADD COLUMN mode TEXT DEFAULT 'BOTH'")
             except: pass # Ya existen
             
             # Tabla de Configuración de Canales (Nuevo)
@@ -285,7 +286,7 @@ class PSTDatabase:
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies 
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-Scalper-Pro', ?, 'MONEY', 7.0, 1, 1, 2.0, 2.5, 1.6, 1.6, 2.5)
+                    VALUES (?, 'PST-Scalper-Pro', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.6, 1.6, 2.5)
                 """, (sym, is_active))
 
                 # 3. Configurar EMA Flow (25€ Riesgo Maestro)
@@ -293,6 +294,13 @@ class PSTDatabase:
                     INSERT OR IGNORE INTO symbol_strategies 
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
                     VALUES (?, 'PST-EMA-Flow', ?, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.5, 2.5, 3.5)
+                """, (sym, is_active))
+
+                # 4. Configurar Trend Master (Líneas de Usuario)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies 
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-TrendMaster', ?, 'MONEY', 15.0, 1, 0, 2.0, 2.5, 1.5, 2.5, 3.5)
                 """, (sym, is_active))
 
             await db.commit()
@@ -341,7 +349,7 @@ class PSTDatabase:
             logger.error(f"❌ Error get_user_levels: {e}")
             return []
 
-    async def save_user_level(self, symbol, price, ltype, label=None, price2=None, time2=None, time1=None, time1_ts=None, time2_ts=None):
+    async def save_user_level(self, symbol, price, ltype, label=None, price2=None, time2=None, time1=None, time1_ts=None, time2_ts=None, mode='BOTH'):
         """Guarda o actualiza un nivel manual (Line u Horizontal)."""
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
             if label and label.startswith('FIXED_'):
@@ -349,10 +357,39 @@ class PSTDatabase:
                  await db.execute("DELETE FROM user_levels WHERE symbol = ? AND label = ?", (symbol, label))
 
             await db.execute("""
-                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1, time1_ts, time2_ts) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (symbol, float(price), ltype, label, price2, time2, time1, time1_ts, time2_ts))
+                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1, time1_ts, time2_ts, mode) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (symbol, float(price), ltype, label, price2, time2, time1, time1_ts, time2_ts, mode))
             await db.commit()
+
+    async def save_trend_lines(self, symbol: str, lines: list):
+        """Guarda un set completo de líneas de tendencia con reintentos para evitar el bloqueo de la DB."""
+        for attempt in range(10):
+            try:
+                async with aiosqlite.connect(self.db_path, timeout=60) as conn:
+                    # Purgar antiguas
+                    await conn.execute("DELETE FROM user_levels WHERE symbol = ? AND type = 'DIAGONAL'", (symbol,))
+                    # Insertar nuevas
+                    for line in lines:
+                        t1 = int(line.get('p1', {}).get('time', 0) or 0)
+                        t2 = int(line.get('p2', {}).get('time', 0) or 0)
+                        p1 = float(line.get('p1', {}).get('price', 0))
+                        p2 = float(line.get('p2', {}).get('price', 0))
+                        mode = line.get('mode', 'BOTH')
+                        
+                        await conn.execute("""
+                            INSERT INTO user_levels (symbol, price, type, label, price2, time1_ts, time2_ts, mode, is_active) 
+                            VALUES (?, ?, 'DIAGONAL', 'USER_LINE', ?, ?, ?, ?, 1)
+                        """, (symbol, p1, p2, t1, t2, mode))
+                    await conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"❌ Error en save_trend_lines (Intento {attempt+1}) para {symbol}: {e}")
+                if ("locked" in str(e).lower() or "busy" in str(e).lower()) and attempt < 9:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+                    continue
+                raise e
+        return False
 
     async def delete_user_level(self, level_id):
         """Elimina un nivel manual por ID."""
@@ -711,9 +748,9 @@ class PSTDatabase:
                         symbol, strategy_name, 
                         1 if is_active is None or is_active else 0,
                         risk_mode, risk_value, sl_mult, tp_mult, score_threshold,
-                        1 if use_trailing else 0 if use_trailing is not None else 1,
+                        1 if use_trailing else 0 if use_trailing is not None else (0 if strategy_name == 'PST-Scalper-Pro' else 1),
                         1 if use_breakeven else 0 if use_breakeven is not None else 1,
-                        be_mult if be_mult is not None else 2.0,
+                        be_mult if be_mult is not None else (3.5 if strategy_name == 'PST-Scalper-Pro' else 2.0),
                         ts_mult if ts_mult is not None else 2.5,
                         min_rr if min_rr is not None else 1.5
                     ))
