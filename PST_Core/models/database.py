@@ -289,6 +289,13 @@ class PSTDatabase:
                     VALUES (?, 'PST-Scalper-Pro', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.6, 1.6, 2.5)
                 """, (sym, is_active))
 
+                # 2b. Configurar Scalper Active (V2)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies 
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-Scalper-Active', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.3, 1.6, 1.8)
+                """, (sym, is_active))
+
                 # 3. Configurar EMA Flow (25€ Riesgo Maestro)
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies 
@@ -748,9 +755,9 @@ class PSTDatabase:
                         symbol, strategy_name, 
                         1 if is_active is None or is_active else 0,
                         risk_mode, risk_value, sl_mult, tp_mult, score_threshold,
-                        1 if use_trailing else 0 if use_trailing is not None else (0 if strategy_name == 'PST-Scalper-Pro' else 1),
+                        1 if use_trailing else 0 if use_trailing is not None else (0 if strategy_name in ['PST-Scalper-Pro', 'PST-Scalper-Active'] else 1),
                         1 if use_breakeven else 0 if use_breakeven is not None else 1,
-                        be_mult if be_mult is not None else (3.5 if strategy_name == 'PST-Scalper-Pro' else 2.0),
+                        be_mult if be_mult is not None else (3.5 if strategy_name in ['PST-Scalper-Pro', 'PST-Scalper-Active'] else 2.0),
                         ts_mult if ts_mult is not None else 2.5,
                         min_rr if min_rr is not None else 1.5
                     ))

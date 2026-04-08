@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 import pandas as pd
 import pandas_ta as ta
-from .mt5_async import send_order_async, sym_info_async, get_positions_async, modify_position_async, fetch_rates_async
+from .mt5_async import send_order_async, sym_info_async, get_positions_async, modify_position_async, fetch_rates_async, close_position_async
 from .telegram_manager import telegram_bot
 from ..models.database import PSTDatabase
 from ..portfolio.manager import PortfolioManager
@@ -41,6 +41,7 @@ class PSTExecutor:
             "TrendMaster (Line Breakout)": "PST-TrendMaster",
             "Reversión a la Media (Rangos)": "PST-Mean-Reversion",
             "Liquidez Sentinel (Institucional)": "PST-Liquidity-Hunter",
+            "Scalper V2": "PST-Scalper-Active",
             "Scalp": "PST-Scalper-Pro" # Alias de seguridad (v1.8.7)
         }
         if strategy_name in reverse_map:
@@ -255,10 +256,38 @@ class PSTExecutor:
                 tp_dist = new_tp_dist
                 tp_price = price + tp_dist if signal_type == "BUY" else price - tp_dist
                 rr_actual = min_rr
+        # --- NEW: STOP & REVERSE LOGIC (HEDGING PROTECTION) ---
+        positions = await get_positions_async(symbol=symbol)
+        if positions:
+            for opp_p in positions:
+                # Si hay una posición en la dirección contraria, la cerramos
+                if (signal_type == "BUY" and opp_p.type == 1) or (signal_type == "SELL" and opp_p.type == 0):
+                    logger.info(f"🔄 [REVERSAL] Mercado a la contra. Cerrando posición en {symbol} (Ticket: {opp_p.ticket}) antes de invertir la dirección.")
+                    res = await close_position_async(opp_p.ticket)
+                    if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                        logger.info(f"✅ Posición contraria {opp_p.ticket} cerrada con éxito.")
+                        profit_val = float((res.price - opp_p.price_open) * opp_p.volume * s_info.trade_tick_value / s_info.point) if opp_p.type==0 else float((opp_p.price_open - res.price) * opp_p.volume * s_info.trade_tick_value / s_info.point)
+                        await self.db.update_trade_cierre(opp_p.ticket, res.price, profit_val)
+                    else:
+                        logger.error(f"❌ Fallo al cerrar posición contraria {opp_p.ticket}: {res.comment if res else 'Unknown'}")
 
-        # Limpiar comentario de caracteres especiales (MT5 es estricto)
-        clean_comment = "".join(c if c.isalnum() or c == "_" else "_" for c in f"PST_{raw_name}")
+        # --- NEW: COMUNICACIÓN DE TF Y ABREVIATURA PARA MT5 ---
+        tf_str = ""
+        if metadata and "factors_detailed" in metadata:
+            for f in metadata["factors_detailed"]:
+                if f.get("k") == "TF":
+                    tf_str = f.get("v")
+                    break
         
+        # Abreviaciones
+        abbrev = raw_name.replace("PST-", "")
+        abbrev = abbrev.replace("Scalper-Active", "ScV2").replace("Scalper-Pro", "ScPro").replace("EMA-Flow", "EMA")
+        abbrev = abbrev.replace("Mean-Reversion", "MeanRev")
+        
+        comment_raw = f"{abbrev}_{tf_str}" if tf_str else f"{abbrev}"
+        
+        # Limpiar comentario de caracteres especiales (MT5 es estricto, límite 31 chars)
+        clean_comment = "".join(c if c.isalnum() or c == "_" else "_" for c in comment_raw)
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -389,14 +418,21 @@ class PSTExecutor:
                 if use_be:
                     is_sl_at_be = (p_type == "BUY" and p.sl >= p.price_open) or (p_type == "SELL" and p.sl <= p.price_open and p.sl > 0)
                     
-                    if profit_points > (atr_points * be_mult) and not is_sl_at_be:
-                        new_sl = p.price_open + (2 * s_info.point) if p_type == "BUY" else p.price_open - (2 * s_info.point)
-                        logger.info(f"🛡️ [BREAKEVEN ATR] {symbol} (Ticket: {ticket}). Asegurando entrada.")
+                    # Suavizamos el BE multiplicándolo por 2.0x mínimo para evitar ser sacados por ruido
+                    safe_be_mult = max(2.5, be_mult)
+                    
+                    if profit_points > (atr_points * safe_be_mult) and not is_sl_at_be:
+                        # Colocamos el BreakEven no pegado a cero, sino con un poco más de margen (o justo en entry)
+                        new_sl = p.price_open + (1 * s_info.point) if p_type == "BUY" else p.price_open - (1 * s_info.point)
+                        logger.info(f"🛡️ [BREAKEVEN] {symbol} (Ticket: {ticket}). Progreso de {safe_be_mult}x ATR alcanzado. Asegurando entrada.")
 
 
                 # B. LÓGICA DE TRAILING STOP (Condicional)
                 if use_ts:
-                    if profit_points > (atr_points * ts_mult):
+                    # Trailing también retrasado temporalmente para dejar transpirar
+                    safe_ts_mult = max(2.0, ts_mult)
+                    
+                    if profit_points > (atr_points * safe_ts_mult):
                         # --- NEW: TRAILING AGRESIVO POR ADX ---
                         # Si la tendencia es muy fuerte (ADX > 35), pegamos el SL más al precio (1.2x ATR en vez de 3x)
                         # Obtenemos ADX de H1 (está en el DF de mtf_data, aquí recalculamos por simplicidad o usamos el del símbolo)
@@ -406,8 +442,8 @@ class PSTExecutor:
                             adx_val = adx_df['ADX_14'].iloc[-1]
                         
                         mult = ts_mult
-                        if adx_val > 35:
-                            mult = 1.2 # Muy pegado para proteger ante giro violento
+                        if adx_val > 40: # ADX Endurecido a 40 para ser exigentes
+                            mult = 1.5 # Relajado
                             logger.debug(f"⚡ [AGGRESSIVE TRAIL] {symbol} ADX: {adx_val:.1f}. Ajustando multiplicador a {mult}")
                         
                         trail_sl = current_price - (atr_points * mult * s_info.point) if p_type == "BUY" else current_price + (atr_points * mult * s_info.point)
@@ -456,6 +492,32 @@ class PSTExecutor:
                          else:
                              logger.info(f"✅ [SCALPER EXIT DONE] {symbol} ticket {ticket} cerrado por EMA21.")
                          continue # Siguiente posición, esta ya se cerró
+
+                if "PST_PST-Scalper-Active" in p.comment:
+                    from ..strategies.pst_scalper_active import PSTScalperActive
+                    active_strat = PSTScalperActive()
+                    mtf_data_exit = {"m5": df, "m1": await fetch_rates_async(symbol, 1, 50)}
+                    if active_strat.check_exit_signal(mtf_data_exit, p_type):
+                         logger.info(f"🛑 [ACTIVE EXIT] {symbol} (Ticket: {ticket}) - Reversión EMA.")
+                         request = {
+                             "action": mt5.TRADE_ACTION_DEAL,
+                             "position": ticket,
+                             "symbol": symbol,
+                             "volume": p.volume,
+                             "type": mt5.ORDER_TYPE_SELL if p_type == "BUY" else mt5.ORDER_TYPE_BUY,
+                             "price": mt5.symbol_info_tick(symbol).bid if p_type == "BUY" else mt5.symbol_info_tick(symbol).ask,
+                             "deviation": 20,
+                             "magic": p.magic,
+                             "comment": f"ACTIVE_EMA_EXIT_{ticket}",
+                             "type_time": mt5.ORDER_TIME_GTC,
+                             "type_filling": mt5.ORDER_FILLING_IOC,
+                         }
+                         res = mt5.order_send(request)
+                         if res.retcode != mt5.TRADE_RETCODE_DONE:
+                             logger.error(f"❌ Error cerrando por reversión (Active): {res.comment}")
+                         else:
+                             logger.info(f"✅ [ACTIVE EXIT DONE] {symbol} ticket {ticket} cerrado.")
+                         continue
 
                 elif "PST_PST-Mean-Reversion" in p.comment:
                     from ..strategies.pst_mean_reversion import PSTMeanReversion

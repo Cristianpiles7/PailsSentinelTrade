@@ -11,6 +11,7 @@ from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
 from ..strategies.pst_liquidity_hunter import PSTLiquidityHunter # FASE 55
 from ..strategies.pst_scalper_pro import PSTScalperPro # NEW FASE 68
+from ..strategies.pst_scalper_active import PSTScalperActive # NEW SCALPING V2
 from ..strategies.pst_ai_oracle import PSTAIOracle # RESTORED
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
@@ -55,6 +56,7 @@ class SymbolTask:
         self.mean_reversion = PSTMeanReversion()
         self.liquidity_hunter = PSTLiquidityHunter()
         self.scalper_pro = PSTScalperPro()
+        self.scalper_active = PSTScalperActive()
         
         # IA Dinámica (Selector por Símbolo)
         # Motor de IA Oráculo (Multi-Instancia para Competición)
@@ -68,6 +70,7 @@ class SymbolTask:
             self.mean_reversion,
             self.liquidity_hunter,
             self.scalper_pro,
+            self.scalper_active,
             self.ai_oracle_gemini,
             self.ai_oracle_groq,
             self.ai_oracle_ollama
@@ -146,7 +149,7 @@ class SymbolTask:
             try:
                 # 1. Obtener Datos Multi-Timeframe (M1, M5, M15, H1, H4)
                 # Si una de las estrategias activas es SCALPER, priorizamos M1
-                needs_m1 = any(s.STRATEGY_NAME == "PST-Scalper-Pro" for s in self.strategies)
+                needs_m1 = any(s.STRATEGY_NAME in ["PST-Scalper-Pro", "PST-Scalper-Active"] for s in self.strategies)
                 mtf_data = await get_mtf_data_async(self.symbol, include_m1=needs_m1)
                 mtf_data['symbol'] = self.symbol # Inyectar símbolo para estrategias
                 
@@ -384,6 +387,7 @@ class SymbolTask:
                         "PST-EMA-Flow": "EMA Flow",
                         "PST-Mean-Reversion": "Mean Reversion",
                         "PST-Scalper-Pro": "Scalp",
+                        "PST-Scalper-Active": "Scalper V2",
                         "PST-AI-Oracle-gemini": "🤖 IA Gemini",
                         "PST-AI-Oracle-groq": "🚀 IA Groq",
                         "PST-AI-Oracle-ollama": "🏠 IA Ollama"

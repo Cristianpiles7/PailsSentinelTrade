@@ -92,8 +92,8 @@ STRATEGY_CATEGORIES = {
     "PST-EMA-Flow": "CORE",
     "PST-Channel-Master": "CORE",
     "PST-Mean-Reversion": "CORE",
-    "PST-Liquidity-Hunter": "CORE",
     "PST-Scalper-Pro": "SCALPING",
+    "PST-Scalper-Active": "SCALPING",
     "PST-AI-Oracle-gemini": "AI",
     "PST-AI-Oracle-groq": "AI",
     "PST-AI-Oracle-ollama": "AI"
@@ -113,7 +113,7 @@ ENABLED_STRATEGIES = [
     "PST-TrendMaster", # NEW: Activada por defecto v1.8.6
     "PST-Channel-Master",
     "PST-Scalper-Pro", # NEW
-    "PST-Liquidity-Hunter", # NEW SMC Order Blocks
+    "PST-Scalper-Active", # NEW V2
     "PST-AI-Oracle-gemini",
     "PST-AI-Oracle-groq",
     "PST-AI-Oracle-ollama"

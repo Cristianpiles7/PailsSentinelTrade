@@ -1691,7 +1691,7 @@ function App() {
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
                           <div className="flex gap-1 mt-0.5">
-                            {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Liquidity-Hunter"].map(strat => {
+                            {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
                               const score = s.factors_map?.[strat]?.score || 0;
                               return (
                                 <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
@@ -1812,7 +1812,7 @@ function App() {
 
                     {/* Core Strategies Scores */}
                     <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Liquidity-Hunter"].map(strat => {
+                      {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
                         const score = s.factors_map?.[strat]?.score || 0;
                         const label = strat.replace("PST-", "").replace("Scalper-Pro", "Scalp").replace("TrendMaster", "Trend Master").replace("EMA-Flow", "Flow").replace("Liquidity-Hunter", "Liq-Hunter").toUpperCase();
                         return (
@@ -3230,11 +3230,11 @@ function App() {
                     "PST-EMA-Flow": "EMA Flow",
                     "PST-TrendMaster": "Trend Master",
                     "PST-Scalper-Pro": "Scalper Pro",
-                    "PST-Liquidity-Hunter": "Liquidity Hunter"
+                    "PST-Scalper-Active": "Scalper V2"
                   };
 
                   // Obtener solo las estrategias CORE solicitadas: EMA Flow, TrendMaster, Scalper Pro y Liquidity Hunter
-                  const CORE_STRATS = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Liquidity-Hunter"];
+                  const CORE_STRATS = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Scalper-Active"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
@@ -3420,15 +3420,15 @@ function App() {
                                       type="text"
                                       value={stratData?.tp_mult || ""}
                                       placeholder={params.tp_mult}
-                                      readOnly={strat === "PST-Scalper-Pro"}
-                                      title={(strat === "PST-Scalper-Pro") ? "Usa TP Técnico" : "TP Multiplier"}
+                                      readOnly={strat.includes("PST-Scalper")}
+                                      title={(strat.includes("PST-Scalper")) ? "Usa TP Técnico" : "TP Multiplier"}
                                       onClick={(e) => {
-                                        if (strat === "PST-Scalper-Pro") {
+                                        if (strat === "PST-Scalper-Pro" || strat === "PST-Scalper-Active") {
                                           // Optional: Show a toast here explaining it uses technical TP
                                         }
                                       }}
                                       onChange={(e) => updateStrategyConfig(s.symbol, strat, 'tp_mult', parseFloat(e.target.value) || null)}
-                                      className={`w-3 bg-transparent outline-none text-center ${(strat === "PST-Scalper-Pro") ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
+                                      className={`w-3 bg-transparent outline-none text-center ${(strat.includes("PST-Scalper")) ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
                                     />
                                   </div>
                                 </div>
