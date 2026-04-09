@@ -70,7 +70,7 @@ const calculateRSI = (data, period) => {
     return result;
 };
 
-export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
+export function TradingChart({ data, symbol, timeframe, activeTrade, replayTrade }) {
     const chartContainerRef = useRef();
     const chartRef = useRef();
     const seriesRef = useRef({});
@@ -517,6 +517,73 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
         // No manual resize needed with autoSize: true
         return () => { };
     }, [data, activeTrade, symbol, replayTrade]);
+
+    const lastCandleRef = useRef(null);
+
+    // Sincronizar la base de la vela cuando cambia el historial
+    useEffect(() => {
+        if (data && data.length > 0) {
+            lastCandleRef.current = { ...data[data.length - 1] };
+        }
+    }, [data]);
+
+    // 4. Inyección de Ticks Pro (Latency Zero - Bypassing React)
+    useEffect(() => {
+        const getTimeframeSeconds = (tf) => {
+            const unit = tf[0];
+            const val = parseInt(tf.substring(1));
+            if (unit === 'M') return val * 60;
+            if (unit === 'H') return val * 3600;
+            if (unit === 'D') return 86400;
+            return 60;
+        };
+
+        const handleTick = (e) => {
+            const msg = e.detail;
+            if (!msg || !symbol) return;
+            
+            // Normalización para soportar sufijos (.m, .cash, etc.)
+            const msgSym = msg.symbol.toUpperCase().split('.')[0];
+            const activeSym = symbol.toUpperCase().split('.')[0];
+            if (msgSym !== activeSym) return;
+
+            if (!seriesRef.current?.candlestick || !lastCandleRef.current) return;
+
+            const candlestickSeries = seriesRef.current.candlestick;
+            const currentCandle = lastCandleRef.current;
+            
+            const interval = getTimeframeSeconds(timeframe || 'M1');
+            
+            // Usar el tiempo del broker si existe, si no, respaldo local
+            const nowSeconds = msg.time ? Math.floor(msg.time / 1000) : Math.floor(Date.now() / 1000);
+            const candleStartTime = Math.floor(nowSeconds / interval) * interval;
+
+            if (candleStartTime > currentCandle.time) {
+                const newCandle = {
+                    time: candleStartTime,
+                    open: msg.bid,
+                    high: msg.bid,
+                    low: msg.bid,
+                    close: msg.bid
+                };
+                lastCandleRef.current = newCandle;
+                candlestickSeries.update(newCandle);
+                console.info(`[Chart] New Candle Core: ${symbol} @ ${candleStartTime}`);
+            } else {
+                const updatedCandle = {
+                    ...currentCandle,
+                    high: Math.max(currentCandle.high, msg.bid),
+                    low: Math.min(currentCandle.low, msg.bid),
+                    close: msg.bid
+                };
+                lastCandleRef.current = updatedCandle;
+                candlestickSeries.update(updatedCandle);
+            }
+        };
+
+        window.addEventListener('pst-tick', handleTick);
+        return () => window.removeEventListener('pst-tick', handleTick);
+    }, [symbol, timeframe]);
 
     // Handle Clicks, Mouse Move and Panning for SVG Drawing
     useEffect(() => {

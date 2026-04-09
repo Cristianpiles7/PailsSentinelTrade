@@ -105,6 +105,7 @@ function App() {
 
 
   const [ohlc, setOhlc] = useState([])
+  const lastUIUpdatesRef = useRef({}); // Mapa de tiempos por símbolo
 
 
 
@@ -203,11 +204,111 @@ function App() {
     return () => clearInterval(timer)
   }, [])
 
-  // ENGINE: Sincronización Automática (FASE 43)
+  // --- SENTINEL V2 WEBSOCKET ENGINE (FASE REAL-TIME) ---
+  const wsRef = useRef(null);
+  const selectedSymbolRef = useRef(selectedSymbol);
+
+  // Sincronizar la referencia con el estado
+  useEffect(() => {
+    selectedSymbolRef.current = selectedSymbol;
+  }, [selectedSymbol]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    // Carga inicial inmediata
+    const connectWS = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = import.meta.env.DEV ? `ws://127.0.0.1:8000/ws` : `${protocol}//${window.location.host}/ws`;
+      
+      console.info(`🔌 Connecting to Sentinel V2 Stream: ${wsUrl}`);
+      const socket = new WebSocket(wsUrl);
+      wsRef.current = socket;
+
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          
+          if (msg.type === "TICK") {
+            // 1. DISPATCH ULTRA-RÁPIDO (Cero Latencia para Gráficos)
+            window.dispatchEvent(new CustomEvent('pst-tick', { detail: msg }));
+
+            // 2. ACTUALIZAR CARDS & INTEL (Throttling Inteligente por Símbolo)
+            const now = Date.now();
+            const isSelected = msg.symbol === selectedSymbolRef.current;
+            const threshold = isSelected ? 40 : 500;
+            
+            const lastUpdate = lastUIUpdatesRef.current[msg.symbol] || 0;
+            
+            if (now - lastUpdate > threshold) {
+              setSymbols(prev => prev.map(s => 
+                s.symbol === msg.symbol ? { ...s, price: msg.bid } : s
+              ));
+              lastUIUpdatesRef.current[msg.symbol] = now;
+            }
+          }
+          
+          if (msg.type === "SIGNAL") {
+            addToast(`[V2] ${msg.strategy}: ${msg.symbol} ${msg.direction} (${msg.score}%)`, 'info');
+            setSymbols(prev => prev.map(s => 
+              s.symbol === msg.symbol ? { ...s, score: msg.score, signal_direction: msg.direction } : s
+            ));
+          }
+
+          if (msg.type === "TELEMETRY_UPDATE") {
+            setSymbols(prev => prev.map(s => {
+              if (msg.data && msg.data[s.symbol]) {
+                return { ...s, telemetry: msg.data[s.symbol] };
+              }
+              return s;
+            }));
+          }
+
+          if (msg.type === "RADAR") {
+            setSymbols(prev => prev.map(s => {
+              if (s.symbol === msg.symbol) {
+                // Asegurar que factors_map existe y se actualiza reactivamente
+                const currentFactors = s.factors_map || {};
+                const newFactors = { 
+                  ...currentFactors, 
+                  [msg.strategy]: { score: msg.score, direction: msg.direction } 
+                };
+                
+                // Calcular score global como el máximo de las estrategias activas
+                const scores = Object.values(newFactors).map(f => f.score || 0);
+                const maxScore = Math.max(...scores, 0);
+                
+                return { 
+                  ...s, 
+                  factors_map: newFactors, 
+                  score: maxScore > (s.score || 0) ? maxScore : s.score 
+                };
+              }
+              return s;
+            }));
+          }
+
+          if (msg.type === "ORDER") {
+            addToast(`ORDER UPDATE: ${msg.symbol} ${msg.status}`, msg.status === 'REJECTED' ? 'error' : 'success');
+            fetchData(); // Recargar datos pesados tras un cambio de orden
+          }
+
+        } catch (err) { console.error("WS Message Error:", err); }
+      };
+
+      socket.onclose = () => {
+        console.warn("🔌 WS Disconnected. Retrying in 5s...");
+        setTimeout(connectWS, 5000);
+      };
+    };
+
+    connectWS();
+    return () => wsRef.current?.close();
+  }, [isAuthenticated]);
+
+  // ENGINE: Sincronización de Respaldo (Polling lento)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
     fetchData();
     fetchBotConfig();
     fetchPerformance();
@@ -216,18 +317,15 @@ function App() {
     fetchMatrix();
     fetchNews();
 
-    // Polling rápido cada 3 segundos para datos críticos
+    // Polling de respaldo CADA 15 SEGUNDOS (La V2 ya usa WebSockets)
     const syncTimer = setInterval(() => {
       fetchData();
-      fetchLogs();
-    }, 3000);
+    }, 15000);
 
-    // Polling medio cada 10 segundos para datos analíticos e históricos
     const analyticsTimer = setInterval(() => {
       fetchAnalytics();
       fetchHistory();
-      fetchNews();
-    }, 10000);
+    }, 30000);
 
     return () => {
       clearInterval(syncTimer);
@@ -2084,6 +2182,7 @@ function App() {
                   <TradingChart
                     data={ohlc}
                     symbol={selectedSymbol}
+                    timeframe={selectedTimeframe}
                     activeTrade={trades.find(t => t.symbol === selectedSymbol)}
                     replayTrade={replayTrade}
                   />
