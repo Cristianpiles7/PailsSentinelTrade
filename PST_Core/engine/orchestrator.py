@@ -9,7 +9,6 @@ from ..strategies.pst_trendmaster import PSTTrendMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
-from ..strategies.pst_liquidity_hunter import PSTLiquidityHunter # FASE 55
 from ..strategies.pst_scalper_pro import PSTScalperPro # NEW FASE 68
 from ..strategies.pst_scalper_active import PSTScalperActive # NEW SCALPING V2
 from ..strategies.pst_ai_oracle import PSTAIOracle # RESTORED
@@ -54,7 +53,6 @@ class SymbolTask:
         self.trend_master = PSTTrendMaster()
         self.ema_flow = PSTEMAFlow()
         self.mean_reversion = PSTMeanReversion()
-        self.liquidity_hunter = PSTLiquidityHunter()
         self.scalper_pro = PSTScalperPro()
         self.scalper_active = PSTScalperActive()
         
@@ -68,7 +66,6 @@ class SymbolTask:
         self._all_strategies = [
             self.ema_flow, 
             self.mean_reversion,
-            self.liquidity_hunter,
             self.scalper_pro,
             self.scalper_active,
             self.ai_oracle_gemini,

@@ -112,6 +112,7 @@ ENABLED_STRATEGIES = [
     "PST-EMA-Flow",
     "PST-TrendMaster", # NEW: Activada por defecto v1.8.6
     "PST-Channel-Master",
+    "PST-Mean-Reversion", # RESTAURED: Rubber-Band
     "PST-Scalper-Pro", # NEW
     "PST-Scalper-Active", # NEW V2
     "PST-AI-Oracle-gemini",

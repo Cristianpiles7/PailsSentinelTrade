@@ -40,7 +40,6 @@ class PSTExecutor:
             "Canal Maestro (T. Híbrido)": "PST-Channel-Master",
             "TrendMaster (Line Breakout)": "PST-TrendMaster",
             "Reversión a la Media (Rangos)": "PST-Mean-Reversion",
-            "Liquidez Sentinel (Institucional)": "PST-Liquidity-Hunter",
             "Scalper V2": "PST-Scalper-Active",
             "Scalp": "PST-Scalper-Pro" # Alias de seguridad (v1.8.7)
         }
@@ -188,6 +187,13 @@ class PSTExecutor:
             sl_points = min_sl_points
             # Ajustamos sl_price para consistencia
             sl_price = price - min_sl_dist if signal_type == "BUY" else price + min_sl_dist
+            
+        # --- HARD CAP RIESGO: MEAN REVERSION ---
+        if "Mean-Reversion" in raw_name:
+            if risk_mode == "PCT" or (risk_mode == "VAL" and risk_val > 5.0):
+                logger.info(f"🛡️ [MEAN-REV] Forzando riesgo nominal máximo a 5.0 EUR (Protección por defecto)")
+                risk_mode = "VAL"
+                risk_val = 5.0
         
         lot = self.portfolio.calculate_lot_size(
             acc["balance"], 

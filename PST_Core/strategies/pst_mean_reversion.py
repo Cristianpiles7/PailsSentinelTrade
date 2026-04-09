@@ -36,6 +36,22 @@ class PSTMeanReversion:
         Calcula señales de reversión a la media basadas en Bollinger Bands (2.5 dev) + RSI.
         Implementa un TP AGRESIVO que se cierra ligeramente antes de la media para asegurar el beneficio.
         """
+        # ESCUDO ANTI-TENDENCIA (V1.8.9 - Rubber Band Mode)
+        if current_regime == "TREND":
+            return {
+                "score": 0, 
+                "signal": "NEUTRAL",
+                "entry": 0,
+                "atr": 0,
+                "metadata": {
+                    "mode": "BLOQUEO_TENDENCIA",
+                    "strategy": self.STRATEGY_NAME,
+                    "direction": 0,
+                    "gate_failed": True,
+                    "factors_detailed": [{"k": "Estado", "v": "Mercado en Tendencia (Bloqueo Reversión)", "score": 0}]
+                }
+            }
+
         # 1. Adaptador de Datos
         df = None
         if isinstance(data_input, dict):

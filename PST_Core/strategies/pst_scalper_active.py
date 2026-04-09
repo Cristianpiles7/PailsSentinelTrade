@@ -55,7 +55,7 @@ class PSTScalperActive:
         """
         Scalper V2 (Active): EMA Breakout Relajado + Stalking re-activado para alta frecuencia.
         """
-        if current_regime == "VOLATILE":
+        if current_regime in ["VOLATILE", "RANGE"]:
             return {
                 "score": 0, 
                 "signal": "NEUTRAL", 
@@ -199,9 +199,11 @@ class PSTScalperActive:
                 if _lower_wick > (_body * 1.5): recent_buy_abs = True
                 if _upper_wick > (_body * 1.5): recent_sell_abs = True
 
-        # Ignición reducida (0.35 en lugar de 0.5)
-        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.35)
-        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.35)
+        # Ignición reducida (0.35 ATR) y Filtro Anti-Rechazo (Wicks)
+        upper_wick = c_high - max(c_open, c_price)
+        lower_wick = min(c_open, c_price) - c_low
+        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.35) and (upper_wick < body_size)
+        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.35) and (lower_wick < body_size)
         
         # Volumen adaptativo según perfil
         has_volume = rel_vol > profile['vol_requisite']
@@ -242,7 +244,7 @@ class PSTScalperActive:
         # Evaluamos
         if is_breakout_up:
             mode_label = f"BREAKOUT_UP_ACTIVE_{tf_label}"
-            score = 85 if confirmed_uptrend else 75
+            score = 85 if confirmed_uptrend else 50 # Bloqueo Estricto Contra-Tendencia
             entry = 1
             factors_detailed.append({"k": "TF", "v": tf_label, "score": 0})
             factors_detailed.append({"k": "Estrategia", "v": f"ROTURA ↑ ({tf_label})", "score": score})
@@ -263,7 +265,7 @@ class PSTScalperActive:
             
         elif is_breakout_down:
             mode_label = f"BREAKOUT_DN_ACTIVE_{tf_label}"
-            score = 85 if confirmed_downtrend else 75
+            score = 85 if confirmed_downtrend else 50 # Bloqueo Estricto Contra-Tendencia
             entry = -1
             factors_detailed.append({"k": "TF", "v": tf_label, "score": 0})
             factors_detailed.append({"k": "Estrategia", "v": f"ROTURA ↓ ({tf_label})", "score": score})

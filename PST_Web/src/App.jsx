@@ -1691,7 +1691,7 @@ function App() {
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
                           <div className="flex gap-1 mt-0.5">
-                            {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
+                            {["PST-EMA-Flow", "PST-Mean-Reversion", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
                               const score = s.factors_map?.[strat]?.score || 0;
                               return (
                                 <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
@@ -1812,9 +1812,9 @@ function App() {
 
                     {/* Core Strategies Scores */}
                     <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      {["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
+                      {["PST-EMA-Flow", "PST-Mean-Reversion", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
                         const score = s.factors_map?.[strat]?.score || 0;
-                        const label = strat.replace("PST-", "").replace("Scalper-Pro", "Scalp").replace("TrendMaster", "Trend Master").replace("EMA-Flow", "Flow").replace("Liquidity-Hunter", "Liq-Hunter").toUpperCase();
+                        const label = strat.replace("PST-", "").replace("Scalper-Active", "Scalp V2").replace("Scalper-Pro", "Scalp").replace("EMA-Flow", "Flow").replace("Mean-Reversion", "Reversion").toUpperCase();
                         return (
                           <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
                             <span className="text-[6px] font-black text-zinc-600 mb-0.5">{label}</span>
@@ -3296,7 +3296,7 @@ function App() {
                             const stratData = symbolStrats[strat];
 
                             // Lógica de activación por defecto
-                            const isCore = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Liquidity-Hunter"].includes(strat); // TrendMaster y SMC activa por defecto
+                            const isCore = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Mean-Reversion"].includes(strat); // Trend y Reversion por defecto
                             const isEnabled = stratData ? (!!stratData.is_active) : isCore;
 
                             // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)

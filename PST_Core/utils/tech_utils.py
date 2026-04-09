@@ -252,12 +252,12 @@ def get_asset_class(symbol: str) -> str:
         return "METAL"
     
     # INDICES
-    indices_keywords = ["US500", "SPX", "NAS100", "US30", "GER30", "DAX", "NVDA", "TSLA", "AAPL", "MSFT"]
+    indices_keywords = ["US500", "SPX", "NAS100", "US30", "GER30", "DAX", "EU50", "STOXX50", "NVDA", "TSLA", "AAPL", "MSFT"]
     if any(k in s for k in indices_keywords):
         return "INDEX"
         
     # CRYPTO
-    crypto_keywords = ["BTC", "ETH", "SOL", "ADA", "XRP", "LTC", "DOT", "UNI", "LINK"]
+    crypto_keywords = ["BTC", "ETH", "SOL", "ADA", "XRP", "LTC", "DOT", "UNI", "LINK", "XLM", "MATIC"]
     if any(k in s for k in crypto_keywords):
         return "CRYPTO"
     
