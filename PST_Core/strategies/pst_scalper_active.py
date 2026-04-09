@@ -24,28 +24,28 @@ class PSTScalperActive:
         # Perfiles Dinámicos de Activos
         self.ASSET_PROFILES = {
             "CRYPTO": {
-                "vol_requisite": 1.1,      
-                "min_rr": 2.0,             
-                "hysteresis_atr": 0.45,    
-                "sl_margin_atr": 2.0       
+                "vol_requisite": 1.05,      
+                "min_rr": 1.5,             
+                "hysteresis_atr": 0.3,    
+                "sl_margin_atr": 1.5       
             },
             "METAL": {
-                "vol_requisite": 1.5,      
+                "vol_requisite": 1.1,      
                 "min_rr": 1.25,            
-                "hysteresis_atr": 0.15,    
-                "sl_margin_atr": 2.5       
+                "hysteresis_atr": 0.1,    
+                "sl_margin_atr": 2.0       
             },
             "INDEX": {
-                "vol_requisite": 1.3,
-                "min_rr": 1.4,
-                "hysteresis_atr": 0.25,
-                "sl_margin_atr": 3.0
+                "vol_requisite": 1.05,
+                "min_rr": 1.3,
+                "hysteresis_atr": 0.15,
+                "sl_margin_atr": 2.5
             },
             "FOREX": {
-                "vol_requisite": 1.2,
+                "vol_requisite": 1.02,     # Solo un 2% de volumen extra
                 "min_rr": 1.3,
-                "hysteresis_atr": 0.25,
-                "sl_margin_atr": 2.0
+                "hysteresis_atr": 0.15,
+                "sl_margin_atr": 1.5
             }
         }
         # Fallback profile por si no se identifica
@@ -55,15 +55,10 @@ class PSTScalperActive:
         """
         Scalper V2 (Active): EMA Breakout Relajado + Stalking re-activado para alta frecuencia.
         """
-        if current_regime in ["VOLATILE", "RANGE"]:
-            return {
-                "score": 0, 
-                "signal": "NEUTRAL", 
-                "metadata": {
-                    "mode": "BLOQUEO_VOLATILIDAD",
-                    "factors_detailed": [{"k": "Estado", "v": "Mercado Cerrado o Volátil (Bloqueo)", "score": 0}]
-                }
-            }
+        # Filtro de Régimen Relajado: Ya no bloqueamos totalmente, 
+        # dejamos que la lógica interna de la estrategia decida según el volumen y la vela.
+        if current_regime == "OFFLINE":
+            return {"score": 0, "signal": "NEUTRAL", "metadata": {"mode": "OFFLINE", "factors_detailed": []}}
 
         df_m1 = mtf_data.get('m1') if isinstance(mtf_data, dict) else mtf_data
         df_m3 = mtf_data.get('m3')
@@ -211,8 +206,10 @@ class PSTScalperActive:
         dist_to_ema = abs(c_price - c_ema21)
         anti_fomo_ok = dist_to_ema <= curr_atr * 2.5 # Relajado de 1.5 a 2.5
         
-        was_below_ema = all(df_base['close'].iloc[-3:-1] <= ema21.iloc[-3:-1]) # Solo pide 2 velas por debajo
-        was_above_ema = all(df_base['close'].iloc[-3:-1] >= ema21.iloc[-3:-1])
+        # Filtro de Asentamiento (Settlement): Evita entrar en 'ruido' o mercados picados.
+        # Exigimos que el precio haya estado consolidando al otro lado de la EMA por al menos 5 velas.
+        was_below_ema = all(df_base['close'].iloc[-6:-1] <= ema21.iloc[-6:-1]) 
+        was_above_ema = all(df_base['close'].iloc[-6:-1] >= ema21.iloc[-6:-1])
         
         # Hysteresis dinámica por clase de activo
         hysteresis = curr_atr * profile['hysteresis_atr']
