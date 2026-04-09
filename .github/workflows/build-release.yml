@@ -75,9 +75,11 @@ jobs:
       - name: Prepare Artifacts
         shell: pwsh
         run: |
+          $ver = Get-Content "version.txt" -Raw
+          $ver = $ver.Trim()
           New-Item -ItemType Directory -Force -Path release_assets
-          Copy-Item "dist\PST_MASTER.exe" -Destination "release_assets\" -ErrorAction Stop
-          Copy-Item "dist\PST_LAUNCHER.exe" -Destination "release_assets\" -ErrorAction Stop
+          Copy-Item "dist\PST_MASTER.exe" -Destination "release_assets\PST_MASTER_$($ver).exe" -ErrorAction Stop
+          Copy-Item "dist\PST_LAUNCHER.exe" -Destination "release_assets\PST_LAUNCHER_$($ver).exe" -ErrorAction Stop
           Copy-Item "version.txt" -Destination "release_assets\" -ErrorAction Stop
 
       - name: Upload to GitHub Release
