@@ -563,6 +563,11 @@ class SymbolTask:
                             elif strat_type == "ALL":
                                 is_strat_in_regime = True
                             
+                            # Mean Reversion: Permitido en Rango y también en Volátil (Reversión de picos explosivos)
+                            if "PSTMeanReversion" in type(strat).__name__:
+                                if mode in [RegimeMode.RANGE, RegimeMode.VOLATILE]:
+                                    is_strat_in_regime = True
+
                             # EMA Flow: Estrictamente Tendencia (PROHIBIDO en Volátil o Rango)
                             if "PSTEMAFlow" in type(strat).__name__ and mode != RegimeMode.TREND:
                                 is_strat_in_regime = False
@@ -576,7 +581,12 @@ class SymbolTask:
                             if not is_strat_in_regime and s_score >= 70:
                                 if s_result.get("entry", 0) != 0:
                                     await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_REGIME", s_score, price, blocked_reason="REGIMEN")
-                                s_score = 60 # Visual Cap (User Req)
+                                
+                                # Solo capamos el score para trading real, pero intentamos mantener la visibilidad en el radar
+                                # si el score es MUY alto (>85), para que el usuario sea consciente del setup extremo.
+                                if s_score < 85:
+                                    s_score = 60 # Visual Cap (User Req) para evitar ruido
+                                
                                 s_meta["blocked_reason"] = "REGIMEN"
 
                             # 2. Actualizar mejor score para el HUD
@@ -618,8 +628,25 @@ class SymbolTask:
                                         open_positions = await get_positions_async()
                                         can_trade = await self.portfolio.can_open_trade(self.symbol, sig_type_str, open_positions, s_name)
                                         
-                                        if can_trade and s_score >= 70:
-                                            # FIRE!
+                                        if can_trade:
+                                            # --- SAFE REVERSAL LOGIC (SAR) ---
+                                            # Si hay una posición abierta en la dirección CONTRARIA, exigimos Score >= 85 para girar.
+                                            has_opposite = False
+                                            if open_positions:
+                                                for p in open_positions:
+                                                    if p.symbol == self.symbol:
+                                                        p_is_buy = p.type == 0
+                                                        p_is_sell = p.type == 1
+                                                        if (sig_type_str == "BUY" and p_is_sell) or (sig_type_str == "SELL" and p_is_buy):
+                                                            has_opposite = True
+                                                            break
+                                            
+                                            min_score = 85 if has_opposite else 70
+                                            
+                                            if s_score >= min_score:
+                                                # FIRE!
+                                                if has_opposite:
+                                                    logger.info(f"🔄 [SAFE REVERSAL] {self.symbol} disparando Giro Seguro (Score {s_score} >= 85).")
                                             logger.info(f"⚡ [TRADE] {self.symbol} {sig_type_str} by {s_name} (Score: {s_score})")
                                             
                                             # Bloc de seguridad in-flight (PST v7.0)

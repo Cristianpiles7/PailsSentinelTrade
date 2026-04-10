@@ -192,7 +192,12 @@ class PortfolioManager:
                         is_risk_free = True
                         
                     # Solo piramidamos a favor de la misma dirección si la original es segura
-                    # EXCEPCIÓN: Desactivamos piramidado para SCALPING para evitar sobre-exposición
+                    # EXCEPCIÓN 1: Permitimos reversiones (señal contraria) para que el Orquestador decida si gira la posición.
+                    if (is_buy and sig_is_sell) or (is_sell and sig_is_buy):
+                        logger.info(f"🔄 [REVERSAL DETECTED] {symbol} tiene señal contraria. Permitiendo evaluación de Giro Seguro.")
+                        continue 
+
+                    # EXCEPCIÓN 2: Desactivamos piramidado para SCALPING para evitar sobre-exposición
                     is_scalper = "Scalper" in strategy_name if strategy_name else False
                     if is_risk_free and ((is_buy and sig_is_buy) or (is_sell and sig_is_sell)) and not is_scalper:
                         logger.info(f"📈 [PYRAMIDING] Permitiendo reingreso en {symbol}. La posición original ya está en Break-Even.")
