@@ -214,12 +214,18 @@ class PSTScalperActive:
         # Hysteresis dinámica por clase de activo
         hysteresis = curr_atr * profile['hysteresis_atr']
         
+        # Protección Dinámica contra Ruido Volátil
+        curr_regime = kwargs.get('current_regime', 'TREND')
+        is_volatile = curr_regime == "VOLATILE"
+        adx_ok = True if not is_volatile else (curr_adx > 25)
+        
         is_breakout_up = (
             was_below_ema and 
             (c_price > c_ema21 + hysteresis) and 
             is_ignition_bull and 
             anti_fomo_ok and
-            has_volume # Exigimos volumen real para validar rotura
+            has_volume and
+            adx_ok # Filtro Direccional en Volatilidad
         )
         
         is_breakout_down = (
@@ -227,7 +233,8 @@ class PSTScalperActive:
             (c_price < c_ema21 - hysteresis) and 
             is_ignition_bear and 
             anti_fomo_ok and
-            has_volume # Exigimos volumen real para validar rotura
+            has_volume and
+            adx_ok # Filtro Direccional en Volatilidad
         )
         
         # --- NUEVA LÓGICA DE STALKING (DESHABILITADA TRAS AUDITORÍA) ---
@@ -253,7 +260,9 @@ class PSTScalperActive:
             
             # SL un poco más ajustado para operar rápido
             swing_low = df_base['low'].tail(10).min()
-            min_sl_dist = curr_atr * profile['sl_margin_atr'] 
+            # Dinámico: Si es volátil, le damos más aire al SL (+50%)
+            sl_multiplier = profile['sl_margin_atr'] * 1.5 if is_volatile else profile['sl_margin_atr']
+            min_sl_dist = curr_atr * sl_multiplier 
             target_price_sl = min(swing_low - (curr_atr * 0.1), c_price - min_sl_dist)
             
             sl_dist = c_price - target_price_sl
@@ -273,7 +282,9 @@ class PSTScalperActive:
             if recent_sell_abs: factors_detailed.append({"k": "VSA", "v": "Distribución Bajista Previa", "score": 5})
             
             swing_high = df_base['high'].tail(10).max()
-            min_sl_dist = curr_atr * profile['sl_margin_atr']
+            # Dinámico: Si es volátil, le damos más aire al SL (+50%)
+            sl_multiplier = profile['sl_margin_atr'] * 1.5 if is_volatile else profile['sl_margin_atr']
+            min_sl_dist = curr_atr * sl_multiplier
             target_price_sl = max(swing_high + (curr_atr * 0.1), c_price + min_sl_dist)
             
             sl_dist = target_price_sl - c_price
