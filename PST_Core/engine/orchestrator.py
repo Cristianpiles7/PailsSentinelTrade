@@ -647,7 +647,8 @@ class SymbolTask:
                                                 # FIRE!
                                                 if has_opposite:
                                                     logger.info(f"🔄 [SAFE REVERSAL] {self.symbol} disparando Giro Seguro (Score {s_score} >= 85).")
-                                            logger.info(f"⚡ [TRADE] {self.symbol} {sig_type_str} by {s_name} (Score: {s_score})")
+                                                
+                                                logger.info(f"⚡ [TRADE] {self.symbol} {sig_type_str} by {s_name} (Score: {s_score})")
                                             
                                             # Bloc de seguridad in-flight (PST v7.0)
                                             self.portfolio.register_in_flight(self.symbol)

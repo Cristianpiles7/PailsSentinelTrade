@@ -164,15 +164,11 @@ class PortfolioManager:
                 pos_is_buy = getattr(pos, 'type', -1) == 0
                 pos_is_sell = getattr(pos, 'type', -1) == 1
                 
-                # --- NEW: ANTI-HEDGING CATEGÓRICO ---
-                # Si tenemos una posición abierta en la MISMA clase de activo, pero en sentido contrario, bloqueamos la entrada.
-                # (Ej: Evitar Short ETH si ya hay Long BTC abierto, ya que están correlacionados).
-                # Excepción: Si es el mismiísimo símbolo, la cerramos en Executor.py, pero de mientras bloqueamos aquí a nivel general si no es el mismo.
-                if pos_class == target_class and pos_sym != target_sym:
-                    if (pos_is_buy and signal_type == "SELL") or (pos_is_sell and signal_type == "BUY"):
-                        logger.warning(f"🚫 [CORRELATION BLOCK] Bloqueando {signal_type} en {target_sym}. Conflicto de dirección con {pos_sym} (Clase: {pos_class}).")
-                        return False
-
+                # --- RELAXED: ANTI-HEDGING CATEGÓRICO REMOVIDO ---
+                # Ya no bloqueamos activos distintos (ej: BTC vs LINK) por ser de la misma clase.
+                # Solo bloquearemos si es el mismísimo símbolo (manejado abajo) o si el usuario
+                # define grupos de correlación explícitos.
+                
                 # Coincidencia exacta o parcial (ej: EURUSD vs EURUSD.cash)
                 if pos_sym == target_sym or target_sym in pos_sym or pos_sym in target_sym:
                     # --- PYRAMIDING LOGIC (FASE 55) ---
