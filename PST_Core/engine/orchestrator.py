@@ -12,6 +12,7 @@ from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
 from ..strategies.pst_scalper_pro import PSTScalperPro # NEW FASE 68
 from ..strategies.pst_scalper_active import PSTScalperActive # NEW SCALPING V2
 from ..strategies.pst_ai_oracle import PSTAIOracle # RESTORED
+from ..strategies.pst_manual import PSTManual # NEW MANUAL MODE
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
 from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES, DB_PATH
@@ -55,6 +56,7 @@ class SymbolTask:
         self.mean_reversion = PSTMeanReversion()
         self.scalper_pro = PSTScalperPro()
         self.scalper_active = PSTScalperActive()
+        self.manual_mode = PSTManual()
         
         # IA Dinámica (Selector por Símbolo)
         # Motor de IA Oráculo (Multi-Instancia para Competición)
@@ -68,6 +70,7 @@ class SymbolTask:
             self.mean_reversion,
             self.scalper_pro,
             self.scalper_active,
+            self.manual_mode,
             self.ai_oracle_gemini,
             self.ai_oracle_groq,
             self.ai_oracle_ollama
@@ -120,7 +123,7 @@ class SymbolTask:
             self.strategies = [s for s in self._all_strategies if s.STRATEGY_NAME in ENABLED_STRATEGIES]
 
     async def run(self):
-        logger.debug(f"🚀 Iniciando tarea para {self.symbol}")
+        logger.info(f"🔍 [MONITOR] Iniciando análisis para {self.symbol}")
         while self.running:
             # 0.1 Check for Daily Drawdown Lock (MOVED TO PortfolioManager.can_open_trade)
             # if await self.portfolio.is_daily_locked():
@@ -775,9 +778,12 @@ class SymbolTask:
                     if not is_market_open: status_msg = "⛔ [MERCADO CERRADO]"
                     logger.debug(f"{status_icon} {self.symbol:<10} | MODO: {mode:<10} | {status_msg}")
                 else:
-                    # aquí solo logueamos el estado general en debug
-                    df_m5_dbg = mtf_data.get('m5')
-                    logger.debug(f"{status_icon} {self.symbol:<10} | MODO: {mode:<10} | Precio: {df_m5_dbg['close'].iloc[-1] if df_m5_dbg is not None else 'N/A'}")
+                    # Log periódico de estado (cada 5 ciclos para no saturar)
+                    import random
+                    if random.random() < 0.2: # ~20% de probabilidad para latido suave
+                        df_m5_dbg = mtf_data.get('m5')
+                        price_now = df_m5_dbg['close'].iloc[-1] if df_m5_dbg is not None else 'N/A'
+                        logger.info(f"💓 [LATIDO] {self.symbol:<10} | Modo: {str(mode):<8} | Score: {current_score:>3} | Precio: {price_now}")
 
                 await asyncio.sleep(self.interval)
             except Exception as e:

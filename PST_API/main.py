@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -30,6 +30,51 @@ from dotenv import load_dotenv
 import logging
 from PST_Core.config import DB_PATH
 
+# --- WEBSOCKET MANAGER (FASE 46) ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                pass
+
+manager = ConnectionManager()
+
+# --- WS LOG HANDLER ---
+class WSLogHandler(logging.Handler):
+    def __init__(self, manager: ConnectionManager):
+        super().__init__()
+        self.manager = manager
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            payload = {
+                "type": "log",
+                "level": record.levelname,
+                "message": msg,
+                "source": record.name,
+                "timestamp": record.created
+            }
+            if asyncio.get_event_loop().is_running():
+                asyncio.create_task(self.manager.broadcast(payload))
+        except:
+            pass
+
+ws_handler = WSLogHandler(manager)
+ws_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
+
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PST_API")
@@ -43,12 +88,15 @@ async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
     await db.initialize()
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
-    logger.info(f"✅ Sentinel v1.9.4: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
+    logger.info(f"✅ Sentinel v1.9.5: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
     if not mt5.initialize():
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
     
     # Iniciar motor de trading en segundo plano (Re-integración unificada)
     try:
+        # Registrar el WSLogHandler en el logger root para capturar todo
+        logging.getLogger().addHandler(ws_handler)
+        
         from PST_Core.engine.orchestrator import start_v6
         # Símbolos por defecto si no hay en la DB
         default_symbols = ["US500.cash", "EU50.cash", "XAGUSD", "XAUUSD", "BTCUSD", "ETHUSD"]
@@ -60,7 +108,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="1.9.4",
+    version="1.9.5",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -95,6 +143,17 @@ async def login(req: LoginRequest):
     if req.password == WEB_PASSWORD:
         return {"token": WEB_PASSWORD, "status": "authenticated"}
     raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Mantener conexión viva
+            data = await websocket.receive_text()
+            # Podríamos procesar comandos desde el Dashboard aquí
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 # --- PERSISTENT PATH LOGIC (FASE 45) ---
 db = PSTDatabase(db_path=DB_PATH)
@@ -834,7 +893,7 @@ async def execute_manual_trade(order: ManualOrder):
         symbol = order.symbol.upper()
         
         if order.is_smart:
-            # --- MODO SMART: Cálculo automático ---
+            # --- MODO SMART: Cálculo automático optimizado ---
             tf_m5 = mt5.TIMEFRAME_M5
             rates = mt5.copy_rates_from_pos(symbol, tf_m5, 0, 50)
             if rates is None or len(rates) == 0:
@@ -843,26 +902,37 @@ async def execute_manual_trade(order: ManualOrder):
             import pandas as pd
             df = pd.DataFrame(rates)
             atr_s = ta.atr(df['high'], df['low'], df['close'], length=14)
-            if atr_s is None or atr_s.empty:
-                return APIResponse(status="error", message="ATR calculation failed")
-                
-            current_atr = float(atr_s.iloc[-1])
-            sl_atr = current_atr * 3.0
-            tp_atr = current_atr * 6.0
+            current_atr = float(atr_s.iloc[-1]) if atr_s is not None and not atr_s.empty else 0.0
+            
+            # Fallbacks base (ATR x 2.5 / 5.0)
+            sl_atr_fallback = current_atr * 2.5 if current_atr > 0 else 0
+            tp_atr_fallback = current_atr * 5.0 if current_atr > 0 else 0
+            
+            # Construir metadatos para el executor
+            trade_metadata = {
+                "risk_mode": "MONEY" if order.risk_amount else None,
+                "risk_value": order.risk_amount,
+                "target_price_sl": order.sl_price,
+                "target_price_tp": order.tp_price,
+                "rr_ratio": order.rr_ratio
+            }
+            # Limpiar Nones
+            trade_metadata = {k: v for k, v in trade_metadata.items() if v is not None}
             
             result = await executor.execute_trade(
                 symbol=symbol,
                 signal_type=order.action.upper(),
-                stop_loss_atr=sl_atr,
-                take_profit_atr=tp_atr,
+                stop_loss_atr=sl_atr_fallback,
+                take_profit_atr=tp_atr_fallback,
                 strategy_name="Web-Smart",
-                regime="MANUAL"
+                regime="MANUAL",
+                metadata=trade_metadata
             )
             
             if not result:
                 return APIResponse(status="error", message="Smart execution rejected by risk manager")
                 
-            return APIResponse(status="success", message=f"Smart {order.action} executed with SL/TP")
+            return APIResponse(status="success", message=f"Smart {order.action} executed with Risk Logic")
             
         else:
             # --- MODO SIMPLE: Solo volumen ---

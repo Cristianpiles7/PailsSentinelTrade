@@ -96,7 +96,8 @@ STRATEGY_CATEGORIES = {
     "PST-Scalper-Active": "SCALPING",
     "PST-AI-Oracle-gemini": "AI",
     "PST-AI-Oracle-groq": "AI",
-    "PST-AI-Oracle-ollama": "AI"
+    "PST-AI-Oracle-ollama": "AI",
+    "PST-Manual": "CORE"
 }
 
 # PARALLEL OPERATIVE LIMITS
@@ -117,5 +118,6 @@ ENABLED_STRATEGIES = [
     "PST-Scalper-Active", # NEW V2
     "PST-AI-Oracle-gemini",
     "PST-AI-Oracle-groq",
-    "PST-AI-Oracle-ollama"
+    "PST-AI-Oracle-ollama",
+    "PST-Manual"
 ]

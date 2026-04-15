@@ -207,81 +207,82 @@ class PSTMeanReversion:
         potential_buy = False
         potential_sell = False
         
-         # --- CANDLE CONFIRMATION (GATILLO DE SEGURIDAD) ---
-         is_bearish = close < c_open
-         is_bullish = close > c_open
-         
-         # --- 4.3 Puntuación Estructural Progresiva (%B) ---
-         # %B = (Precio - Lower) / (Upper - Lower)
-         bb_range = bb_upper - bb_lower if (bb_upper - bb_lower) > 0 else 0.0001
-         pct_b = (close - bb_lower) / bb_range
-         
-         trigger_confirmed = False
-         
-         if pct_b <= 0.2 or potential_buy: # Zona de compra (parte inferior)
-              signal_type = "BUY"
-              # Score base escala de 0 (en el medio 0.5) a 40 (tocando banda 0.0)
-              struct_score = int(max(0, min(45, (0.5 - pct_b) / 0.5 * 45)))
-              score += struct_score
-              factor_groups["ESTRUCTURA"] = {"k": "Estructura %B", "v": f"Zona Inf. ({int(pct_b*100)}%)", "score": struct_score}
-              
-              # RSI OS Progresivo (Empieza a puntuar antes de 30)
-              if rsi <= 40:
-                  rsi_pts = int(max(0, min(20, (40 - rsi) / 20 * 20)))
-                  score += rsi_pts
-                  factor_groups["RSI"] = {"k": "RSI", "v": f"Sobreventa ({int(rsi)})", "score": rsi_pts}
-              else:
-                  factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
+        # --- CANDLE CONFIRMATION (GATILLO DE SEGURIDAD) ---
+        c_open = df['open'].iloc[-1]
+        is_bearish = close < c_open
+        is_bullish = close > c_open
+        
+        # --- 4.3 Puntuación Estructural Progresiva (%B) ---
+        # %B = (Precio - Lower) / (Upper - Lower)
+        bb_range = bb_upper - bb_lower if (bb_upper - bb_lower) > 0 else 0.0001
+        pct_b = (close - bb_lower) / bb_range
+        
+        trigger_confirmed = False
+        
+        if pct_b <= 0.2 or potential_buy: # Zona de compra (parte inferior)
+             signal_type = "BUY"
+             # Score base escala de 0 (en el medio 0.5) a 40 (tocando banda 0.0)
+             struct_score = int(max(0, min(45, (0.5 - pct_b) / 0.5 * 45)))
+             score += struct_score
+             factor_groups["ESTRUCTURA"] = {"k": "Estructura %B", "v": f"Zona Inf. ({int(pct_b*100)}%)", "score": struct_score}
+             
+             # RSI OS Progresivo (Empieza a puntuar antes de 30)
+             if rsi <= 40:
+                 rsi_pts = int(max(0, min(20, (40 - rsi) / 20 * 20)))
+                 score += rsi_pts
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobreventa ({int(rsi)})", "score": rsi_pts}
+             else:
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
 
-              # GATILLOS (Bonus extra y DESBLOQUEO)
-              trigger_buy_reentry = (prev_close < prev_bb_lower) and (close > bb_lower)
-              # Confirmación por color de vela (Gatillo conservador)
-              if trigger_buy_reentry:
-                  score += 15
-                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
-                  trigger_confirmed = True
-              elif is_bullish and (pct_b <= 0.1 or low <= bb_lower):
-                  score += 10
-                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Vela de Giro (Verde)", "score": 10}
-                  trigger_confirmed = True
-              else:
-                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación (Sin Giro)", "score": 0}
-              
-              if factor_groups["ENTORNO"]["score"] > 0: score += 10
-              if div_type == "BULLISH": score += factor_groups["DIVERGENCIA"]["score"]
-              if abs_type == "BUY_ABS": score += factor_groups["ABSORCION"]["score"]
+             # GATILLOS (Bonus extra y DESBLOQUEO)
+             trigger_buy_reentry = (prev_close < prev_bb_lower) and (close > bb_lower)
+             # Confirmación por color de vela (Gatillo conservador)
+             if trigger_buy_reentry:
+                 score += 15
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
+                 trigger_confirmed = True
+             elif is_bullish and (pct_b <= 0.1 or low <= bb_lower):
+                 score += 10
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Vela de Giro (Verde)", "score": 10}
+                 trigger_confirmed = True
+             else:
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación (Sin Giro)", "score": 0}
+             
+             if factor_groups["ENTORNO"]["score"] > 0: score += 10
+             if div_type == "BULLISH": score += factor_groups["DIVERGENCIA"]["score"]
+             if abs_type == "BUY_ABS": score += factor_groups["ABSORCION"]["score"]
 
-         elif pct_b >= 0.8 or potential_sell: # Zona de venta (parte superior)
-              signal_type = "SELL"
-              # Score base escala de 0 (en el medio 0.5) a 40 (tocando banda 1.0)
-              struct_score = int(max(0, min(45, (pct_b - 0.5) / 0.5 * 45)))
-              score += struct_score
-              factor_groups["ESTRUCTURA"] = {"k": "Estructura %B", "v": f"Zona Sup. ({int(pct_b*100)}%)", "score": struct_score}
-              
-              # RSI OB Progresivo
-              if rsi >= 60:
-                  rsi_pts = int(max(0, min(20, (rsi - 60) / 20 * 20)))
-                  score += rsi_pts
-                  factor_groups["RSI"] = {"k": "RSI", "v": f"Sobrecompra ({int(rsi)})", "score": rsi_pts}
-              else:
-                  factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
+        elif pct_b >= 0.8 or potential_sell: # Zona de venta (parte superior)
+             signal_type = "SELL"
+             # Score base escala de 0 (en el medio 0.5) a 40 (tocando banda 1.0)
+             struct_score = int(max(0, min(45, (pct_b - 0.5) / 0.5 * 45)))
+             score += struct_score
+             factor_groups["ESTRUCTURA"] = {"k": "Estructura %B", "v": f"Zona Sup. ({int(pct_b*100)}%)", "score": struct_score}
+             
+             # RSI OB Progresivo
+             if rsi >= 60:
+                 rsi_pts = int(max(0, min(20, (rsi - 60) / 20 * 20)))
+                 score += rsi_pts
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Sobrecompra ({int(rsi)})", "score": rsi_pts}
+             else:
+                 factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
 
-              # GATILLOS
-              trigger_sell_reentry = (prev_close > prev_bb_upper) and (close < bb_upper)
-              if trigger_sell_reentry:
-                  score += 15
-                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
-                  trigger_confirmed = True
-              elif is_bearish and (pct_b >= 0.9 or high >= bb_upper):
-                  score += 10
-                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Vela de Giro (Roja)", "score": 10}
-                  trigger_confirmed = True
-              else:
-                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación (Sin Giro)", "score": 0}
+             # GATILLOS
+             trigger_sell_reentry = (prev_close > prev_bb_upper) and (close < bb_upper)
+             if trigger_sell_reentry:
+                 score += 15
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
+                 trigger_confirmed = True
+             elif is_bearish and (pct_b >= 0.9 or high >= bb_upper):
+                 score += 10
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Vela de Giro (Roja)", "score": 10}
+                 trigger_confirmed = True
+             else:
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación (Sin Giro)", "score": 0}
 
-              if factor_groups["ENTORNO"]["score"] > 0: score += 10
-              if div_type == "BEARISH": score += factor_groups["DIVERGENCIA"]["score"]
-              if abs_type == "SELL_ABS": score += factor_groups["ABSORCION"]["score"]
+             if factor_groups["ENTORNO"]["score"] > 0: score += 10
+             if div_type == "BEARISH": score += factor_groups["DIVERGENCIA"]["score"]
+             if abs_type == "SELL_ABS": score += factor_groups["ABSORCION"]["score"]
 
         # Finalización de factores
         factors_final = []

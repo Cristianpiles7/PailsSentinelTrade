@@ -59,13 +59,16 @@ class PSTExecutor:
         # --- NEW: CARGA DE CONFIGURACIÓN DINÁMICA (FASE 46) ---
         # --- PARAMETERS LOOKUP ---
         # s_params vendrán de symbols_config (globales)
+        # s_params vendrán de symbols_config (globales)
         s_params = await self.db.get_symbol_params(symbol)
         # strat_cfg vendrán de symbol_strategies (específicos de esta estrategia para este símbolo)
         strat_cfg = (await self.db.get_symbol_strategies(symbol)).get(raw_name, {})
         
-        # JERARQUÍA DE RIESGO: Estrategia > Símbolo > Global
-        risk_mode = strat_cfg.get("risk_mode") or s_params.get("risk_mode") or "PCT"
-        risk_val = strat_cfg.get("risk_value")
+        # JERARQUÍA DE RIESGO: Metadata (Manual) > Estrategia > Símbolo > Global
+        risk_mode = (metadata.get("risk_mode") if metadata else None) or strat_cfg.get("risk_mode") or s_params.get("risk_mode") or "PCT"
+        risk_val = (metadata.get("risk_value") if metadata else None) 
+        if risk_val is None:
+            risk_val = strat_cfg.get("risk_value")
         if risk_val is None:
             risk_val = s_params.get("risk_value", 0.25)
 
@@ -82,8 +85,8 @@ class PSTExecutor:
                 logger.debug(f"📐 [SCALPER PRO] Usando SL Ceñido: {sl_m}x ATR")
 
         tp_m = strat_cfg.get("tp_mult") or s_params.get("tp_mult") or def_tp_m
-        # R:R mínimo aceptable: Bajado a 1.2 por petición de usuario (Prevalece sobre el 1.5 anterior)
-        min_rr = strat_cfg.get("min_rr") or s_params.get("min_rr") or 1.2
+        # R:R mínimo aceptable: Prioridad Metadata (Manual) > Estrategia > Símbolo > Default
+        min_rr = (metadata.get("rr_ratio") if metadata else None) or strat_cfg.get("min_rr") or s_params.get("min_rr") or 1.2
         
         # --- FORZAR R:R 1.2 PARA SCALPER ---
         if "Scalper" in raw_name:

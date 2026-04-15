@@ -121,9 +121,10 @@ function App() {
 
 
   const [isSmartMode, setIsSmartMode] = useState(true)
-
-
-
+  const [riskAmount, setRiskAmount] = useState(25)
+  const [slPrice, setSlPrice] = useState('')
+  const [tpPrice, setTpPrice] = useState('')
+  const [rrRatio, setRrRatio] = useState(2.0)
   const [isExecuting, setIsExecuting] = useState(false)
 
 
@@ -542,9 +543,13 @@ function App() {
         symbol,
         action,
         volume: manualLot,
-        is_smart: isSmartMode
+        is_smart: isSmartMode,
+        risk_amount: isSmartMode ? riskAmount : null,
+        sl_price: isSmartMode && slPrice !== '' ? parseFloat(slPrice) : null,
+        tp_price: isSmartMode && tpPrice !== '' ? parseFloat(tpPrice) : null,
+        rr_ratio: isSmartMode ? rrRatio : null
       })
-      addToast(`${action} ${symbol} executed`, 'success')
+      addToast(`${isSmartMode ? 'Smart' : 'Market'} ${action} ${symbol} executed`, 'success')
       fetchData()
     } catch (err) { addToast('Error executing trade', 'error') }
     finally { setIsExecuting(false) }
@@ -2747,12 +2752,60 @@ function App() {
 
 
                 </div>
+                {/* Smart Risk Configuration (FASE 72) */}
+                <AnimatePresence>
+                  {isSmartMode && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden space-y-3"
+                    >
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Riesgo (€)</p>
+                          <div className="flex items-center gap-2">
+                            <Zap size={10} className="text-amber-500" />
+                            <input 
+                              type="number" 
+                              value={riskAmount} 
+                              onChange={(e) => setRiskAmount(Number(e.target.value))}
+                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">RR Ratio</p>
+                          <div className="flex items-center gap-2">
+                            <Target size={10} className="text-indigo-400" />
+                            <input 
+                              type="number" 
+                              step="0.1"
+                              value={rrRatio} 
+                              onChange={(e) => setRrRatio(Number(e.target.value))}
+                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
+                            />
+                          </div>
+                        </div>
+                      </div>
 
-
-
-
-
-
+                      <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                        <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Stop Loss Price (Optional)</p>
+                        <div className="flex items-center gap-2">
+                          <Shield size={10} className="text-rose-500" />
+                          <input 
+                            type="number" 
+                            step="0.00001"
+                            placeholder="Vacío = Estructural"
+                            value={slPrice} 
+                            onChange={(e) => setSlPrice(e.target.value)}
+                            className="w-full bg-transparent text-xs font-bold text-white outline-none border-none p-0 placeholder:text-zinc-700 placeholder:italic"
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 {/* Volume Selector */}
 

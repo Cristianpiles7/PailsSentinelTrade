@@ -197,8 +197,8 @@ class PSTScalperActive:
         # Ignición reducida (0.35 ATR) y Filtro Anti-Rechazo (Wicks)
         upper_wick = c_high - max(c_open, c_price)
         lower_wick = min(c_open, c_price) - c_low
-        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.35) and (upper_wick < body_size)
-        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.35) and (lower_wick < body_size)
+        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.60) and (upper_wick < body_size)
+        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.60) and (lower_wick < body_size)
         
         # Volumen adaptativo según perfil
         has_volume = rel_vol > profile['vol_requisite']
@@ -206,18 +206,25 @@ class PSTScalperActive:
         dist_to_ema = abs(c_price - c_ema21)
         anti_fomo_ok = dist_to_ema <= curr_atr * 2.5 # Relajado de 1.5 a 2.5
         
-        # Filtro de Asentamiento (Settlement): Evita entrar en 'ruido' o mercados picados.
-        # Exigimos que el precio haya estado consolidando al otro lado de la EMA por al menos 5 velas.
-        was_below_ema = all(df_base['close'].iloc[-6:-1] <= ema21.iloc[-6:-1]) 
-        was_above_ema = all(df_base['close'].iloc[-6:-1] >= ema21.iloc[-6:-1])
+        # Filtro de Asentamiento (Optimizado): Exigimos 3 velas previas al otro lado para ganar agilidad.
+        was_below_ema = all(df_base['close'].iloc[-4:-1] <= ema21.iloc[-4:-1]) 
+        was_above_ema = all(df_base['close'].iloc[-4:-1] >= ema21.iloc[-4:-1])
+        
+        # Filtro de Lanzamiento (Anchor): La vela debe nacer cerca de la EMA para evitar persecución tardía.
+        anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.25)
+        anchor_ok_bear = abs(c_open - c_ema21) < (curr_atr * 0.25)
+        
+        # Filtro de Agotamiento RSI
+        rsi_ok_bull = curr_rsi < 70
+        rsi_ok_bear = curr_rsi > 30
         
         # Hysteresis dinámica por clase de activo
         hysteresis = curr_atr * profile['hysteresis_atr']
         
-        # Protección Dinámica contra Ruido Volátil
+        # Protección Dinámica contra Ruido Volátil (ADX > 30)
         curr_regime = kwargs.get('current_regime', 'TREND')
         is_volatile = curr_regime == "VOLATILE"
-        adx_ok = True if not is_volatile else (curr_adx > 25)
+        adx_ok = True if not is_volatile else (curr_adx > 30)
         
         is_breakout_up = (
             was_below_ema and 
@@ -225,7 +232,9 @@ class PSTScalperActive:
             is_ignition_bull and 
             anti_fomo_ok and
             has_volume and
-            adx_ok # Filtro Direccional en Volatilidad
+            adx_ok and
+            anchor_ok_bull and
+            rsi_ok_bull
         )
         
         is_breakout_down = (
@@ -234,7 +243,9 @@ class PSTScalperActive:
             is_ignition_bear and 
             anti_fomo_ok and
             has_volume and
-            adx_ok # Filtro Direccional en Volatilidad
+            adx_ok and
+            anchor_ok_bear and
+            rsi_ok_bear
         )
         
         # --- NUEVA LÓGICA DE STALKING (DESHABILITADA TRAS AUDITORÍA) ---
@@ -301,7 +312,11 @@ class PSTScalperActive:
             elif not ((c_price > c_ema21 + hysteresis) or (c_price < c_ema21 - hysteresis)):
                 status_msg = f"Esperando Cruce +{profile['hysteresis_atr']} ATR"
             elif not (is_ignition_bull or is_ignition_bear):
-                status_msg = "Falta Vela de Ignición (>0.35ATR)"
+                status_msg = f"Falta Ignición (>0.6ATR)"
+            elif not (anchor_ok_bull or anchor_ok_bear):
+                status_msg = "Apertura lejana (Sin Anchor)"
+            elif not (rsi_ok_bull or rsi_ok_bear):
+                status_msg = "RSI en Agotamiento"
             elif not anti_fomo_ok:
                 status_msg = "Precio alejado (FOMO)"
             else:
