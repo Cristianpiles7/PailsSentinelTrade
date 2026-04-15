@@ -52,7 +52,7 @@ DB_PATH = get_db_path()
 # TRADING RISK PARAMETERS (Dynamic & Conservative)
 MAX_RISK_PCT = 0.25          # Riesgo base por operación (0.25%)
 MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día (FTMO Safe)
-DAILY_LOSS_EXIT_USD = 400    # STOP DIARIO CRÍTICO ($: Cierre total a los $400 de pérdida)
+DAILY_LOSS_EXIT_USD = 999999 # STOP DIARIO DESACTIVADO (Modo Pruebas: $999,999)
 # MAX_POSITION_COST_PCT = 25  # REMOVED: Usaremos Cubetas de Margen Dinámicas
 
 # DINAMIC PROTECTION (ATR MULTIPLIERS)

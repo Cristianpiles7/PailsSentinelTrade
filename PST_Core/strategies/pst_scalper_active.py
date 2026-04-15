@@ -197,8 +197,8 @@ class PSTScalperActive:
         # Ignición reducida (0.35 ATR) y Filtro Anti-Rechazo (Wicks)
         upper_wick = c_high - max(c_open, c_price)
         lower_wick = min(c_open, c_price) - c_low
-        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.60) and (upper_wick < body_size)
-        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.60) and (lower_wick < body_size)
+        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.40) and (upper_wick < body_size)
+        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.40) and (lower_wick < body_size)
         
         # Volumen adaptativo según perfil
         has_volume = rel_vol > profile['vol_requisite']
@@ -206,13 +206,13 @@ class PSTScalperActive:
         dist_to_ema = abs(c_price - c_ema21)
         anti_fomo_ok = dist_to_ema <= curr_atr * 2.5 # Relajado de 1.5 a 2.5
         
-        # Filtro de Asentamiento (Optimizado): Exigimos 3 velas previas al otro lado para ganar agilidad.
-        was_below_ema = all(df_base['close'].iloc[-4:-1] <= ema21.iloc[-4:-1]) 
-        was_above_ema = all(df_base['close'].iloc[-4:-1] >= ema21.iloc[-4:-1])
+        # Filtro de Asentamiento (Optimizado): Exigimos 2 velas previas al otro lado para ganar agilidad.
+        was_below_ema = all(df_base['close'].iloc[-3:-1] <= ema21.iloc[-3:-1]) 
+        was_above_ema = all(df_base['close'].iloc[-3:-1] >= ema21.iloc[-3:-1])
         
-        # Filtro de Lanzamiento (Anchor): La vela debe nacer cerca de la EMA para evitar persecución tardía.
-        anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.25)
-        anchor_ok_bear = abs(c_open - c_ema21) < (curr_atr * 0.25)
+        # Filtro de Lanzamiento (Anchor): La vela debe nacer relativamente cerca de la EMA.
+        anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.45)
+        anchor_ok_bear = abs(c_open - c_ema21) < (curr_atr * 0.45)
         
         # Filtro de Agotamiento RSI
         rsi_ok_bull = curr_rsi < 70
@@ -221,10 +221,10 @@ class PSTScalperActive:
         # Hysteresis dinámica por clase de activo
         hysteresis = curr_atr * profile['hysteresis_atr']
         
-        # Protección Dinámica contra Ruido Volátil (ADX > 30)
+        # Protección Dinámica contra Ruido Volátil (ADX > 22)
         curr_regime = kwargs.get('current_regime', 'TREND')
         is_volatile = curr_regime == "VOLATILE"
-        adx_ok = True if not is_volatile else (curr_adx > 30)
+        adx_ok = True if not is_volatile else (curr_adx > 22)
         
         is_breakout_up = (
             was_below_ema and 
@@ -410,9 +410,12 @@ class PSTScalperActive:
         if ema21 is None: return False
         c_ema21 = ema21.iloc[-1]
         
-        # Salida por cruce contrario de EMA21 (muy activo)
-        if p_type == "BUY" and c_price < c_ema21:
+        # Salida por cruce contrario de EMA21 con Histéresis de seguridad
+        # Añadimos un pequeño buffer (10% del ATR) para evitar cierres por ruido/spread
+        exit_buffer = atr.iloc[-1] * 0.10
+        
+        if p_type == "BUY" and c_price < (c_ema21 - exit_buffer):
             return True
-        if p_type == "SELL" and c_price > c_ema21:
+        if p_type == "SELL" and c_price > (c_ema21 + exit_buffer):
             return True
         return False
