@@ -197,8 +197,8 @@ class PSTScalperActive:
         # Ignición reducida (0.35 ATR) y Filtro Anti-Rechazo (Wicks)
         upper_wick = c_high - max(c_open, c_price)
         lower_wick = min(c_open, c_price) - c_low
-        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.40) and (upper_wick < body_size)
-        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.40) and (lower_wick < body_size)
+        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.65) and (upper_wick < body_size)
+        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.65) and (lower_wick < body_size)
         
         # Volumen adaptativo según perfil
         has_volume = rel_vol > profile['vol_requisite']
@@ -207,8 +207,8 @@ class PSTScalperActive:
         anti_fomo_ok = dist_to_ema <= curr_atr * 2.5 # Relajado de 1.5 a 2.5
         
         # Filtro de Asentamiento (Optimizado): Exigimos 2 velas previas al otro lado para ganar agilidad.
-        was_below_ema = all(df_base['close'].iloc[-3:-1] <= ema21.iloc[-3:-1]) 
-        was_above_ema = all(df_base['close'].iloc[-3:-1] >= ema21.iloc[-3:-1])
+        was_below_ema = all(df_base['close'].iloc[-5:-1] <= ema21.iloc[-5:-1]) 
+        was_above_ema = all(df_base['close'].iloc[-5:-1] >= ema21.iloc[-5:-1])
         
         # Filtro de Lanzamiento (Anchor): La vela debe nacer relativamente cerca de la EMA.
         anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.45)
@@ -224,7 +224,8 @@ class PSTScalperActive:
         # Protección Dinámica contra Ruido Volátil (ADX > 22)
         curr_regime = kwargs.get('current_regime', 'TREND')
         is_volatile = curr_regime == "VOLATILE"
-        adx_ok = True if not is_volatile else (curr_adx > 22)
+        # ADX > 20 global para evitar rangos laterales, > 25 en VOLATILE para asegurar impulsos
+        adx_ok = curr_adx > 20 if not is_volatile else (curr_adx > 25)
         
         is_breakout_up = (
             was_below_ema and 
@@ -312,7 +313,7 @@ class PSTScalperActive:
             elif not ((c_price > c_ema21 + hysteresis) or (c_price < c_ema21 - hysteresis)):
                 status_msg = f"Esperando Cruce +{profile['hysteresis_atr']} ATR"
             elif not (is_ignition_bull or is_ignition_bear):
-                status_msg = f"Falta Ignición (>0.6ATR)"
+                status_msg = f"Falta Ignición (>0.65ATR)"
             elif not (anchor_ok_bull or anchor_ok_bear):
                 status_msg = "Apertura lejana (Sin Anchor)"
             elif not (rsi_ok_bull or rsi_ok_bear):
@@ -407,12 +408,16 @@ class PSTScalperActive:
         
         c_price = df_m1['close'].iloc[-1]
         ema21 = ta.ema(df_m1['close'], length=self.ema_mid)
-        if ema21 is None: return False
+        atr_series = ta.atr(df_m1['high'], df_m1['low'], df_m1['close'], length=14)
+        
+        if ema21 is None or atr_series is None: return False
+        
         c_ema21 = ema21.iloc[-1]
+        curr_atr = atr_series.iloc[-1]
         
         # Salida por cruce contrario de EMA21 con Histéresis de seguridad
         # Añadimos un pequeño buffer (10% del ATR) para evitar cierres por ruido/spread
-        exit_buffer = atr.iloc[-1] * 0.10
+        exit_buffer = curr_atr * 0.10
         
         if p_type == "BUY" and c_price < (c_ema21 - exit_buffer):
             return True
