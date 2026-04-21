@@ -647,69 +647,73 @@ class SymbolTask:
                                             min_score = 85 if has_opposite else 70
                                             
                                             if s_score >= min_score:
-                                                # FIRE!
                                                 if has_opposite:
                                                     logger.info(f"🔄 [SAFE REVERSAL] {self.symbol} disparando Giro Seguro (Score {s_score} >= 85).")
                                                 
                                                 logger.info(f"⚡ [TRADE] {self.symbol} {sig_type_str} by {s_name} (Score: {s_score})")
-                                            
-                                            # Bloc de seguridad in-flight (PST v7.0)
-                                            self.portfolio.register_in_flight(self.symbol)
-                                            
-                                            try:
-                                                # SL/TP dinámico basado en ATR (si la estrategia lo provee o default)
-                                                atr_current = s_result.get("atr", 0)
-                                                if atr_current == 0: atr_current = atr_val # Fallback 1: Market ATR
+                                                
+                                                # Bloc de seguridad in-flight (PST v7.0)
+                                                self.portfolio.register_in_flight(self.symbol)
+                                                
+                                                try:
+                                                    # SL/TP dinámico basado en ATR (si la estrategia lo provee o default)
+                                                    atr_current = s_result.get("atr", 0)
+                                                    if atr_current == 0: atr_current = atr_val # Fallback 1: Market ATR
 
-                                                # Fallback 2: Absolute Price fallback if ATR is still 0 (Crucial for Stocks/Indices)
-                                                if atr_current <= 0 and price > 0:
-                                                    logger.warning(f"⚠️ [SAFETY] ATR 0 detected for {self.symbol}. Using 0.5% price fallback.")
-                                                    atr_current = price * 0.005 
-                                                
-                                                # SAFETY PAD: Aumentar distancia para Acciones/Indices para evitar "Invalid Stops"
-                                                sl_mult = SL_ATR_MULTIPLIER
-                                                tp_mult = TP_ATR_MULTIPLIER
-                                                
-                                                # Si es simbolo largo (Acciones) o Indices, damos mas aire (Exceptuando Scalping)
-                                                if (len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol) and "Scalper" not in s_name:
-                                                    sl_mult = 3.5  # Antes 2.0
-                                                    tp_mult = 5.0  # Antes 3.0
-                                                
-                                                sl_dist = atr_current * sl_mult 
-                                                
-                                                # --- NEW: SOPORTE PARA TP TÉCNICO ---
-                                                tp_price_target = s_result.get("tp_price", 0)
-                                                if tp_price_target > 0:
-                                                    # Calcular distancia exacta al objetivo técnico
-                                                    tp_dist = abs(price - tp_price_target)
-                                                    logger.info(f"🎯 [TECHNICAL TP] {self.symbol} usando objetivo: {tp_price_target:.5f} (Dist: {tp_dist:.5f})")
-                                                else:
-                                                    tp_dist = atr_current * tp_mult 
+                                                    # Fallback 2: Absolute Price fallback if ATR is still 0 (Crucial for Stocks/Indices)
+                                                    if atr_current <= 0 and price > 0:
+                                                        logger.warning(f"⚠️ [SAFETY] ATR 0 detected for {self.symbol}. Using 0.5% price fallback.")
+                                                        atr_current = price * 0.005 
+                                                    
+                                                    # SAFETY PAD: Aumentar distancia para Acciones/Indices para evitar "Invalid Stops"
+                                                    sl_mult = SL_ATR_MULTIPLIER
+                                                    tp_mult = TP_ATR_MULTIPLIER
+                                                    
+                                                    # Si es simbolo largo (Acciones) o Indices, damos mas aire (Exceptuando Scalping)
+                                                    if (len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol) and "Scalper" not in s_name:
+                                                        sl_mult = 3.5  # Antes 2.0
+                                                        tp_mult = 5.0  # Antes 3.0
+                                                    
+                                                    sl_dist = atr_current * sl_mult 
+                                                    
+                                                    # --- NEW: SOPORTE PARA TP TÉCNICO ---
+                                                    tp_price_target = s_result.get("tp_price", 0)
+                                                    if tp_price_target > 0:
+                                                        # Calcular distancia exacta al objetivo técnico
+                                                        tp_dist = abs(price - tp_price_target)
+                                                        logger.info(f"🎯 [TECHNICAL TP] {self.symbol} usando objetivo: {tp_price_target:.5f} (Dist: {tp_dist:.5f})")
+                                                    else:
+                                                        tp_dist = atr_current * tp_mult 
 
-                                                # Asegurar distancia mínima absoluta para evitar code 10016 (Invalid Stops)
-                                                # En lugar de hardcodear 0.20, usamos un % del precio para ser compatible con Crypto y Forex
-                                                min_dist = price * 0.0015 # 0.15% del precio como mínimo absoluto
-                                                if sl_dist < min_dist: sl_dist = min_dist
-                                                if tp_dist < min_dist: tp_dist = min_dist
-                                                
-                                                await self.executor.execute_trade(
-                                                    self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode, best_metadata
-                                                )
-                                                await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
-                                                
-                                                # Marcar visualmente
-                                                signal = sig_val
-                                                strategy_name = s_name
-                                            except Exception as e:
-                                                logger.error(f"❌ Fallo crítico en ejecución para {self.symbol}: {e}")
-                                            finally:
-                                                # Liberamos tras un tiempo prudencial (30s) para asegurar que MT5 refleje la posición
-                                                # y evitar que el siguiente ciclo de 10s dispare de nuevo si hay latencia.
-                                                async def delayed_clear(sym):
-                                                    await asyncio.sleep(30)
-                                                    self.portfolio.clear_in_flight(sym)
-                                                
-                                                asyncio.create_task(delayed_clear(self.symbol))
+                                                    # Asegurar distancia mínima absoluta para evitar code 10016 (Invalid Stops)
+                                                    # En lugar de hardcodear 0.20, usamos un % del precio para ser compatible con Crypto y Forex
+                                                    min_dist = price * 0.0015 # 0.15% del precio como mínimo absoluto
+                                                    if sl_dist < min_dist: sl_dist = min_dist
+                                                    if tp_dist < min_dist: tp_dist = min_dist
+                                                    
+                                                    await self.executor.execute_trade(
+                                                        self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode, best_metadata
+                                                    )
+                                                    await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
+                                                    
+                                                    # Marcar visualmente
+                                                    signal = sig_val
+                                                    strategy_name = s_name
+                                                except Exception as e:
+                                                    logger.error(f"❌ Fallo crítico en ejecución para {self.symbol}: {e}")
+                                                finally:
+                                                    # Liberamos tras un tiempo prudencial (30s) para asegurar que MT5 refleje la posición
+                                                    # y evitar que el siguiente ciclo de 10s dispare de nuevo si hay latencia.
+                                                    async def delayed_clear(sym):
+                                                        await asyncio.sleep(30)
+                                                        self.portfolio.clear_in_flight(sym)
+                                                    
+                                                    asyncio.create_task(delayed_clear(self.symbol))
+                                            else:
+                                                logger.info(f"🧱 [SCORE BLOCK] {self.symbol} {sig_type_str} por {s_name} bloqueado. Score {s_score} < mínimo {min_score}.")
+                                                if s_score >= 50:
+                                                    await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_SCORE_{sig_type_str}", s_score, price, blocked_reason="SCORE")
+                                                    best_metadata["blocked_reason"] = "SCORE"
                                         else:
                                             # Bloc por Riesgo/Portafolio
                                             if s_score >= 70:

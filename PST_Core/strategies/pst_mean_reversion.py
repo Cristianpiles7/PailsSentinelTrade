@@ -17,10 +17,10 @@ def get_safe(series, default=0.0):
 def get_mtr_data(df_in, tf_minutes=5):
     if df_in is None or len(df_in) < 20: return None
     try:
-        _rsi = ta.rsi(df_in['close'], length=14).iloc[-1]
-        _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-1]
-        _v = df_in['tick_volume'].iloc[-1] if 'tick_volume' in df_in else 0
-        _v_ma = ta.sma(df_in['tick_volume'], length=20).iloc[-1] if 'tick_volume' in df_in else 1
+        _rsi = ta.rsi(df_in['close'], length=14).iloc[-2]
+        _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-2]
+        _v = df_in['tick_volume'].iloc[-2] if 'tick_volume' in df_in else 0
+        _v_ma = ta.sma(df_in['tick_volume'], length=20).iloc[-2] if 'tick_volume' in df_in else 1
         return {"rsi": _rsi, "adx": _adx, "vol_rel": _v / _v_ma if _v_ma > 0 else 0}
     except: return None
 
@@ -114,24 +114,24 @@ class PSTMeanReversion:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         adx_val = 0
         if adx_df is not None and not adx_df.empty:
-             adx_val = adx_df.iloc[-1, 0] # ADX_14 suele ser la primera columna
+             adx_val = adx_df.iloc[-2, 0] # Usar la última vela cerrada
 
-        # 3. ANALISIS DE LA VELA ACTUAL
-        close = df['close'].iloc[-1]
-        high = df['high'].iloc[-1]
-        low = df['low'].iloc[-1]
-        rsi = df['rsi'].iloc[-1]
+        # 3. ANALISIS DE LA ULTIMA VELA CERRADA
+        close = df['close'].iloc[-2]
+        high = df['high'].iloc[-2]
+        low = df['low'].iloc[-2]
+        rsi = df['rsi'].iloc[-2]
         
-        bb_upper = df['bb_upper'].iloc[-1]
-        bb_lower = df['bb_lower'].iloc[-1]
-        bb_mid = df['bb_mid'].iloc[-1]
+        bb_upper = df['bb_upper'].iloc[-2]
+        bb_lower = df['bb_lower'].iloc[-2]
+        bb_mid = df['bb_mid'].iloc[-2]
         
         # Estado Anterior (Para detectar cruces/reingresos)
-        prev_close = df['close'].iloc[-2]
-        prev_rfc = df['close'].iloc[-2] # Reference for crossover
-        prev_rsi = df['rsi'].iloc[-2]
-        prev_bb_lower = df['bb_lower'].iloc[-2]
-        prev_bb_upper = df['bb_upper'].iloc[-2]
+        prev_close = df['close'].iloc[-3]
+        prev_rfc = df['close'].iloc[-3] # Reference for crossover
+        prev_rsi = df['rsi'].iloc[-3]
+        prev_bb_lower = df['bb_lower'].iloc[-3]
+        prev_bb_upper = df['bb_upper'].iloc[-3]
 
         # 4. LOGICA DE ENTRADA Y FACTORES
         score = 0
@@ -185,7 +185,9 @@ class PSTMeanReversion:
         adx_now = mtr['adx'] if mtr else adx_val
 
         # ADX Logic
-        if adx_now < 25:
+        if gate_failed:
+            pass
+        elif adx_now < 25:
             factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Ideal Lateral ({int(adx_now)})", "score": 10}
         else:
             factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Moderado ({int(adx_now)})", "score": 0}
@@ -208,7 +210,7 @@ class PSTMeanReversion:
         potential_sell = False
         
         # --- CANDLE CONFIRMATION (GATILLO DE SEGURIDAD) ---
-        c_open = df['open'].iloc[-1]
+        c_open = df['open'].iloc[-2]
         is_bearish = close < c_open
         is_bullish = close > c_open
         

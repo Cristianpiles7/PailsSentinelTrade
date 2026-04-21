@@ -24,28 +24,32 @@ class PSTScalperActive:
         # Perfiles Dinámicos de Activos
         self.ASSET_PROFILES = {
             "CRYPTO": {
-                "vol_requisite": 1.05,      
+                "vol_requisite": 1.20,      
                 "min_rr": 1.5,             
                 "hysteresis_atr": 0.3,    
-                "sl_margin_atr": 1.5       
+                "sl_margin_atr": 1.5,
+                "max_extension_atr": 1.4
             },
             "METAL": {
-                "vol_requisite": 1.1,      
+                "vol_requisite": 1.20,      
                 "min_rr": 1.25,            
                 "hysteresis_atr": 0.1,    
-                "sl_margin_atr": 2.0       
+                "sl_margin_atr": 2.0,
+                "max_extension_atr": 1.2
             },
             "INDEX": {
-                "vol_requisite": 1.05,
+                "vol_requisite": 1.20,
                 "min_rr": 1.3,
                 "hysteresis_atr": 0.15,
-                "sl_margin_atr": 2.5
+                "sl_margin_atr": 2.5,
+                "max_extension_atr": 1.2
             },
             "FOREX": {
-                "vol_requisite": 1.02,     # Solo un 2% de volumen extra
+                "vol_requisite": 1.15,
                 "min_rr": 1.3,
                 "hysteresis_atr": 0.15,
-                "sl_margin_atr": 1.5
+                "sl_margin_atr": 1.5,
+                "max_extension_atr": 1.1
             }
         }
         # Fallback profile por si no se identifica
@@ -70,19 +74,19 @@ class PSTScalperActive:
         # 1. Evaluar M5
         if df_m5 is not None and len(df_m5) >= 50:
             trend_df = df_m15 if (df_m15 is not None and len(df_m15) >= 50) else None
-            sig_m5 = self._evaluate_tf(df_m5, trend_df, None, spread_dist, "M5", **kwargs)
+            sig_m5 = self._evaluate_tf(df_m5, trend_df, None, spread_dist, "M5", current_regime=current_regime, **kwargs)
             if sig_m5['entry'] != 0: return sig_m5
             signals_found.append(sig_m5)
 
         # 2. Evaluar M3
         if df_m3 is not None and len(df_m3) >= 50:
-            sig_m3 = self._evaluate_tf(df_m3, df_m15, df_m5, spread_dist, "M3", **kwargs)
+            sig_m3 = self._evaluate_tf(df_m3, df_m15, df_m5, spread_dist, "M3", current_regime=current_regime, **kwargs)
             if sig_m3['entry'] != 0: return sig_m3
             signals_found.append(sig_m3)
                 
         # 3. Evaluar M1
         if df_m1 is not None and len(df_m1) >= 50:
-            sig_m1 = self._evaluate_tf(df_m1, df_m5, df_m3, spread_dist, "M1", **kwargs)
+            sig_m1 = self._evaluate_tf(df_m1, df_m5, df_m3, spread_dist, "M1", current_regime=current_regime, **kwargs)
             if sig_m1['entry'] != 0: return sig_m1
             signals_found.append(sig_m1)
             
@@ -125,8 +129,8 @@ class PSTScalperActive:
             upper_kc = kc.iloc[:, 2]
             
             is_squeeze_series = (upper_bb < upper_kc) & (lower_bb > lower_kc)
-            is_squeeze = is_squeeze_series.iloc[-1]
-            was_squeezed_recently = is_squeeze_series.iloc[-15:-1].any()
+            is_squeeze = is_squeeze_series.iloc[-2]
+            was_squeezed_recently = is_squeeze_series.iloc[-16:-2].any()
         except Exception as e:
             is_squeeze, was_squeezed_recently = False, False
             try:
@@ -136,21 +140,22 @@ class PSTScalperActive:
             except Exception:
                 return {"score": 0, "signal": "NEUTRAL", "metadata": {"mode": f"Error_BB_{tf_label}", "factors_detailed": []}}
 
-        c_price = df_base['close'].iloc[-1]
-        c_open = df_base['open'].iloc[-1]
-        c_high = df_base['high'].iloc[-1]
-        c_low = df_base['low'].iloc[-1]
+        signal_idx = -2
+        c_price = df_base['close'].iloc[signal_idx]
+        c_open = df_base['open'].iloc[signal_idx]
+        c_high = df_base['high'].iloc[signal_idx]
+        c_low = df_base['low'].iloc[signal_idx]
         
-        c_ema21 = ema21.iloc[-1]
-        curr_atr = atr.iloc[-1]
-        curr_rsi = rsi.iloc[-1]
-        curr_adx = adx_df['ADX_14'].iloc[-1]
+        c_ema21 = ema21.iloc[signal_idx]
+        curr_atr = atr.iloc[signal_idx]
+        curr_rsi = rsi.iloc[signal_idx]
+        curr_adx = adx_df['ADX_14'].iloc[signal_idx]
 
-        c_upper_bb = upper_bb.iloc[-1]
-        c_lower_bb = lower_bb.iloc[-1]
+        c_upper_bb = upper_bb.iloc[signal_idx]
+        c_lower_bb = lower_bb.iloc[signal_idx]
         
-        curr_vol = df_base['tick_volume'].iloc[-1]
-        mean_vol = vol_ma.iloc[-2]
+        curr_vol = df_base['tick_volume'].iloc[signal_idx]
+        mean_vol = vol_ma.iloc[signal_idx]
         rel_vol = curr_vol / mean_vol if mean_vol > 0 else 1.0
         
         body_size = abs(c_price - c_open)
@@ -162,13 +167,13 @@ class PSTScalperActive:
         confirmed_downtrend = False
         if df_trend1 is not None:
             ema50_t1 = ta.ema(df_trend1['close'], length=50)
-            if ema50_t1 is not None and df_trend1['close'].iloc[-1] > ema50_t1.iloc[-1]: confirmed_uptrend = True
-            if ema50_t1 is not None and df_trend1['close'].iloc[-1] < ema50_t1.iloc[-1]: confirmed_downtrend = True
+            if ema50_t1 is not None and df_trend1['close'].iloc[-2] > ema50_t1.iloc[-2]: confirmed_uptrend = True
+            if ema50_t1 is not None and df_trend1['close'].iloc[-2] < ema50_t1.iloc[-2]: confirmed_downtrend = True
             
         if df_trend2 is not None:
             ema50_t2 = ta.ema(df_trend2['close'], length=50)
-            if ema50_t2 is not None and df_trend2['close'].iloc[-1] > ema50_t2.iloc[-1]: confirmed_uptrend = True
-            if ema50_t2 is not None and df_trend2['close'].iloc[-1] < ema50_t2.iloc[-1]: confirmed_downtrend = True
+            if ema50_t2 is not None and df_trend2['close'].iloc[-2] > ema50_t2.iloc[-2]: confirmed_uptrend = True
+            if ema50_t2 is not None and df_trend2['close'].iloc[-2] < ema50_t2.iloc[-2]: confirmed_downtrend = True
 
         score = 0
         entry = 0
@@ -181,7 +186,7 @@ class PSTScalperActive:
         # Filtro VSA
         recent_buy_abs = False
         recent_sell_abs = False
-        for i in range(-15, 0):
+        for i in range(-16, -1):
             idx = len(df_base) + i
             if idx < 0: continue
             _body = abs(df_base['close'].iloc[idx] - df_base['open'].iloc[idx])
@@ -204,11 +209,12 @@ class PSTScalperActive:
         has_volume = rel_vol > profile['vol_requisite']
         
         dist_to_ema = abs(c_price - c_ema21)
-        anti_fomo_ok = dist_to_ema <= curr_atr * 2.5 # Relajado de 1.5 a 2.5
+        anti_fomo_ok = dist_to_ema <= curr_atr * profile['max_extension_atr']
         
-        # Filtro de Asentamiento (Optimizado): Exigimos 2 velas previas al otro lado para ganar agilidad.
-        was_below_ema = all(df_base['close'].iloc[-5:-1] <= ema21.iloc[-5:-1]) 
-        was_above_ema = all(df_base['close'].iloc[-5:-1] >= ema21.iloc[-5:-1])
+        # Filtro de asentamiento basado solo en velas cerradas previas a la señal.
+        prior_slice = slice(len(df_base) - 6, len(df_base) - 2)
+        was_below_ema = bool((df_base['close'].iloc[prior_slice] <= ema21.iloc[prior_slice]).all())
+        was_above_ema = bool((df_base['close'].iloc[prior_slice] >= ema21.iloc[prior_slice]).all())
         
         # Filtro de Lanzamiento (Anchor): La vela debe nacer relativamente cerca de la EMA.
         anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.45)
@@ -220,6 +226,8 @@ class PSTScalperActive:
         
         # Hysteresis dinámica por clase de activo
         hysteresis = curr_atr * profile['hysteresis_atr']
+        context_ok_up = was_squeezed_recently or recent_buy_abs
+        context_ok_down = was_squeezed_recently or recent_sell_abs
         
         # Protección Dinámica contra Ruido Volátil (ADX > 22)
         curr_regime = kwargs.get('current_regime', 'TREND')
@@ -234,6 +242,7 @@ class PSTScalperActive:
             anti_fomo_ok and
             has_volume and
             adx_ok and
+            context_ok_up and
             anchor_ok_bull and
             rsi_ok_bull
         )
@@ -245,6 +254,7 @@ class PSTScalperActive:
             anti_fomo_ok and
             has_volume and
             adx_ok and
+            context_ok_down and
             anchor_ok_bear and
             rsi_ok_bear
         )
@@ -314,6 +324,8 @@ class PSTScalperActive:
                 status_msg = f"Esperando Cruce +{profile['hysteresis_atr']} ATR"
             elif not (is_ignition_bull or is_ignition_bear):
                 status_msg = f"Falta Ignición (>0.65ATR)"
+            elif not (context_ok_up or context_ok_down):
+                status_msg = "Falta Squeeze/Absorción"
             elif not (anchor_ok_bull or anchor_ok_bear):
                 status_msg = "Apertura lejana (Sin Anchor)"
             elif not (rsi_ok_bull or rsi_ok_bear):
