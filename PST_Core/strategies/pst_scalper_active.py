@@ -24,25 +24,25 @@ class PSTScalperActive:
         # Perfiles Dinámicos de Activos
         self.ASSET_PROFILES = {
             "CRYPTO": {
-                "vol_requisite": 1.20,      
+                "vol_requisite": 1.25,      
                 "min_rr": 1.5,             
-                "hysteresis_atr": 0.3,    
+                "hysteresis_atr": 0.35,    
                 "sl_margin_atr": 1.5,
-                "max_extension_atr": 1.4
+                "max_extension_atr": 1.0 # Reducido de 1.4: Evita comprar en techos
             },
             "METAL": {
-                "vol_requisite": 1.20,      
-                "min_rr": 1.25,            
-                "hysteresis_atr": 0.1,    
+                "vol_requisite": 1.25,      
+                "min_rr": 1.5,            
+                "hysteresis_atr": 0.15,    
                 "sl_margin_atr": 2.0,
-                "max_extension_atr": 1.2
+                "max_extension_atr": 1.0 # Reducido de 1.2
             },
             "INDEX": {
-                "vol_requisite": 1.20,
-                "min_rr": 1.3,
-                "hysteresis_atr": 0.15,
+                "vol_requisite": 1.25,
+                "min_rr": 1.5,
+                "hysteresis_atr": 0.2,
                 "sl_margin_atr": 2.5,
-                "max_extension_atr": 1.2
+                "max_extension_atr": 1.0 # Reducido de 1.2
             },
             "FOREX": {
                 "vol_requisite": 1.15,
@@ -199,11 +199,11 @@ class PSTScalperActive:
                 if _lower_wick > (_body * 1.5): recent_buy_abs = True
                 if _upper_wick > (_body * 1.5): recent_sell_abs = True
 
-        # Ignición reducida (0.35 ATR) y Filtro Anti-Rechazo (Wicks)
+        # Ignición endurecida (0.75 ATR) y Filtro Anti-Rechazo (Wicks < 30% cuerpo)
         upper_wick = c_high - max(c_open, c_price)
         lower_wick = min(c_open, c_price) - c_low
-        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.65) and (upper_wick < body_size)
-        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.65) and (lower_wick < body_size)
+        is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.75) and (upper_wick < body_size * 0.3)
+        is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.75) and (lower_wick < body_size * 0.3)
         
         # Volumen adaptativo según perfil
         has_volume = rel_vol > profile['vol_requisite']
@@ -216,9 +216,9 @@ class PSTScalperActive:
         was_below_ema = bool((df_base['close'].iloc[prior_slice] <= ema21.iloc[prior_slice]).all())
         was_above_ema = bool((df_base['close'].iloc[prior_slice] >= ema21.iloc[prior_slice]).all())
         
-        # Filtro de Lanzamiento (Anchor): La vela debe nacer relativamente cerca de la EMA.
-        anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.45)
-        anchor_ok_bear = abs(c_open - c_ema21) < (curr_atr * 0.45)
+        # Filtro de Lanzamiento (Anchor): La vela debe nacer muy cerca de la EMA.
+        anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.25)
+        anchor_ok_bear = abs(c_open - c_ema21) < (curr_atr * 0.25)
         
         # Filtro de Agotamiento RSI
         rsi_ok_bull = curr_rsi < 70
