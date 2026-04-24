@@ -35,19 +35,19 @@ class PSTScalperPro:
         # 1. Evaluar M5 (Prioridad Alta - Señal más limpia)
         if df_m5 is not None and len(df_m5) >= 50:
             trend_df = df_m15 if (df_m15 is not None and len(df_m15) >= 50) else None
-            sig_m5 = self._evaluate_tf(df_m5, trend_df, None, spread_dist, "M5", **kwargs)
+            sig_m5 = self._evaluate_tf(df_m5, trend_df, None, spread_dist, "M5", mtf_data=mtf_data, **kwargs)
             if sig_m5['entry'] != 0: return sig_m5
             signals_found.append(sig_m5)
 
         # 2. Evaluar M3 (Frame Intermedio)
         if df_m3 is not None and len(df_m3) >= 50:
-            sig_m3 = self._evaluate_tf(df_m3, df_m15, df_m5, spread_dist, "M3", **kwargs)
+            sig_m3 = self._evaluate_tf(df_m3, df_m15, df_m5, spread_dist, "M3", mtf_data=mtf_data, **kwargs)
             if sig_m3['entry'] != 0: return sig_m3
             signals_found.append(sig_m3)
                 
         # 3. Evaluar M1 (Frecuencia)
         if df_m1 is not None and len(df_m1) >= 50:
-            sig_m1 = self._evaluate_tf(df_m1, df_m5, df_m3, spread_dist, "M1", **kwargs)
+            sig_m1 = self._evaluate_tf(df_m1, df_m5, df_m3, spread_dist, "M1", mtf_data=mtf_data, **kwargs)
             if sig_m1['entry'] != 0: return sig_m1
             signals_found.append(sig_m1)
             
@@ -99,6 +99,8 @@ class PSTScalperPro:
 
         c_price = df_base['close'].iloc[-1]
         c_open = df_base['open'].iloc[-1]
+        c_rsi = rsi.iloc[-1]
+        body_size = abs(c_price - c_open)
         c_high = df_base['high'].iloc[-1]
         c_low = df_base['low'].iloc[-1]
         
@@ -131,6 +133,28 @@ class PSTScalperPro:
             if ema50_t2 is not None and df_trend2['close'].iloc[-1] > ema50_t2.iloc[-1]: confirmed_uptrend = True
             if ema50_t2 is not None and df_trend2['close'].iloc[-1] < ema50_t2.iloc[-1]: confirmed_downtrend = True
 
+        # --- NEW: FILTRO ANTI-TECHOS M15 (v2.0.1) ---
+        is_overextended_up = False
+        is_overextended_down = False
+        if df_trend1 is not None and len(df_trend1) >= 50:
+            ema50_m15 = ta.ema(df_trend1['close'], length=50).iloc[-1]
+            atr_m15 = ta.atr(df_trend1['high'], df_trend1['low'], df_trend1['close'], length=14).iloc[-1]
+            if (c_price - ema50_m15) > (atr_m15 * 2.6): # Relajado v2.0.2
+                is_overextended_up = True
+            if (ema50_m15 - c_price) > (atr_m15 * 2.6):
+                is_overextended_down = True
+
+        # --- NUEVO v2.0.3: ALINEACIÓN M1 (MICRO-GOLDEN CROSS) ---
+        m1_aligned_up = False
+        m1_aligned_down = False
+        mtf_data = kwargs.get('mtf_data')
+        df_m1 = mtf_data.get('m1') if isinstance(mtf_data, dict) else None
+        if df_m1 is not None and len(df_m1) >= 50:
+            m1_ema21 = ta.ema(df_m1['close'], length=21).iloc[-1]
+            m1_ema50 = ta.ema(df_m1['close'], length=50).iloc[-1]
+            if m1_ema21 > m1_ema50: m1_aligned_up = True
+            if m1_ema21 < m1_ema50: m1_aligned_down = True
+
         score = 0
         entry = 0
         factors_detailed = []
@@ -160,23 +184,31 @@ class PSTScalperPro:
         
         has_volume = rel_vol > 1.5
         
+        # [OPCIÓN B] Hysteresis Dinámico (Agilidad v6.6): 
+        hysteresis = curr_atr * 0.35
+        
         dist_to_ema = abs(c_price - c_ema21)
-        anti_fomo_ok = dist_to_ema <= curr_atr * 1.5
+        anti_fomo_ok = dist_to_ema <= curr_atr * 1.8 
         
         was_below_ema = all(df_base['close'].iloc[-5:-1] <= ema21.iloc[-5:-1])
         was_above_ema = all(df_base['close'].iloc[-5:-1] >= ema21.iloc[-5:-1])
         
-        # [OPCIÓN B] Hysteresis Severo: El precio actual vivo debe adentrarse 0.5 ATR (media vela completa)
-        # por encima de la EMA21 para que el bot considere que cruzó, matando Fakeouts.
-        hysteresis = curr_atr * 0.5
+        # --- NUEVO v2.0.5: TRIPLE BREAKOUT DETECTION ---
+        # Detectamos si el precio está rompiendo el conjunto de EMA9, 21 y 50
+        ema9 = ta.ema(df_base['close'], length=9).iloc[-1]
+        ema50 = ta.ema(df_base['close'], length=50).iloc[-1]
+        
+        is_breaking_ema50_up = (df_base['close'].iloc[-2] < ta.ema(df_base['close'], length=50).iloc[-2]) and (c_price > ema50)
+        is_above_all_emas = c_price > ema9 and c_price > c_ema21 and c_price > ema50
         
         is_perfect_breakout_up = (
             was_below_ema and 
             (c_price > c_ema21 + hysteresis) and 
-            (was_squeezed_recently or recent_buy_abs) and 
+            (was_squeezed_recently or recent_buy_abs or is_breaking_ema50_up) and 
             is_ignition_bull and 
-            has_volume and 
-            anti_fomo_ok
+            (rel_vol > 1.2 or has_volume) and # Endurecido v2.0.6: Mínimo 1.2x siempre
+            anti_fomo_ok and
+            not is_overextended_up
         )
         
         is_perfect_breakout_down = (
@@ -185,7 +217,8 @@ class PSTScalperPro:
             (was_squeezed_recently or recent_sell_abs) and 
             is_ignition_bear and 
             has_volume and 
-            anti_fomo_ok
+            anti_fomo_ok and
+            not is_overextended_down
         )
         
         threshold = kwargs.get('score_threshold', 80)
@@ -193,11 +226,27 @@ class PSTScalperPro:
         if is_perfect_breakout_up:
             mode_label = f"BREAKOUT_UP_V6_{tf_label}"
             # Penalizamos la rotura "Counter-Trend" con 10 puntos menos para requerir confirmación por el usuario
-            score = 85 if confirmed_uptrend else 75
+            # v2.0.3: Si M1 ya ha cruzado, le damos permiso para disparar (Score 82)
+            if confirmed_uptrend or m1_aligned_up or is_above_all_emas:
+                score = 85 if (confirmed_uptrend or is_above_all_emas) else 82
+            else:
+                score = 75 # Sigue bloqueado si ni M1 ni M15 están a favor
+                
             entry = 1
             factors_detailed.append({"k": "TF", "v": tf_label, "score": 0})
             factors_detailed.append({"k": "Estrategia", "v": f"ROTURA EMA21 ↑ ({tf_label})", "score": score})
-            if not confirmed_uptrend: factors_detailed.append({"k": "Peligro Macro", "v": "Contra-Tendencia (-10)", "score": -10})
+            
+            if is_above_all_emas:
+                factors_detailed.append({"k": "Triple Breakout", "v": "SMA9/21/50 Superadas (+10)", "score": 10})
+                score += 10
+            
+            # --- NUEVO v2.0.6: FILTRO DE AGOTAMIENTO RSI ---
+            if c_rsi > 65:
+                factors_detailed.append({"k": "Agotamiento", "v": f"RSI {c_rsi:.1f} > 65 (-30)", "score": -30})
+                score -= 30
+                factors_detailed.append({"k": "Peligro Macro", "v": "Contra-Tendencia (-10)", "score": -10})
+            elif (m1_aligned_up or is_above_all_emas) and not confirmed_uptrend:
+                factors_detailed.append({"k": "Giro Confirmado", "v": "Alineación M1/Triple (+5)", "score": 5})
             if was_squeezed_recently: factors_detailed.append({"k": "Squeeze", "v": "Confirmado", "score": 5})
             factors_detailed.append({"k": "Ignición", "v": f"{(body_size/curr_atr):.1f} ATR", "score": 5})
             factors_detailed.append({"k": "Volumen", "v": f"{(rel_vol):.1f}x", "score": 5})
@@ -221,6 +270,11 @@ class PSTScalperPro:
             factors_detailed.append({"k": "Ignición", "v": f"{(body_size/curr_atr):.1f} ATR", "score": 5})
             factors_detailed.append({"k": "Volumen", "v": f"{(rel_vol):.1f}x", "score": 5})
             if recent_sell_abs: factors_detailed.append({"k": "SMC (VSA)", "v": "Distribución Bajista Previa", "score": 10})
+            
+            # --- NUEVO v2.0.6: FILTRO DE AGOTAMIENTO RSI (SELL) ---
+            if c_rsi < 35:
+                factors_detailed.append({"k": "Agotamiento", "v": f"RSI {c_rsi:.1f} < 35 (-30)", "score": -30})
+                score -= 30
             
             swing_high = df_base['high'].tail(15).max()
             min_sl_dist = curr_atr * 1.0

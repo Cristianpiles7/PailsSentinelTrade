@@ -216,9 +216,9 @@ class PSTScalperActive:
         was_below_ema = bool((df_base['close'].iloc[prior_slice] <= ema21.iloc[prior_slice]).all())
         was_above_ema = bool((df_base['close'].iloc[prior_slice] >= ema21.iloc[prior_slice]).all())
         
-        # Filtro de Lanzamiento (Anchor): La vela debe nacer muy cerca de la EMA.
-        anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.25)
-        anchor_ok_bear = abs(c_open - c_ema21) < (curr_atr * 0.25)
+        # Filtro de Lanzamiento (Anchor): La vela debe nacer cerca de la EMA (Relajado de 0.25 a 0.35 para frecuencia).
+        anchor_ok_bull = abs(c_open - c_ema21) < (curr_atr * 0.35)
+        anchor_ok_bear = abs(c_open - c_ema21) < (curr_atr * 0.35)
         
         # Filtro de Agotamiento RSI
         rsi_ok_bull = curr_rsi < 70

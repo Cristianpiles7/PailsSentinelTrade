@@ -100,13 +100,14 @@ STRATEGY_CATEGORIES = {
     "PST-Manual": "CORE"
 }
 
-# PARALLEL OPERATIVE LIMITS
-MAX_POSITIONS_PER_CATEGORY = {"CORE": 2, "SCALPING": 4, "AI": 1}
-MAX_SYMBOL_EXPOSURE_PCT = 1.25  # Riesgo total sumado por activo
+# PARALLEL OPERATIVE LIMITS (Relajados v2.0.3)
+MAX_POSITIONS_PER_CATEGORY = {"CORE": 5, "SCALPING": 6, "AI": 1}
+MAX_SYMBOL_EXPOSURE_PCT = 2.5   # Permitimos mayor exposición acumulada por símbolo
 
 # SCALPER DEFAULTS
 SCALPER_TARGETS = ["BTCUSD", "ETHUSD", "US500.cash", "XAUUSD", "EURUSD", "NAS100"]
-SCALPER_RISK_DEFAULT = 0.08 # Reducido a 0.08% para mantener pérdidas entre 5-10€
+SCALPER_RISK_DEFAULT = 0.08 # % por operación
+SCALPER_MAX_LOSS_EUR = 12.0 # NUEVO: Tope nominal estricto para proteger el balance alto.
 
 # Estrategias activas globalmente (Nombres internos estándar)
 ENABLED_STRATEGIES = [

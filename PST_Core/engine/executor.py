@@ -101,15 +101,15 @@ class PSTExecutor:
         real_sl_atr = atr_unit * sl_m
         real_tp_atr = atr_unit * tp_m
 
-        # --- PROTECCIÓN DE SPREAD (v1.8.7) ---
-        # Si el spread consume más del 35% del SL, la operación no es rentable de inicio
+        # --- PROTECCIÓN DE SPREAD (v2.0.3 - Relajado para Rebotes) ---
+        # Subimos del 35% al 55% para evitar bloqueos en alta volatilidad
         spread_pts = s_info.spread
         point = s_info.point
         spread_dist = spread_pts * point
-        max_spread_allowed = real_sl_atr * 0.35
+        max_spread_allowed = real_sl_atr * 0.55
         
         if spread_dist > max_spread_allowed:
-            logger.warning(f"🛑 [SPREAD BLOCK] {symbol} rechazado. Spread {spread_dist:.5f} > Max permitido {max_spread_allowed:.5f} (35% SL)")
+            logger.warning(f"🛑 [SPREAD BLOCK] {symbol} rechazado. Spread {spread_dist:.5f} > Max permitido {max_spread_allowed:.5f} (55% SL)")
             return
 
         # 1.3 Obtener parámetros TS/BE de la base de datos
@@ -206,7 +206,8 @@ class PSTExecutor:
             current_atr=current_atr,
             ma_atr=ma_atr,
             risk_mode=risk_mode,
-            risk_value=risk_val
+            risk_value=risk_val,
+            regime=regime
         )
 
         # B. CALCULAR TAKE PROFIT DINÁMICO POR VOLATILIDAD (FASE 56)
@@ -578,14 +579,12 @@ class PSTExecutor:
                                         new_sl = p.price_open + (2 * s_info.point) if p_type == "BUY" else p.price_open - (2 * s_info.point)
                                         logger.info(f"🛡️ [PARTIAL BE] {symbol} SL movido a Breakeven tras cierre parcial.")
 
-                # F. LÓGICA DE TIME-OUT (Exclusivo Scalping)
-                if "Scalper" in p.comment:
-                    # Si el trade lleva más de 45 min abierto, cerramos si no hay profit claro
+                    # Si el trade lleva más de 30 min abierto, cerramos si no hay profit claro
                     time_open = datetime.now() - datetime.fromtimestamp(p.time_setup if hasattr(p, 'time_setup') else p.time)
                     # --- FIX: Solo cerrar por timeout si el mercado está abierto ---
                     is_full_tradable = s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL if s_info else False
-                    if time_open.total_seconds() > (45 * 60) and is_full_tradable: # 45 Minutos
-                        logger.warning(f"⏳ [TIME-OUT] Scalp {symbol} (Ticket: {ticket}) excedió 45 min. Cerrando por estancamiento.")
+                    if time_open.total_seconds() > (30 * 60) and is_full_tradable: # 30 Minutos
+                        logger.warning(f"⏳ [TIME-OUT] Scalp {symbol} (Ticket: {ticket}) excedió 30 min. Cerrando por estancamiento.")
                         close_req = {
                             "action": mt5.TRADE_ACTION_DEAL,
                             "position": ticket,

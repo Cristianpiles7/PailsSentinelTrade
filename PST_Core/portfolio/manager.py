@@ -3,6 +3,7 @@ import MetaTrader5 as mt5
 import aiosqlite
 from typing import Dict, List
 from ..utils.tech_utils import get_asset_class
+from ..config import SCALPER_MAX_LOSS_EUR, STRATEGY_CATEGORIES
 
 logger = logging.getLogger("PST-Portfolio")
 
@@ -268,7 +269,7 @@ class PortfolioManager:
         # 4. FOREX (Default 1:100)
         return 100, 7000, "FOREX"
 
-    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info, current_atr=None, ma_atr=None, open_positions_count=0, risk_mode="LOTS", risk_value=None):
+    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info, current_atr=None, ma_atr=None, open_positions_count=0, risk_mode="LOTS", risk_value=None, regime="TREND"):
         """
         Calcula el lotaje usando Lógica Híbrida de Riesgo Dinámico y Cubetas de Margen (FTMO Rules).
         Soporta modos: LOTS (fijo), PCT (% balance), MONEY (nominal €).
@@ -294,12 +295,26 @@ class PortfolioManager:
             # Fallback a cálculo por riesgo global
             risk_money = balance * (risk_per_trade_pct / 100)
 
+        # --- NEW: NOMINAL CAP FOR SCALPING (v2.0.1) ---
+        # Si arriesgar el % del balance supera el tope nominal, usamos el tope.
+        if risk_money > SCALPER_MAX_LOSS_EUR:
+             # Necesitamos saber si es scalping. El orquestador pasa el risk_per_trade_pct específico.
+             # Si el riesgo base es el de scalper (0.08), aplicamos el cap.
+             if abs(risk_per_trade_pct - 0.08) < 0.001: 
+                 logger.info(f"🛡️ [SCALP CAP] Riesgo de {risk_money:.2f}€ excede el máximo de {SCALPER_MAX_LOSS_EUR}€. Ajustando nomina a {SCALPER_MAX_LOSS_EUR}€.")
+                 risk_money = SCALPER_MAX_LOSS_EUR
+
         # --- 2. DYNAMIC RISK SCALING (ARRIESGAR MENOS SI HAY EXPOSICIÓN) ---
         # Reducción de riesgo si hay muchos trades abiertos
         if open_positions_count >= 2:
             risk_money *= 0.70
         if open_positions_count >= 5:
             risk_money *= 0.50
+            
+        # --- NEW: REGIME RISK ADJUSTMENT (v2.0.1) ---
+        if regime == "VOLATILE":
+            logger.info("⚡ [VOLATILE RISK] Reduciendo riesgo un 25% por régimen volátil.")
+            risk_money *= 0.75
             
         # --- 3. VOLATILITY ADJUSTMENT ---
         if current_atr and ma_atr and ma_atr > 0:
