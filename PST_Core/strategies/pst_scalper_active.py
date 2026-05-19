@@ -25,31 +25,35 @@ class PSTScalperActive:
         self.ASSET_PROFILES = {
             "CRYPTO": {
                 "vol_requisite": 1.25,      
-                "min_rr": 1.5,             
+                "min_rr": 1.45,             
                 "hysteresis_atr": 0.35,    
                 "sl_margin_atr": 1.5,
-                "max_extension_atr": 1.0 # Reducido de 1.4: Evita comprar en techos
+                "max_extension_atr": 1.0, # Reducido de 1.4: Evita comprar en techos
+                "score_threshold": 72
             },
             "METAL": {
-                "vol_requisite": 1.25,      
+                "vol_requisite": 1.30,      
                 "min_rr": 1.5,            
                 "hysteresis_atr": 0.15,    
                 "sl_margin_atr": 2.0,
-                "max_extension_atr": 1.0 # Reducido de 1.2
+                "max_extension_atr": 0.95, # Reducido de 1.2
+                "score_threshold": 74
             },
             "INDEX": {
-                "vol_requisite": 1.25,
-                "min_rr": 1.5,
+                "vol_requisite": 1.30,
+                "min_rr": 1.55,
                 "hysteresis_atr": 0.2,
                 "sl_margin_atr": 2.5,
-                "max_extension_atr": 1.0 # Reducido de 1.2
+                "max_extension_atr": 0.95, # Reducido de 1.2
+                "score_threshold": 76
             },
             "FOREX": {
                 "vol_requisite": 1.15,
                 "min_rr": 1.3,
                 "hysteresis_atr": 0.15,
                 "sl_margin_atr": 1.5,
-                "max_extension_atr": 1.1
+                "max_extension_atr": 1.1,
+                "score_threshold": 68
             }
         }
         # Fallback profile por si no se identifica
@@ -110,6 +114,8 @@ class PSTScalperActive:
         asset_class = get_asset_class(symbol)
         profile = self.ASSET_PROFILES.get(asset_class, self.DEFAULT_PROFILE)
         min_rr = float(kwargs.get("min_rr", profile["min_rr"]) or profile["min_rr"])
+        asset_threshold = float(kwargs.get("score_threshold", profile["score_threshold"]) or profile["score_threshold"])
+        entry_threshold = max(asset_threshold, profile["score_threshold"])
 
         ema21 = ta.ema(df_base['close'], length=self.ema_mid)
         rsi = ta.rsi(df_base['close'], length=self.rsi_length)
@@ -271,7 +277,7 @@ class PSTScalperActive:
         if confirmed_downtrend and not is_breakout_down and (c_price < c_ema21) and (dist_to_ema > curr_atr * profile['max_extension_atr']) and (dist_to_ema <= stalk_extension_limit):
             is_stalking_bear = True
 
-        threshold = kwargs.get('score_threshold', 70) # Bajar threshold
+        threshold = entry_threshold
 
         # Evaluamos
         if is_breakout_up:
@@ -322,12 +328,12 @@ class PSTScalperActive:
             if is_stalking_bull:
                 mode_label = f"STALKING_UP_{tf_label}"
                 entry = 0
-                score = 60
+                score = max(58, threshold - 14)
                 factors_detailed.append({"k": "Acecho", "v": "Pullback Alcista", "score": 10})
             else:
                 mode_label = f"STALKING_DN_{tf_label}"
                 entry = 0
-                score = 60
+                score = max(58, threshold - 14)
                 factors_detailed.append({"k": "Acecho", "v": "Pullback Bajista", "score": 10})
             target_price_tp = 0.0
             target_price_sl = 0.0
@@ -388,7 +394,7 @@ class PSTScalperActive:
             passive_score += trend_pts
             factors_detailed.append({"k": "Tendencia", "v": "A Favor" if trend_pts else "Mixta", "score": trend_pts})
             
-            score = min(74, passive_score) # Maximo 74 si no hay entry
+            score = min(max(threshold - 1, 0), passive_score) # Siempre por debajo del umbral de entrada
 
         final_score = min(100, max(0, score))
 
@@ -427,6 +433,7 @@ class PSTScalperActive:
                 "target_price_tp": round(target_price_tp, 5) if entry != 0 else 0,
                 "target_price_sl": round(target_price_sl, 5) if entry != 0 else 0,
                 "rr_ratio": round(min_rr, 2),
+                "score_threshold": round(threshold, 2),
                 "use_breakeven": False, 
                 "threshold_used": threshold
             }

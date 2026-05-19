@@ -7,6 +7,7 @@ from ..config import (
     MAX_SCALPER_SL_POINTS, 
     MIN_RR_RATIO
 )
+from ..utils.tech_utils import get_asset_class
 
 logger = logging.getLogger("PST-Scalper-Pro")
 
@@ -20,6 +21,37 @@ class PSTScalperPro:
         self.bb_length = 20
         self.bb_std = 2.0
         self.min_rr = MIN_RR_RATIO
+        self.ASSET_PROFILES = {
+            "CRYPTO": {
+                "vol_requisite": 1.35,
+                "min_rr": 1.80,
+                "hysteresis_atr": 0.30,
+                "max_extension_atr": 0.95,
+                "score_threshold": 84,
+            },
+            "METAL": {
+                "vol_requisite": 1.30,
+                "min_rr": 1.85,
+                "hysteresis_atr": 0.18,
+                "max_extension_atr": 0.90,
+                "score_threshold": 86,
+            },
+            "INDEX": {
+                "vol_requisite": 1.35,
+                "min_rr": 1.90,
+                "hysteresis_atr": 0.22,
+                "max_extension_atr": 0.90,
+                "score_threshold": 88,
+            },
+            "FOREX": {
+                "vol_requisite": 1.20,
+                "min_rr": 1.70,
+                "hysteresis_atr": 0.18,
+                "max_extension_atr": 1.00,
+                "score_threshold": 82,
+            },
+        }
+        self.DEFAULT_PROFILE = self.ASSET_PROFILES["FOREX"]
 
     async def calculate_signal(self, mtf_data, current_regime=None, user_levels=None, spread_points=0, spread_dist=0, **kwargs):
         """
@@ -74,6 +106,9 @@ class PSTScalperPro:
         }
 
     def _evaluate_tf(self, df_base, df_trend1, df_trend2, spread_dist, tf_label, **kwargs):
+        symbol = kwargs.get("symbol", "").upper()
+        asset_class = get_asset_class(symbol)
+        profile = self.ASSET_PROFILES.get(asset_class, self.DEFAULT_PROFILE)
         signal_idx = -2
 
         ema21 = ta.ema(df_base['close'], length=self.ema_mid)
@@ -164,7 +199,9 @@ class PSTScalperPro:
             if m1_ema21 > m1_ema50: m1_aligned_up = True
             if m1_ema21 < m1_ema50: m1_aligned_down = True
 
-        min_rr = float(kwargs.get("min_rr", self.min_rr) or self.min_rr)
+        min_rr = float(kwargs.get("min_rr", profile["min_rr"]) or profile["min_rr"])
+        asset_threshold = float(kwargs.get("score_threshold", profile["score_threshold"]) or profile["score_threshold"])
+        threshold = max(asset_threshold, profile["score_threshold"])
 
         score = 0
         entry = 0
@@ -186,20 +223,20 @@ class PSTScalperPro:
             _v_ma = vol_ma.iloc[idx] if vol_ma is not None else 1
             _v_rel = df_base['tick_volume'].iloc[idx] / _v_ma if _v_ma > 0 else 0
             
-            if _v_rel > 1.5:
+            if _v_rel > profile["vol_requisite"]:
                 if _lower_wick > (_body * 2): recent_buy_abs = True
                 if _upper_wick > (_body * 2): recent_sell_abs = True
 
         is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.5)
         is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.5)
         
-        has_volume = rel_vol > 1.5
+        has_volume = rel_vol > profile["vol_requisite"]
         
         # [OPCIÓN B] Hysteresis Dinámico (Agilidad v6.6): 
-        hysteresis = curr_atr * 0.35
+        hysteresis = curr_atr * profile["hysteresis_atr"]
         
         dist_to_ema = abs(c_price - c_ema21)
-        anti_fomo_ok = dist_to_ema <= curr_atr * 1.8 
+        anti_fomo_ok = dist_to_ema <= curr_atr * profile["max_extension_atr"]
         
         prior_slice = slice(len(df_base) - 6, len(df_base) - 2)
         was_below_ema = bool((df_base['close'].iloc[prior_slice] <= ema21.iloc[prior_slice]).all())
@@ -236,8 +273,6 @@ class PSTScalperPro:
             not is_overextended_down
         )
         
-        threshold = kwargs.get('score_threshold', 80)
-
         if is_perfect_breakout_up:
             mode_label = f"BREAKOUT_UP_V6_{tf_label}"
             # Penalizamos la rotura "Counter-Trend" con 10 puntos menos para requerir confirmación por el usuario
@@ -363,7 +398,7 @@ class PSTScalperPro:
             factors_detailed.append({"k": "Squeeze/Institucional", "v": "SÍ" if (was_squeezed_recently or recent_buy_abs or recent_sell_abs) else "NO", "score": 0, "desc": "Compresión o participación fuerte detectada."})
             factors_detailed.append({"k": "Cuerpo Vela", "v": f"{body_ratio*100:.0f}%", "score": 0, "desc": "Fuerza direccional interna de la vela."})
             
-            score = min(79, passive_score)
+            score = min(max(threshold - 1, 0), passive_score)
 
         final_score = min(100, max(0, score))
 
@@ -404,6 +439,7 @@ class PSTScalperPro:
                 "target_price_tp": round(target_price_tp, 5) if entry != 0 else 0,
                 "target_price_sl": round(target_price_sl, 5) if entry != 0 else 0,
                 "rr_ratio": round(min_rr, 2),
+                "score_threshold": round(threshold, 2),
                 "use_breakeven": False, 
                 "threshold_used": threshold
             }

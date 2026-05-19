@@ -644,7 +644,15 @@ class SymbolTask:
                                                             has_opposite = True
                                                             break
                                             
-                                            min_score = 85 if has_opposite else 70
+                                            entry_threshold = s_meta.get("threshold_used")
+                                            if entry_threshold is None:
+                                                entry_threshold = s_params.get("score_threshold", 70)
+                                            try:
+                                                entry_threshold = float(entry_threshold)
+                                            except (TypeError, ValueError):
+                                                entry_threshold = 70.0
+
+                                            min_score = max(entry_threshold, 85) if has_opposite else entry_threshold
                                             
                                             if s_score >= min_score:
                                                 if has_opposite:
