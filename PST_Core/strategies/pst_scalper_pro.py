@@ -19,12 +19,19 @@ class PSTScalperPro:
         self.rsi_length = 14
         self.bb_length = 20
         self.bb_std = 2.0
-        self.min_rr = 1.8
+        self.min_rr = MIN_RR_RATIO
 
     async def calculate_signal(self, mtf_data, current_regime=None, user_levels=None, spread_points=0, spread_dist=0, **kwargs):
         """
         Scalper Pro v6.5 (Omni-Timeframe): EMA Breakout + Telemetría Dinámica.
         """
+        if current_regime == "OFFLINE":
+            return {
+                "score": 0,
+                "signal": "NEUTRAL",
+                "metadata": {"mode": "OFFLINE", "factors_detailed": []},
+            }
+
         df_m1 = mtf_data.get('m1') if isinstance(mtf_data, dict) else mtf_data
         df_m3 = mtf_data.get('m3')
         df_m5 = mtf_data.get('m5')
@@ -67,6 +74,8 @@ class PSTScalperPro:
         }
 
     def _evaluate_tf(self, df_base, df_trend1, df_trend2, spread_dist, tf_label, **kwargs):
+        signal_idx = -2
+
         ema21 = ta.ema(df_base['close'], length=self.ema_mid)
         rsi = ta.rsi(df_base['close'], length=self.rsi_length)
         atr = ta.atr(df_base['high'], df_base['low'], df_base['close'], length=14)
@@ -86,8 +95,8 @@ class PSTScalperPro:
             upper_kc = kc.iloc[:, 2]
             
             is_squeeze_series = (upper_bb < upper_kc) & (lower_bb > lower_kc)
-            is_squeeze = is_squeeze_series.iloc[-1]
-            was_squeezed_recently = is_squeeze_series.iloc[-15:-1].any()
+            is_squeeze = is_squeeze_series.iloc[signal_idx]
+            was_squeezed_recently = is_squeeze_series.iloc[-17:signal_idx].any()
         except Exception as e:
             is_squeeze, was_squeezed_recently = False, False
             try:
@@ -97,23 +106,23 @@ class PSTScalperPro:
             except Exception:
                 return {"score": 0, "signal": "NEUTRAL", "metadata": {"mode": f"Error_BB_{tf_label}", "factors_detailed": []}}
 
-        c_price = df_base['close'].iloc[-1]
-        c_open = df_base['open'].iloc[-1]
-        c_rsi = rsi.iloc[-1]
+        c_price = df_base['close'].iloc[signal_idx]
+        c_open = df_base['open'].iloc[signal_idx]
+        c_rsi = rsi.iloc[signal_idx]
         body_size = abs(c_price - c_open)
-        c_high = df_base['high'].iloc[-1]
-        c_low = df_base['low'].iloc[-1]
+        c_high = df_base['high'].iloc[signal_idx]
+        c_low = df_base['low'].iloc[signal_idx]
         
-        c_ema21 = ema21.iloc[-1]
-        curr_atr = atr.iloc[-1]
-        curr_rsi = rsi.iloc[-1]
-        curr_adx = adx_df['ADX_14'].iloc[-1]
+        c_ema21 = ema21.iloc[signal_idx]
+        curr_atr = atr.iloc[signal_idx]
+        curr_rsi = rsi.iloc[signal_idx]
+        curr_adx = adx_df['ADX_14'].iloc[signal_idx]
 
-        c_upper_bb = upper_bb.iloc[-1]
-        c_lower_bb = lower_bb.iloc[-1]
+        c_upper_bb = upper_bb.iloc[signal_idx]
+        c_lower_bb = lower_bb.iloc[signal_idx]
         
-        curr_vol = df_base['tick_volume'].iloc[-1]
-        mean_vol = vol_ma.iloc[-2]
+        curr_vol = df_base['tick_volume'].iloc[signal_idx]
+        mean_vol = vol_ma.iloc[signal_idx]
         rel_vol = curr_vol / mean_vol if mean_vol > 0 else 1.0
         
         body_size = abs(c_price - c_open)
@@ -125,20 +134,20 @@ class PSTScalperPro:
         confirmed_downtrend = False
         if df_trend1 is not None:
             ema50_t1 = ta.ema(df_trend1['close'], length=50)
-            if ema50_t1 is not None and df_trend1['close'].iloc[-1] > ema50_t1.iloc[-1]: confirmed_uptrend = True
-            if ema50_t1 is not None and df_trend1['close'].iloc[-1] < ema50_t1.iloc[-1]: confirmed_downtrend = True
+            if ema50_t1 is not None and df_trend1['close'].iloc[-2] > ema50_t1.iloc[-2]: confirmed_uptrend = True
+            if ema50_t1 is not None and df_trend1['close'].iloc[-2] < ema50_t1.iloc[-2]: confirmed_downtrend = True
             
         if df_trend2 is not None:
             ema50_t2 = ta.ema(df_trend2['close'], length=50)
-            if ema50_t2 is not None and df_trend2['close'].iloc[-1] > ema50_t2.iloc[-1]: confirmed_uptrend = True
-            if ema50_t2 is not None and df_trend2['close'].iloc[-1] < ema50_t2.iloc[-1]: confirmed_downtrend = True
+            if ema50_t2 is not None and df_trend2['close'].iloc[-2] > ema50_t2.iloc[-2]: confirmed_uptrend = True
+            if ema50_t2 is not None and df_trend2['close'].iloc[-2] < ema50_t2.iloc[-2]: confirmed_downtrend = True
 
         # --- NEW: FILTRO ANTI-TECHOS M15 (v2.0.1) ---
         is_overextended_up = False
         is_overextended_down = False
         if df_trend1 is not None and len(df_trend1) >= 50:
-            ema50_m15 = ta.ema(df_trend1['close'], length=50).iloc[-1]
-            atr_m15 = ta.atr(df_trend1['high'], df_trend1['low'], df_trend1['close'], length=14).iloc[-1]
+            ema50_m15 = ta.ema(df_trend1['close'], length=50).iloc[-2]
+            atr_m15 = ta.atr(df_trend1['high'], df_trend1['low'], df_trend1['close'], length=14).iloc[-2]
             if (c_price - ema50_m15) > (atr_m15 * 2.6): # Relajado v2.0.2
                 is_overextended_up = True
             if (ema50_m15 - c_price) > (atr_m15 * 2.6):
@@ -150,10 +159,12 @@ class PSTScalperPro:
         mtf_data = kwargs.get('mtf_data')
         df_m1 = mtf_data.get('m1') if isinstance(mtf_data, dict) else None
         if df_m1 is not None and len(df_m1) >= 50:
-            m1_ema21 = ta.ema(df_m1['close'], length=21).iloc[-1]
-            m1_ema50 = ta.ema(df_m1['close'], length=50).iloc[-1]
+            m1_ema21 = ta.ema(df_m1['close'], length=21).iloc[-2]
+            m1_ema50 = ta.ema(df_m1['close'], length=50).iloc[-2]
             if m1_ema21 > m1_ema50: m1_aligned_up = True
             if m1_ema21 < m1_ema50: m1_aligned_down = True
+
+        min_rr = float(kwargs.get("min_rr", self.min_rr) or self.min_rr)
 
         score = 0
         entry = 0
@@ -166,7 +177,7 @@ class PSTScalperPro:
         # Filtro VSA (Volume Spread Analysis)
         recent_buy_abs = False
         recent_sell_abs = False
-        for i in range(-15, 0):
+        for i in range(-16, -1):
             idx = len(df_base) + i
             if idx < 0: continue
             _body = abs(df_base['close'].iloc[idx] - df_base['open'].iloc[idx])
@@ -190,15 +201,19 @@ class PSTScalperPro:
         dist_to_ema = abs(c_price - c_ema21)
         anti_fomo_ok = dist_to_ema <= curr_atr * 1.8 
         
-        was_below_ema = all(df_base['close'].iloc[-5:-1] <= ema21.iloc[-5:-1])
-        was_above_ema = all(df_base['close'].iloc[-5:-1] >= ema21.iloc[-5:-1])
+        prior_slice = slice(len(df_base) - 6, len(df_base) - 2)
+        was_below_ema = bool((df_base['close'].iloc[prior_slice] <= ema21.iloc[prior_slice]).all())
+        was_above_ema = bool((df_base['close'].iloc[prior_slice] >= ema21.iloc[prior_slice]).all())
         
         # --- NUEVO v2.0.5: TRIPLE BREAKOUT DETECTION ---
         # Detectamos si el precio está rompiendo el conjunto de EMA9, 21 y 50
-        ema9 = ta.ema(df_base['close'], length=9).iloc[-1]
-        ema50 = ta.ema(df_base['close'], length=50).iloc[-1]
+        ema9_series = ta.ema(df_base['close'], length=9)
+        ema50_series = ta.ema(df_base['close'], length=50)
+        ema9 = ema9_series.iloc[signal_idx]
+        ema50 = ema50_series.iloc[signal_idx]
         
-        is_breaking_ema50_up = (df_base['close'].iloc[-2] < ta.ema(df_base['close'], length=50).iloc[-2]) and (c_price > ema50)
+        prev_ema50 = ema50_series.iloc[signal_idx - 1]
+        is_breaking_ema50_up = (df_base['close'].iloc[signal_idx - 1] < prev_ema50) and (c_price > ema50)
         is_above_all_emas = c_price > ema9 and c_price > c_ema21 and c_price > ema50
         
         is_perfect_breakout_up = (
@@ -257,7 +272,7 @@ class PSTScalperPro:
             target_price_sl = min(swing_low - (curr_atr * 0.2), c_price - min_sl_dist)
             
             sl_dist = c_price - target_price_sl
-            target_price_tp = max(c_upper_bb, c_price + (sl_dist * self.min_rr))
+            target_price_tp = max(c_upper_bb, c_price + (sl_dist * min_rr))
             
         elif is_perfect_breakout_down:
             mode_label = f"BREAKOUT_DN_V6_{tf_label}"
@@ -281,7 +296,7 @@ class PSTScalperPro:
             target_price_sl = max(swing_high + (curr_atr * 0.2), c_price + min_sl_dist)
             
             sl_dist = target_price_sl - c_price
-            target_price_tp = min(c_lower_bb, c_price - (sl_dist * self.min_rr))
+            target_price_tp = min(c_lower_bb, c_price - (sl_dist * min_rr))
 
         if not entry:
             passive_score = 0
@@ -356,7 +371,7 @@ class PSTScalperPro:
             target_sl_dist = abs(c_price - target_price_sl)
             target_tp_dist = abs(c_price - target_price_tp)
             
-            if spread_dist > (target_tp_dist * 0.25):
+            if spread_dist > (target_sl_dist * 0.35):
                 final_score -= 30
                 entry = 0
                 factors_detailed.append({
@@ -388,6 +403,7 @@ class PSTScalperPro:
                 "adx": round(curr_adx, 1),
                 "target_price_tp": round(target_price_tp, 5) if entry != 0 else 0,
                 "target_price_sl": round(target_price_sl, 5) if entry != 0 else 0,
+                "rr_ratio": round(min_rr, 2),
                 "use_breakeven": False, 
                 "threshold_used": threshold
             }
@@ -395,6 +411,26 @@ class PSTScalperPro:
 
     def check_exit_signal(self, mtf_data, p_type: str) -> bool:
         """
-        Salida dinámica: Desactivada.
+        Salida dinámica: cruce de EMA21 en vela cerrada con buffer de seguridad.
         """
+        df_m1 = mtf_data.get('m1') if isinstance(mtf_data, dict) else mtf_data
+        if df_m1 is None or len(df_m1) < 25:
+            return False
+
+        signal_idx = -2
+        c_price = df_m1['close'].iloc[signal_idx]
+        ema21 = ta.ema(df_m1['close'], length=self.ema_mid)
+        atr_series = ta.atr(df_m1['high'], df_m1['low'], df_m1['close'], length=14)
+
+        if ema21 is None or atr_series is None:
+            return False
+
+        c_ema21 = ema21.iloc[signal_idx]
+        curr_atr = atr_series.iloc[signal_idx]
+        exit_buffer = curr_atr * 0.10
+
+        if p_type == "BUY" and c_price < (c_ema21 - exit_buffer):
+            return True
+        if p_type == "SELL" and c_price > (c_ema21 + exit_buffer):
+            return True
         return False

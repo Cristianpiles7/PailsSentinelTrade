@@ -109,6 +109,7 @@ class PSTScalperActive:
         # Uso del clasificador estándar global para TSLA, NVDA, Crypto, etc.
         asset_class = get_asset_class(symbol)
         profile = self.ASSET_PROFILES.get(asset_class, self.DEFAULT_PROFILE)
+        min_rr = float(kwargs.get("min_rr", profile["min_rr"]) or profile["min_rr"])
 
         ema21 = ta.ema(df_base['close'], length=self.ema_mid)
         rsi = ta.rsi(df_base['close'], length=self.rsi_length)
@@ -259,11 +260,16 @@ class PSTScalperActive:
             rsi_ok_bear
         )
         
-        # --- NUEVA LÓGICA DE STALKING (DESHABILITADA TRAS AUDITORÍA) ---
-        # Se ha demostrado ineficiente absorbiendo ruido y giros falsos.
-        # Deshabilitado para forzar a la estrategia a operar solo Breakouts con volumen institutivo.
+        # --- NUEVA LÓGICA DE STALKING ---
+        # Si la tendencia es buena pero la entrada aún está extendida, dejamos al
+        # orquestador vigilando el pullback a la EMA21 en lugar de forzar una rotura tardía.
         is_stalking_bull = False
         is_stalking_bear = False
+        stalk_extension_limit = curr_atr * (profile['max_extension_atr'] + 1.1)
+        if confirmed_uptrend and not is_breakout_up and (c_price > c_ema21) and (dist_to_ema > curr_atr * profile['max_extension_atr']) and (dist_to_ema <= stalk_extension_limit):
+            is_stalking_bull = True
+        if confirmed_downtrend and not is_breakout_down and (c_price < c_ema21) and (dist_to_ema > curr_atr * profile['max_extension_atr']) and (dist_to_ema <= stalk_extension_limit):
+            is_stalking_bear = True
 
         threshold = kwargs.get('score_threshold', 70) # Bajar threshold
 
@@ -289,7 +295,7 @@ class PSTScalperActive:
             
             sl_dist = c_price - target_price_sl
             # TP rápido para scalping alta frecuencia adaptativo
-            target_price_tp = c_price + (sl_dist * profile['min_rr'])
+            target_price_tp = c_price + (sl_dist * min_rr)
             
         elif is_breakout_down:
             mode_label = f"BREAKOUT_DN_ACTIVE_{tf_label}"
@@ -310,9 +316,23 @@ class PSTScalperActive:
             target_price_sl = max(swing_high + (curr_atr * 0.1), c_price + min_sl_dist)
             
             sl_dist = target_price_sl - c_price
-            target_price_tp = c_price - (sl_dist * profile['min_rr'])
+            target_price_tp = c_price - (sl_dist * min_rr)
 
-        if not entry:
+        elif is_stalking_bull or is_stalking_bear:
+            if is_stalking_bull:
+                mode_label = f"STALKING_UP_{tf_label}"
+                entry = 0
+                score = 60
+                factors_detailed.append({"k": "Acecho", "v": "Pullback Alcista", "score": 10})
+            else:
+                mode_label = f"STALKING_DN_{tf_label}"
+                entry = 0
+                score = 60
+                factors_detailed.append({"k": "Acecho", "v": "Pullback Bajista", "score": 10})
+            target_price_tp = 0.0
+            target_price_sl = 0.0
+
+        if not entry and not (is_stalking_bull or is_stalking_bear):
             passive_score = 0
             
             status_msg = ""
@@ -376,7 +396,7 @@ class PSTScalperActive:
             target_sl_dist = abs(c_price - target_price_sl)
             target_tp_dist = abs(c_price - target_price_tp)
             
-            if spread_dist > (target_sl_dist * 0.40):  # Mayor tolerancia al spread (hasta un 40% del SL en vez del TP)
+            if spread_dist > (target_sl_dist * 0.35):
                 final_score -= 30
                 entry = 0
                 factors_detailed.append({
@@ -388,7 +408,7 @@ class PSTScalperActive:
                 factors_detailed.append({"k": "TP Lógico", "v": "Rápido (1.3R)", "score": 0})
                 factors_detailed.append({"k": "SL Lógico", "v": "Dinámico", "score": 0})
 
-        is_stalking = True if (entry != 0 and 'STALKING' in mode_label) else False
+        is_stalking = True if (is_stalking_bull or is_stalking_bear) else False
 
         return {
             "strategy": self.STRATEGY_NAME,
@@ -406,6 +426,7 @@ class PSTScalperActive:
                 "adx": round(curr_adx, 1),
                 "target_price_tp": round(target_price_tp, 5) if entry != 0 else 0,
                 "target_price_sl": round(target_price_sl, 5) if entry != 0 else 0,
+                "rr_ratio": round(min_rr, 2),
                 "use_breakeven": False, 
                 "threshold_used": threshold
             }
@@ -418,14 +439,15 @@ class PSTScalperActive:
         df_m1 = mtf_data.get('m1') if isinstance(mtf_data, dict) else mtf_data
         if df_m1 is None or len(df_m1) < 25: return False
         
-        c_price = df_m1['close'].iloc[-1]
+        signal_idx = -2
+        c_price = df_m1['close'].iloc[signal_idx]
         ema21 = ta.ema(df_m1['close'], length=self.ema_mid)
         atr_series = ta.atr(df_m1['high'], df_m1['low'], df_m1['close'], length=14)
         
         if ema21 is None or atr_series is None: return False
         
-        c_ema21 = ema21.iloc[-1]
-        curr_atr = atr_series.iloc[-1]
+        c_ema21 = ema21.iloc[signal_idx]
+        curr_atr = atr_series.iloc[signal_idx]
         
         # Salida por cruce contrario de EMA21 con Histéresis de seguridad
         # Añadimos un pequeño buffer (10% del ATR) para evitar cierres por ruido/spread
