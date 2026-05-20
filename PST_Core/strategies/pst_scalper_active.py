@@ -47,6 +47,14 @@ class PSTScalperActive:
                 "max_extension_atr": 0.95, # Reducido de 1.2
                 "score_threshold": 76
             },
+            "EQUITIES": {
+                "vol_requisite": 1.35,      # Mayor volumen para confirmar participación
+                "min_rr": 1.60,             # Mayor relación Riesgo:Beneficio por volatilidad de acción
+                "hysteresis_atr": 0.25,    
+                "sl_margin_atr": 2.2,
+                "max_extension_atr": 0.90, # Filtro anti-fomo estricto
+                "score_threshold": 75
+            },
             "FOREX": {
                 "vol_requisite": 1.15,
                 "min_rr": 1.3,
@@ -169,18 +177,31 @@ class PSTScalperActive:
         total_range = max(0.00001, c_high - c_low)
         body_ratio = body_size / total_range
 
-        # Tendencia Superior
-        confirmed_uptrend = False
-        confirmed_downtrend = False
+        # Tendencia Superior Sincronizada y Excluyente
+        t1_up = True
+        t1_down = True
         if df_trend1 is not None:
             ema50_t1 = ta.ema(df_trend1['close'], length=50)
-            if ema50_t1 is not None and df_trend1['close'].iloc[-2] > ema50_t1.iloc[-2]: confirmed_uptrend = True
-            if ema50_t1 is not None and df_trend1['close'].iloc[-2] < ema50_t1.iloc[-2]: confirmed_downtrend = True
-            
+            if ema50_t1 is not None:
+                t1_up = df_trend1['close'].iloc[-2] > ema50_t1.iloc[-2]
+                t1_down = df_trend1['close'].iloc[-2] < ema50_t1.iloc[-2]
+            else:
+                t1_up = False
+                t1_down = False
+                
+        t2_up = True
+        t2_down = True
         if df_trend2 is not None:
             ema50_t2 = ta.ema(df_trend2['close'], length=50)
-            if ema50_t2 is not None and df_trend2['close'].iloc[-2] > ema50_t2.iloc[-2]: confirmed_uptrend = True
-            if ema50_t2 is not None and df_trend2['close'].iloc[-2] < ema50_t2.iloc[-2]: confirmed_downtrend = True
+            if ema50_t2 is not None:
+                t2_up = df_trend2['close'].iloc[-2] > ema50_t2.iloc[-2]
+                t2_down = df_trend2['close'].iloc[-2] < ema50_t2.iloc[-2]
+            else:
+                t2_up = False
+                t2_down = False
+                
+        confirmed_uptrend = t1_up and t2_up
+        confirmed_downtrend = t1_down and t2_down
 
         score = 0
         entry = 0
@@ -212,8 +233,14 @@ class PSTScalperActive:
         is_ignition_bull = (c_price > c_open) and (body_size > curr_atr * 0.75) and (upper_wick < body_size * 0.3)
         is_ignition_bear = (c_price < c_open) and (body_size > curr_atr * 0.75) and (lower_wick < body_size * 0.3)
         
-        # Volumen adaptativo según perfil
-        has_volume = rel_vol > profile['vol_requisite']
+        # Protección Dinámica contra Ruido Volátil y Filtros en Rango
+        curr_regime = kwargs.get('current_regime', 'TREND')
+        is_volatile = curr_regime == "VOLATILE"
+        is_range = curr_regime == "RANGE"
+        
+        # Volumen adaptativo según perfil (aumentamos exigencia un 35% en rango lateral para confirmar fuerza real)
+        vol_req = profile['vol_requisite'] * 1.35 if is_range else profile['vol_requisite']
+        has_volume = rel_vol > vol_req
         
         dist_to_ema = abs(c_price - c_ema21)
         anti_fomo_ok = dist_to_ema <= curr_atr * profile['max_extension_atr']
@@ -236,11 +263,8 @@ class PSTScalperActive:
         context_ok_up = was_squeezed_recently or recent_buy_abs
         context_ok_down = was_squeezed_recently or recent_sell_abs
         
-        # Protección Dinámica contra Ruido Volátil (ADX > 22)
-        curr_regime = kwargs.get('current_regime', 'TREND')
-        is_volatile = curr_regime == "VOLATILE"
-        # ADX > 20 global para evitar rangos laterales, > 25 en VOLATILE para asegurar impulsos
-        adx_ok = curr_adx > 20 if not is_volatile else (curr_adx > 25)
+        # ADX > 20 global para evitar rangos laterales, > 25 en VOLATILE o RANGE para asegurar impulsos
+        adx_ok = curr_adx > 20 if not (is_volatile or is_range) else (curr_adx > 25)
         
         is_breakout_up = (
             was_below_ema and 

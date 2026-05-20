@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from ..models.classifier import RegimeMode
 
-from ..utils.tech_utils import get_asset_class
+from ..utils.tech_utils import get_asset_class, get_market_session
 
 # Helper for momentum metrics (Module Level to avoid scoping issues)
 def get_mtr_data(df_in, tf_minutes=5):
@@ -95,12 +95,20 @@ class PSTEMAFlow:
              symbol = data_input['symbol']
         # If not in dict, try to infer or default
         asset_class = get_asset_class(symbol)
+        session_name = "UNKNOWN"
+        if isinstance(data_input, dict) and df is not None and 'time' in df.columns:
+            last_dt = pd.to_datetime(df['time'].iloc[-1], unit='s', utc=True)
+            session_name = get_market_session(last_dt)
+        else:
+            session_name = get_market_session(pd.Timestamp.now(timezone.utc).to_pydatetime())
 
         # DEFAULT PROFILE (Forex/General)
         P_ADX_THR = 30
         P_ATR_MARGIN = 0.15
         P_VOL_MULT = 1.5
         P_H1_PENALTY = 15
+        P_SCORE_THR = 80
+        P_CHASE_ATR = 1.20
         
         block_reasons = [] # Trackers de por qué no operamos (Fase 55+)
         
@@ -109,13 +117,28 @@ class PSTEMAFlow:
             P_ADX_THR = 35       # Indices need more strength to avoid noise
             P_VOL_MULT = 2.0     # Volume must be clearer
             P_H1_PENALTY = 20    # Respect H1 trend more
+            P_SCORE_THR = 82
+            P_CHASE_ATR = 1.05
         elif asset_class == "METAL":
             P_ATR_MARGIN = 0.20  # Gold wicks are deadly, require 20% breakout
+            P_SCORE_THR = 79
+            P_CHASE_ATR = 1.10
         elif asset_class == "CRYPTO":
             P_ADX_THR = 35       # Crypto needs clear trend (volatile noise)
             P_ATR_MARGIN = 0.35  # Require deeper breakout to avoid whipsaws
             P_VOL_MULT = 1.8     # Volume burst must be significant
             P_H1_PENALTY = 25    # Respect H1 trend strictly
+            P_SCORE_THR = 84
+            P_CHASE_ATR = 1.35
+
+        # Session bias: more selective in quiet sessions, slightly looser in overlap
+        if session_name == "ASIAN":
+            P_SCORE_THR += 3
+            P_CHASE_ATR -= 0.10
+        elif session_name == "OVERLAP":
+            P_SCORE_THR -= 2
+
+        P_CHASE_ATR = max(0.90, P_CHASE_ATR)
             
         if df is None or len(df) < 55:
             return {
@@ -446,12 +469,7 @@ class PSTEMAFlow:
         mtr_h1 = get_mtr_data(data_input.get('h1'), tf_minutes=60) if isinstance(data_input, dict) else None
         
         # --- NEW: SESSION & VSA ANALYSIS (FASE 55) ---
-        from ..utils.tech_utils import get_market_session, detect_absorption
-        session_name = "UNKNOWN"
-        if isinstance(data_input, dict) and 'time' in df.columns:
-            last_dt = pd.to_datetime(df['time'].iloc[-1], unit='s', utc=True)
-            session_name = get_market_session(last_dt)
-        
+        from ..utils.tech_utils import detect_absorption
         abs_type, is_climax = detect_absorption(df)
         
         # --- MTF MOMENTUM (ADX DYNAMIC V2) ---
@@ -967,7 +985,7 @@ class PSTEMAFlow:
         # --- FINAL DECISION ---
         score = min(100, max(0, round(net_score)))
         entry = 0
-        THRESHOLD = kwargs.get('score_threshold') or 80 
+        THRESHOLD = kwargs.get('score_threshold') or P_SCORE_THR
         
         # --- NEW: HARD EXHAUSTION FILTERS (Anti-Chasing & Hard RSI) ---
         # User Req: Bloqueo rígido para evitar entradas tardías (late-entries).
@@ -975,18 +993,26 @@ class PSTEMAFlow:
         latest_c = df['close'].iloc[-1]
         latest_ema21 = ema21_s.iloc[-1]
         dist_ema21 = abs(latest_c - latest_ema21)
+        rsi_hi = 70
+        rsi_lo = 30
+        if asset_class == "INDEX":
+            rsi_hi = 72
+            rsi_lo = 28
+        elif asset_class == "CRYPTO":
+            rsi_hi = 75
+            rsi_lo = 25
         
         # Filtro 1: RSI Extremo (Hard Block)
-        rsi_exhausted = (direction == 1 and curr_rsi > 70) or (direction == -1 and curr_rsi < 30)
+        rsi_exhausted = (direction == 1 and curr_rsi > rsi_hi) or (direction == -1 and curr_rsi < rsi_lo)
         
         # Filtro 2: Anti-Chasing (Distancia excesiva a la media rápida)
         # Convertimos is_chasing de MODO BLOQUEO a MODO STALKING
-        is_chasing = dist_ema21 > (current_atr * 1.2)
+        is_chasing = dist_ema21 > (current_atr * P_CHASE_ATR)
         
         if direction != 0:
             if rsi_exhausted:
                 internal_gate_failed = True
-                cause = "RSI > 70" if direction == 1 else "RSI < 30"
+                cause = f"RSI > {rsi_hi}" if direction == 1 else f"RSI < {rsi_lo}"
                 factor_groups["ADVERTENCIAS"].append({
                     "k": "BLOQUEO RSI", 
                     "v": f"Agotamiento ({cause})", 
@@ -1107,12 +1133,15 @@ class PSTEMAFlow:
             "strategy": self.STRATEGY_NAME,
             "score": round(score),
             "total_score": round(score),
+            "score_threshold": round(THRESHOLD, 2),
             "score_breakdown": breakdown,
             "factors_detailed": factors_detailed,
             "can_entry": entry != 0,
             "is_stalking": is_stalking,
             "status": status_msg,
             "direction": direction,
+            "asset_class": asset_class,
+            "session": session_name,
             "target_price": latest_ema21 if is_stalking else 0
         }
 
