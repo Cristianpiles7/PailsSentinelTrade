@@ -356,14 +356,6 @@ class PortfolioManager:
             # Fallback a cálculo por riesgo global
             risk_money = balance * (risk_per_trade_pct / 100)
 
-        # --- NEW: NOMINAL CAP FOR SCALPING (v2.0.1) ---
-        # Si arriesgar el % del balance supera el tope nominal, usamos el tope.
-        if risk_money > SCALPER_MAX_LOSS_EUR:
-             # Necesitamos saber si es scalping. El orquestador pasa el risk_per_trade_pct específico.
-             # Si el riesgo base es el de scalper (0.08), aplicamos el cap.
-             if abs(risk_per_trade_pct - 0.08) < 0.001: 
-                 logger.info(f"🛡️ [SCALP CAP] Riesgo de {risk_money:.2f}€ excede el máximo de {SCALPER_MAX_LOSS_EUR}€. Ajustando nomina a {SCALPER_MAX_LOSS_EUR}€.")
-                 risk_money = SCALPER_MAX_LOSS_EUR
 
         # --- 2. DYNAMIC RISK SCALING (ARRIESGAR MENOS SI HAY EXPOSICIÓN) ---
         # Reducción de riesgo si hay muchos trades abiertos

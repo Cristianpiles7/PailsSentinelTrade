@@ -60,6 +60,28 @@ class PSTAlphaTrend:
             return {**neutral, "metadata": {"status": "Supertrend no disponible", "factors_detailed": []}}
         st_dir = int(st_df[st_dir_col[0]].iloc[-1])  # 1 = alcista, -1 = bajista
 
+        # Filtro gap de sesión: bloquear señales contra un gap fuerte (>1 ATR)
+        if len(df_h1) >= 2:
+            prev_close = float(df_h1["close"].iloc[-2])
+            gap_size = price - prev_close
+            gap_threshold = atr * 1.0
+            if gap_size > gap_threshold and st_dir == -1:
+                return {
+                    **neutral,
+                    "metadata": {
+                        "status": f"Bloqueado: gap alcista ({gap_size:.4f}) contra señal SELL",
+                        "factors_detailed": []
+                    }
+                }
+            elif gap_size < -gap_threshold and st_dir == 1:
+                return {
+                    **neutral,
+                    "metadata": {
+                        "status": f"Bloqueado: gap bajista ({gap_size:.4f}) contra señal BUY",
+                        "factors_detailed": []
+                    }
+                }
+
         score = 0
         factors = []
         direction = 0

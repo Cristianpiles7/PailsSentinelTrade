@@ -219,6 +219,16 @@ class PSTPrecisionScalping:
             else:
                 factors.append({"k": "Volatilidad", "v": f"ATR ratio {atr_ratio:.2f}", "score": 0})
 
+        # 5b. Filtro anti-spike: vela de entrada con rango > 3x ATR indica movimiento parabólico
+        last_candle_range = float(high_m1.iloc[-1]) - float(low_m1.iloc[-1])
+        if atr > 0 and last_candle_range > atr * 3.0:
+            score -= 40
+            factors.append({
+                "k": "Anti-Spike",
+                "v": f"Rango vela {last_candle_range:.4f} > 3x ATR ({atr*3:.4f}) — spike detectado ❌",
+                "score": -40
+            })
+
         # 6. Spread estricto — crítico para scalping (1.5x ATR M1 es el límite)
         if spread_dist > atr * 1.5:
             score -= 20

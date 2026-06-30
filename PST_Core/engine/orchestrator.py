@@ -603,10 +603,7 @@ class SymbolTask:
                                 if s_result.get("entry", 0) != 0:
                                     await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_REGIME", s_score, price, blocked_reason="REGIMEN")
                                 
-                                # Solo capamos el score para trading real, pero intentamos mantener la visibilidad en el radar
-                                # si el score es MUY alto (>85), para que el usuario sea consciente del setup extremo.
-                                if s_score < 85:
-                                    s_score = 60 # Visual Cap (User Req) para evitar ruido
+                                s_score = 65 # Visual Cap: régimen incompatible, no ejecutará
                                 
                                 s_meta["blocked_reason"] = "REGIMEN"
 
@@ -699,8 +696,12 @@ class SymbolTask:
                                                     if (len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol) and "Scalper" not in s_name:
                                                         sl_mult = 3.5  # Antes 2.0
                                                         tp_mult = 5.0  # Antes 3.0
-                                                    
-                                                    sl_dist = atr_current * sl_mult 
+
+                                                    # En régimen VOLATILE el precio necesita más espacio para respirar
+                                                    if self.current_regime == "VOLATILE":
+                                                        sl_mult *= 1.5
+
+                                                    sl_dist = atr_current * sl_mult
                                                     
                                                     # --- NEW: SOPORTE PARA TP TÉCNICO ---
                                                     tp_price_target = s_result.get("tp_price", 0)
