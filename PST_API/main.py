@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI):
     try:
         # Registrar el WSLogHandler en el logger root para capturar todo
         logging.getLogger().addHandler(ws_handler)
-        
+
         from PST_Core.engine.orchestrator import start_v6
         # Símbolos por defecto si no hay en la DB
         default_symbols = ["US500.cash", "EU50.cash", "XAGUSD", "XAUUSD", "BTCUSD", "ETHUSD"]
@@ -104,11 +104,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error starting trading engine: {e}")
 
+    # Iniciar Agente Monitor en segundo plano
+    try:
+        from PST_Core.engine.monitor_agent import PSTMonitorAgent
+        from PST_Core.engine.telegram_manager import telegram_bot
+
+        monitor = PSTMonitorAgent(db=db, portfolio=portfolio, telegram_bot=telegram_bot)
+        asyncio.create_task(monitor.run())
+        # Enlazar el monitor al telegram_bot para que /report y /metrics funcionen
+        telegram_bot.monitor_agent = monitor
+        logger.info("✅ [MONITOR] Agente de vigilancia iniciado.")
+    except Exception as e:
+        logger.error(f"Error starting monitor agent: {e}")
+
     yield
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.1.1",
+    version="2.1.2",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -757,6 +770,51 @@ async def get_history(limit: int = 20):
     except Exception as e:
         logger.error(f"Error en history: {e}")
         return []
+
+@app.get("/api/performance/hourly", tags=["Performance"])
+async def get_hourly_performance():
+    """Agrupa el rendimiento de operaciones cerradas por hora del día (0-23)."""
+    try:
+        import aiosqlite
+        async with aiosqlite.connect(db.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                "SELECT profit, time_out FROM trades WHERE price_out > 0 AND time_out IS NOT NULL"
+            ) as cursor:
+                trades = await cursor.fetchall()
+
+        from datetime import datetime
+        buckets: dict[int, dict] = {h: {"hour": h, "pnl": 0.0, "trades": 0, "wins": 0} for h in range(24)}
+
+        for t in trades:
+            try:
+                time_str = t["time_out"]
+                # Soporta formatos: "2026-06-15 09:32:11" y "2026.06.15 09:32:11"
+                dt = datetime.fromisoformat(time_str.replace(".", "-"))
+                h = dt.hour
+                buckets[h]["pnl"]    += float(t["profit"])
+                buckets[h]["trades"] += 1
+                if t["profit"] > 0:
+                    buckets[h]["wins"] += 1
+            except Exception:
+                continue
+
+        result = []
+        for h in range(24):
+            b = buckets[h]
+            total = b["trades"]
+            result.append({
+                "hour":     h,
+                "pnl":      round(b["pnl"], 2),
+                "trades":   total,
+                "win_rate": round(b["wins"] / total * 100, 1) if total > 0 else 0.0,
+            })
+        return result
+
+    except Exception as e:
+        logger.error(f"Error en get_hourly_performance: {e}")
+        return [{"hour": h, "pnl": 0.0, "trades": 0, "win_rate": 0.0} for h in range(24)]
+
 
 @app.get("/api/performance/buckets", tags=["Performance"])
 async def get_bucket_weights():

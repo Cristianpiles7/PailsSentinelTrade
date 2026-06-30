@@ -5,6 +5,7 @@ import {
 } from 'recharts'
 import { TrendingUp, TrendingDown, Target, Activity, Clock, Wallet, ShieldAlert, BarChart3 } from 'lucide-react'
 import { PerformanceCalendar } from './ui/PerformanceCalendar'
+import { HourlyHeatmap } from './ui/HourlyHeatmap'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,8 @@ export function PerformanceDashboard({
   equityCurve,
   stratPerf,
   historyTrades,
-  bucketData
+  bucketData,
+  hourlyData = []
 }) {
   const ddSeries = useMemo(() => calcDrawdownSeries(equityCurve), [equityCurve])
   const maxDrawdown = useMemo(() => {
@@ -304,6 +306,29 @@ export function PerformanceDashboard({
       {/* PnL Calendar */}
       <div className="px-4">
         <PerformanceCalendar trades={historyTrades} />
+      </div>
+
+      {/* Hourly Heatmap */}
+      <div className="px-4">
+        <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-black text-white italic tracking-tighter uppercase">
+                Rendimiento por Hora
+              </h3>
+              <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest mt-1">
+                PnL acumulado por hora del día · Hora local del broker
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+              <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Rentable</span>
+              <div className="w-3 h-3 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)] ml-3" />
+              <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Pérdida</span>
+            </div>
+          </div>
+          <HourlyHeatmap data={hourlyData} />
+        </div>
       </div>
 
     </div>

@@ -187,6 +187,7 @@ function App() {
   const [equityCurve, setEquityCurve] = useState([])
   const [stratPerf, setStratPerf] = useState([])
   const [bucketData, setBucketData] = useState(null)
+  const [hourlyData, setHourlyData] = useState([])
 
   const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
   const activeSymbols = symbols.filter(s => s.is_active)
@@ -380,16 +381,18 @@ function App() {
 
   const fetchPerformance = async () => {
     try {
-      const [perfRes, eqRes, stratRes, buckRes] = await Promise.all([
+      const [perfRes, eqRes, stratRes, buckRes, hourlyRes] = await Promise.all([
         api.get(`${API_BASE}/performance`),
         api.get(`${API_BASE}/performance/equity`),
         api.get(`${API_BASE}/performance/strategies`),
-        api.get(`${API_BASE}/performance/buckets`)
+        api.get(`${API_BASE}/performance/buckets`),
+        api.get(`${API_BASE}/performance/hourly`)
       ])
       setPerfData(perfRes.data)
       setEquityCurve(eqRes.data || [])
       setStratPerf(stratRes.data || [])
       setBucketData(buckRes.data || null)
+      setHourlyData(hourlyRes.data || [])
     } catch (err) { console.error(err) }
   }
 
@@ -1235,7 +1238,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.1.1 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.1.2 SMC</span>
 
 
 
@@ -1286,6 +1289,7 @@ function App() {
             stratPerf={stratPerf}
             historyTrades={historyTrades}
             bucketData={bucketData}
+            hourlyData={hourlyData}
           />
         )}
 

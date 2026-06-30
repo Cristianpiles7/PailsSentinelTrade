@@ -19,6 +19,7 @@ class TelegramManager:
             cls._instance._initialized = False
             cls._instance.application = None
             cls._instance.engine = None
+            cls._instance.monitor_agent = None
         return cls._instance
 
     def __init__(self):
@@ -32,20 +33,23 @@ class TelegramManager:
         if not self.token or not self.chat_id:
             logger.warning("⚠️ TelegramManager: TOKEN o CHAT_ID no configurados en .env")
 
-    async def start_listener(self, engine):
+    async def start_listener(self, engine, monitor_agent=None):
         """Inicializa la aplicación y escucha comandos 24/7."""
         if not self.token:
             return
-            
+
         self.engine = engine
+        self.monitor_agent = monitor_agent
         logger.info("🤖 [TELEGRAM] Inicializando Listener de Comandos...")
-        
+
         try:
             self.application = Application.builder().token(self.token).build()
-            
+
             # Registrar comandos
             self.application.add_handler(CommandHandler("status", self.cmd_status))
             self.application.add_handler(CommandHandler("closeall", self.cmd_closeall))
+            self.application.add_handler(CommandHandler("report", self.cmd_report))
+            self.application.add_handler(CommandHandler("metrics", self.cmd_metrics))
             self.application.add_handler(CallbackQueryHandler(self.handle_callback))
             
             # Iniciar aplicación puramente asíncrona dentro del event loop actual de PST
@@ -150,6 +154,31 @@ class TelegramManager:
             if update.callback_query: await update.callback_query.message.reply_text(err_msg)
             else: await update.message.reply_text(err_msg)
 
+    async def cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Genera y envía el resumen diario de operaciones."""
+        if not await self.get_authorized_chat(update):
+            return
+        if not self.monitor_agent:
+            await update.message.reply_text("⚠️ Monitor agent no está activo.")
+            return
+        report = await self.monitor_agent.build_daily_report()
+        await update.message.reply_text(report, parse_mode=ParseMode.HTML)
+
+    async def cmd_metrics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Muestra métricas de cuenta en tiempo real."""
+        if not await self.get_authorized_chat(update):
+            return
+        if not self.monitor_agent:
+            await update.message.reply_text("⚠️ Monitor agent no está activo.")
+            return
+        snapshot = await self.monitor_agent.build_metrics_snapshot()
+        keyboard = [[InlineKeyboardButton("🔄 Actualizar", callback_data='cmd_metrics')]]
+        await update.message.reply_text(
+            snapshot,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Maneja las pulsaciones de los botones integrados (InlineKeyboard)."""
         query = update.callback_query
@@ -161,6 +190,8 @@ class TelegramManager:
             await self.cmd_status(update, context)
         elif query.data == 'cmd_closeall':
             await self.cmd_closeall(update, context)
+        elif query.data == 'cmd_metrics':
+            await self.cmd_metrics(update, context)
 
     async def send_message(self, text: str):
         """Envía un mensaje asíncrono a Telegram."""
