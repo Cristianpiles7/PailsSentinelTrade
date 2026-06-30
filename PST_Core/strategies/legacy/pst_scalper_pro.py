@@ -2,10 +2,16 @@ import pandas_ta as ta
 import pandas as pd
 import numpy as np
 import logging
+from datetime import datetime
 from ..config import (
     SL_ATR_MULTIPLIER, 
     MAX_SCALPER_SL_POINTS, 
-    MIN_RR_RATIO
+    MIN_RR_RATIO,
+    LONDRES_SESSION_START,
+    LONDRES_SESSION_END,
+    NY_SESSION_START,
+    NY_SESSION_END,
+    SESSION_SESSIONS_ONLY
 )
 from ..utils.tech_utils import get_asset_class
 
@@ -64,6 +70,23 @@ class PSTScalperPro:
                 "metadata": {"mode": "OFFLINE", "factors_detailed": []},
             }
 
+        # --- NUEVO: FILTRO DE SESIONES HORARIAS INSTITUCIONAL ---
+        symbol = kwargs.get("symbol", "").upper()
+        asset_class = get_asset_class(symbol)
+        if SESSION_SESSIONS_ONLY and asset_class != "CRYPTO":
+            now_time = datetime.now().strftime("%H:%M")
+            in_london = LONDRES_SESSION_START <= now_time <= LONDRES_SESSION_END
+            in_ny = NY_SESSION_START <= now_time <= NY_SESSION_END
+            if not (in_london or in_ny):
+                return {
+                    "score": 0,
+                    "signal": "NEUTRAL",
+                    "metadata": {
+                        "mode": "FUERA_DE_SESION",
+                        "factors_detailed": [{"k": "Estado", "v": "Fuera de Sesión Líquida", "score": 0}]
+                    }
+                }
+
         df_m1 = mtf_data.get('m1') if isinstance(mtf_data, dict) else mtf_data
         df_m3 = mtf_data.get('m3')
         df_m5 = mtf_data.get('m5')
@@ -121,6 +144,24 @@ class PSTScalperPro:
         
         if ema21 is None or rsi is None or atr is None or bb is None or kc is None or vol_ma is None or adx_df is None:
             return {"score": 0, "signal": "NEUTRAL", "metadata": {"mode": f"CALCULANDO_{tf_label}", "factors_detailed": []}}
+
+        # --- NUEVO: VWAP DIARIO DINÁMICO ---
+        c_vwap = None
+        try:
+            df_copy = df_base.copy()
+            if 'time' in df_copy.columns:
+                df_copy['datetime'] = pd.to_datetime(df_copy['time'])
+            else:
+                df_copy['datetime'] = pd.to_datetime(df_copy.index)
+            df_copy['date_only'] = df_copy['datetime'].dt.date
+            typical_price = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
+            df_copy['tp_vol'] = typical_price * df_copy['tick_volume']
+            cum_tp_vol = df_copy.groupby('date_only')['tp_vol'].cumsum()
+            cum_vol = df_copy.groupby('date_only')['tick_volume'].cumsum()
+            vwap = cum_tp_vol / cum_vol
+            c_vwap = vwap.iloc[signal_idx]
+        except Exception as e:
+            logger.warning(f"Error calculando VWAP en Pro: {e}")
 
         try:
             lower_bb = bb.iloc[:, 0]
@@ -286,6 +327,15 @@ class PSTScalperPro:
             factors_detailed.append({"k": "TF", "v": tf_label, "score": 0})
             factors_detailed.append({"k": "Estrategia", "v": f"ROTURA EMA21 ↑ ({tf_label})", "score": score})
             
+            # --- NUEVO: FILTRO VWAP DIARIO ---
+            if c_vwap is not None:
+                if c_price < c_vwap:
+                    factors_detailed.append({"k": "Filtro VWAP", "v": "Precio bajo VWAP (-15)", "score": -15})
+                    score -= 15
+                else:
+                    factors_detailed.append({"k": "Filtro VWAP", "v": "Precio sobre VWAP (+5)", "score": 5})
+                    score += 5
+
             if is_above_all_emas:
                 factors_detailed.append({"k": "Triple Breakout", "v": "SMA9/21/50 Superadas (+10)", "score": 10})
                 score += 10
@@ -315,6 +365,16 @@ class PSTScalperPro:
             entry = -1
             factors_detailed.append({"k": "TF", "v": tf_label, "score": 0})
             factors_detailed.append({"k": "Estrategia", "v": f"ROTURA EMA21 ↓ ({tf_label})", "score": score})
+
+            # --- NUEVO: FILTRO VWAP DIARIO ---
+            if c_vwap is not None:
+                if c_price > c_vwap:
+                    factors_detailed.append({"k": "Filtro VWAP", "v": "Precio sobre VWAP (-15)", "score": -15})
+                    score -= 15
+                else:
+                    factors_detailed.append({"k": "Filtro VWAP", "v": "Precio bajo VWAP (+5)", "score": 5})
+                    score += 5
+
             if not confirmed_downtrend: factors_detailed.append({"k": "Peligro Macro", "v": "Contra-Tendencia (-10)", "score": -10})
             if was_squeezed_recently: factors_detailed.append({"k": "Squeeze", "v": "Confirmado", "score": 5})
             factors_detailed.append({"k": "Ignición", "v": f"{(body_size/curr_atr):.1f} ATR", "score": 5})

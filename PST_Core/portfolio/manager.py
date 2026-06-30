@@ -110,8 +110,8 @@ class PortfolioManager:
         Lógica de control de riesgo global (FTMO Friendly) y Pyramiding Institucional.
         """
         # --- NUEVO: LÍMITES GLOBALES POR CATEGORÍA (v1.8.7) ---
-        from ..config import STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY
-        
+        from ..config import STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY, MAX_TOTAL_OPEN_POSITIONS
+
         # Traducir nombre legible si es necesario
         raw_strat_name = strategy_name or ""
         reverse_map = {
@@ -128,7 +128,15 @@ class PortfolioManager:
         strategy_category = STRATEGY_CATEGORIES.get(raw_strat_name, "CORE")
         max_for_cat = MAX_POSITIONS_PER_CATEGORY.get(strategy_category, 1)
 
-        # Contar posiciones globales de esta categoría
+        # --- LÍMITE GLOBAL ABSOLUTO (Race Condition Fix) ---
+        # Cuenta posiciones reales + las que están en vuelo (aún no registradas en MT5)
+        n_real = len(current_positions) if current_positions else 0
+        n_inflight = len(self.in_flight_trades)
+        if n_real + n_inflight >= MAX_TOTAL_OPEN_POSITIONS:
+            logger.warning(f"🚫 [GLOBAL CAP] {n_real} abiertas + {n_inflight} en vuelo >= límite {MAX_TOTAL_OPEN_POSITIONS}. Bloqueando {symbol}.")
+            return False
+
+        # Contar posiciones globales de esta categoría (reales + in-flight aproximadas)
         global_cat_count = 0
         if current_positions:
             for p in current_positions:
@@ -140,6 +148,9 @@ class PortfolioManager:
                         break
                 if p_cat == strategy_category:
                     global_cat_count += 1
+
+        # Los in-flight se cuentan como si fueran de la misma categoría (conservador)
+        global_cat_count += n_inflight
 
         if global_cat_count >= max_for_cat:
             logger.warning(f"🚫 [GLOBAL LIMIT] Límite de {max_for_cat} pos para {strategy_category} alcanzado. Bloqueando {symbol}.")
@@ -168,10 +179,30 @@ class PortfolioManager:
                 # --- RELAXED: ANTI-HEDGING CATEGÓRICO REMOVIDO ---
                 # Ya no bloqueamos activos distintos (ej: BTC vs LINK) por ser de la misma clase.
                 # Solo bloquearemos si es el mismísimo símbolo (manejado abajo) o si el usuario
-                # define grupos de correlación explícitos.
-                
                 # Coincidencia exacta o parcial (ej: EURUSD vs EURUSD.cash)
                 if pos_sym == target_sym or target_sym in pos_sym or pos_sym in target_sym:
+                    pos_comment = getattr(pos, 'comment', "")
+                    is_scalper = "Scalper" in strategy_name if strategy_name else False
+                    
+                    # NUEVO: Permitir pruebas simultáneas de múltiples estrategias de scalping en el mismo activo
+                    # Mapeo de abreviaturas utilizadas en los comentarios de MT5
+                    abbrev_map = {
+                        "PST-Scalper-Pro": ["ScPro", "Scalper-Pro"],
+                        "PST-Scalper-Active": ["ScV2", "Scalper-Active"],
+                        "PST-Scalper-OrderFlow": ["ScOF", "OrderFlow", "Scalper-OrderFlow"]
+                    }
+                    
+                    pos_is_different_scalper = False
+                    if is_scalper:
+                        current_abbrevs = abbrev_map.get(strategy_name, [])
+                        is_pos_scalper = any(x in pos_comment for x in ["ScPro", "ScV2", "ScOF", "Scalper"])
+                        is_same_strategy = any(abbrev in pos_comment for abbrev in current_abbrevs)
+                        
+                        if is_pos_scalper and not is_same_strategy:
+                            pos_is_different_scalper = True
+                            logger.info(f"⚖️ [PARALLEL SCALPING] {symbol} tiene posición activa de otra estrategia ({pos_comment}). Permitiendo señal paralela de {strategy_name} para testeo.")
+                            continue # Omitimos el bloqueo de duplicado y continuamos evaluando reglas
+
                     # --- PYRAMIDING LOGIC (FASE 55) ---
                     # Comprobamos si la posición existente está libre de riesgo (Break-Even)
                     is_buy = pos_is_buy
@@ -193,9 +224,8 @@ class PortfolioManager:
                     if (is_buy and sig_is_sell) or (is_sell and sig_is_buy):
                         logger.info(f"🔄 [REVERSAL DETECTED] {symbol} tiene señal contraria. Permitiendo evaluación de Giro Seguro.")
                         continue 
-
+ 
                     # EXCEPCIÓN 2: Desactivamos piramidado para SCALPING para evitar sobre-exposición
-                    is_scalper = "Scalper" in strategy_name if strategy_name else False
                     if is_risk_free and ((is_buy and sig_is_buy) or (is_sell and sig_is_sell)) and not is_scalper:
                         logger.info(f"📈 [PYRAMIDING] Permitiendo reingreso en {symbol}. La posición original ya está en Break-Even.")
                         continue # Seguimos validando el resto de las reglas
@@ -204,13 +234,44 @@ class PortfolioManager:
                         logger.info(f"🛡️ Bloqueando entrada duplicada para {symbol}. Razón: {reason}.")
                         return False
 
+        # --- CORRELACIÓN DINÁMICA: no abrir si hay una posición altamente correlacionada ---
+        if current_positions:
+            try:
+                from ..utils.correlation_cache import corr_cache
+                for pos in current_positions:
+                    pos_sym = pos.symbol.upper().strip()
+                    if pos_sym == target_sym:
+                        continue  # Duplicado ya manejado arriba
+                    if corr_cache.is_correlated(target_sym, pos_sym, threshold=0.82):
+                        corr_val = corr_cache.get_correlation(target_sym, pos_sym)
+                        pos_dir = "BUY" if getattr(pos, "type", -1) == 0 else "SELL"
+                        # Solo bloqueamos si la dirección propuesta es la misma que la correlacionada
+                        if pos_dir == signal_type:
+                            logger.warning(
+                                f"🔗 [CORR BLOCK] {target_sym} correlacionado con {pos_sym} "
+                                f"({corr_val:.2f}) en la misma dirección {signal_type}. Bloqueando."
+                            )
+                            return False
+            except Exception as _ce:
+                logger.debug(f"[CorrCache] Error en verificación de correlación: {_ce}")
+
         acc = await self.get_account_status()
         if not acc: return False
-        
+
         # 1. Kill-Switch por Drawdown Global (Seguro FTMO al 3.5%)
         if acc["drawdown"] >= self.max_drawdown_pct:
             logger.warning(f"🛑 KILL-SWITCH FTMO: Drawdown del {acc['drawdown']:.2f}% (Límite: {self.max_drawdown_pct}%)")
             return False
+
+        # MODO PRUEBAS: solo bloqueamos si el símbolo ya tiene una posición abierta
+        if current_positions:
+            target_sym = symbol.upper().strip()
+            for pos in current_positions:
+                if pos.symbol.upper().strip() == target_sym:
+                    logger.info(f"🛡️ [{symbol}] Ya tiene posición abierta. Bloqueando nueva entrada.")
+                    return False
+
+        return True
 
         # 2. Filtro de Cierre de Mercado (Solo para Acciones/Índices si aplica)
         # Si faltan menos de 20 min para el cierre, no abrimos compra

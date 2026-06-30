@@ -5,17 +5,12 @@ from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sy
 from ..models.classifier import RegimeClassifier, RegimeMode
 from ..models.database import PSTDatabase
 from .executor import PSTExecutor
-from ..strategies.pst_trendmaster import PSTTrendMaster
-from ..strategies.pst_rsi_equities import PSTRSIEquities
-from ..strategies.pst_ema_flow import PSTEMAFlow
-from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
-from ..strategies.pst_scalper_pro import PSTScalperPro # NEW FASE 68
-from ..strategies.pst_scalper_active import PSTScalperActive # NEW SCALPING V2
-from ..strategies.pst_ai_oracle import PSTAIOracle # RESTORED
-from ..strategies.pst_manual import PSTManual # NEW MANUAL MODE
+from ..strategies.pst_alpha_trend import PSTAlphaTrend
+from ..strategies.pst_range_breaker import PSTRangeBreaker
+from ..strategies.pst_precision_scalping import PSTPrecisionScalping
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
-from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES, DB_PATH
+from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES, DB_PATH, DAILY_LOSS_PCT
 import pandas_ta as ta
 import pandas as pd
 from typing import List
@@ -24,6 +19,7 @@ import numpy as np
 from ..utils.cooldown_manager import cooldown_mgr # Cooldown Import
 from ..utils.notification_manager import notif_mgr
 from .telegram_manager import telegram_bot
+from .macro_trend_filter import MacroTrendFilter
 
 # Configuración básica de logs para el Corazón PST
 logging.basicConfig(
@@ -50,33 +46,20 @@ class SymbolTask:
         self.running = True
         self.active_stalking = {} # FASE 56: {strategy_id: {'direction': 1/-1, 'target_price': float, 'best_score': int}}
         self.classifier = RegimeClassifier()
-        # Instanciar estrategias
-        self.trend_master = PSTTrendMaster()
-        self.ema_flow = PSTEMAFlow()
-        self.mean_reversion = PSTMeanReversion()
-        self.scalper_pro = PSTScalperPro()
-        self.scalper_active = PSTScalperActive()
-        self.manual_mode = PSTManual()
-        
-        # IA Dinámica (Selector por Símbolo)
-        # Motor de IA Oráculo (Multi-Instancia para Competición)
-        self.ai_oracle_gemini = PSTAIOracle(db=self.db, provider_type="gemini")
-        self.ai_oracle_groq = PSTAIOracle(db=self.db, provider_type="groq")
-        self.ai_oracle_ollama = PSTAIOracle(db=self.db, provider_type="ollama")
+        self.macro_filter = MacroTrendFilter()
+        # Instancias de estrategias
+        self.alpha_trend = PSTAlphaTrend()
+        self.range_breaker = PSTRangeBreaker()
+        self.precision_scalping = PSTPrecisionScalping()
 
-        # Lista maestra de todas las posibles estrategias instanciadas
+        # Lista maestra para filtrado dinámico en update_active_strategies()
         self._all_strategies = [
-            self.ema_flow, 
-            self.mean_reversion,
-            self.scalper_pro,
-            self.scalper_active,
-            self.manual_mode,
-            self.ai_oracle_gemini,
-            self.ai_oracle_groq,
-            self.ai_oracle_ollama
+            self.alpha_trend,
+            self.range_breaker,
+            self.precision_scalping,
         ]
-        
-        # self.strategies se poblará dinámicamente en cada ciclo de run()
+
+        # self.strategies se poblará en cada ciclo de run()
         self.strategies = []
 
     async def update_active_strategies(self):
@@ -95,27 +78,13 @@ class SymbolTask:
             sym_overrides = await self.db.get_symbol_strategies(self.symbol)
             
             # 3. Filtrar instancias finales
-            # Combinamos _all_strategies y trend_master para el filtrado uniforme
-            pool = self._all_strategies + [self.trend_master]
-            
             self.strategies = []
-            for s in pool:
+            for s in self._all_strategies:
                 name = s.STRATEGY_NAME
-                
-                # Habilitado si:
-                # 1. Está en el Whitelist Global (ENABLED_STRATEGIES) Y está activo en DB globalmente
                 is_globally_on = name in global_enabled
-                
-                # 2. NO está desactivado específicamente para este símbolo
                 is_active = sym_overrides.get(name, True)
-                
                 if is_globally_on and is_active:
                     self.strategies.append(s)
-
-            # Mantener orden: Trend Master primero si está activo
-            if self.trend_master in self.strategies:
-                self.strategies.remove(self.trend_master)
-                self.strategies.insert(0, self.trend_master)
 
         except Exception as e:
             logger.error(f"❌ Error actualizando estrategias para {self.symbol}: {e}")
@@ -125,11 +94,37 @@ class SymbolTask:
     async def run(self):
         logger.info(f"🔍 [MONITOR] Iniciando análisis para {self.symbol}")
         while self.running:
-            # 0.1 Check for Daily Drawdown Lock (MOVED TO PortfolioManager.can_open_trade)
-            # if await self.portfolio.is_daily_locked():
-            #    logger.warning(f"🔒 [{self.symbol}] Operativa bloqueada por Drawdown Diario. Esperando...")
-            #    await asyncio.sleep(60)
-            #    continue
+            # 0.1 Kill-switch de pérdida diaria — para toda la operativa si se supera el límite
+            if await self.portfolio.is_daily_locked():
+                logger.warning(f"🔒 [{self.symbol}] Operativa bloqueada por pérdida diaria. Esperando siguiente sesión.")
+                await asyncio.sleep(60)
+                continue
+
+            # Verificar si debemos activar el bloqueo diario ahora
+            try:
+                import MetaTrader5 as _mt5
+                _acc = _mt5.account_info()
+                if _acc is not None and _acc.balance > 0:
+                    _acc_status = await self.portfolio.get_account_status()
+                    if _acc_status:
+                        _daily_pnl = _acc_status.get("daily_pnl", 0.0)
+                        _loss_limit = -(_acc.balance * DAILY_LOSS_PCT / 100.0)
+                        if _daily_pnl <= _loss_limit:
+                            logger.error(
+                                f"🔴 [KILL-SWITCH] Pérdida diaria {_daily_pnl:.2f} supera límite "
+                                f"{_loss_limit:.2f} ({DAILY_LOSS_PCT}% balance). Bloqueando operativa."
+                            )
+                            await self.portfolio.set_daily_lock()
+                            await notif_mgr.send(
+                                f"🔴 KILL-SWITCH ACTIVADO\n"
+                                f"Pérdida del día: {_daily_pnl:.2f}\n"
+                                f"Límite ({DAILY_LOSS_PCT}%): {_loss_limit:.2f}\n"
+                                f"Operativa suspendida hasta mañana."
+                            )
+                            await asyncio.sleep(60)
+                            continue
+            except Exception as _e:
+                logger.debug(f"[Kill-Switch Check] Error al verificar pérdida diaria: {_e}")
 
             mtr_m1 = mtr_m5 = mtr_m15 = mtr_h1 = {"rsi": 0, "vol": 0, "adx": 0}
             volatility_factor = 1.0
@@ -148,8 +143,8 @@ class SymbolTask:
                 break
             try:
                 # 1. Obtener Datos Multi-Timeframe (M1, M5, M15, H1, H4)
-                # Si una de las estrategias activas es SCALPER, priorizamos M1
-                needs_m1 = any(s.STRATEGY_NAME in ["PST-Scalper-Pro", "PST-Scalper-Active"] for s in self.strategies)
+                # Si alguna estrategia activa es de tipo SCALPING, priorizamos M1
+                needs_m1 = any(getattr(s, 'STRATEGY_TYPE', '') == 'SCALPING' for s in self.strategies)
                 mtf_data = await get_mtf_data_async(self.symbol, include_m1=needs_m1)
                 mtf_data['symbol'] = self.symbol # Inyectar símbolo para estrategias
                 
@@ -377,20 +372,14 @@ class SymbolTask:
                     current_score = 0
                     best_metadata = {}
                     
-                    # Definir estrategias "Élite" que siempre queremos monitorear
-                    elite_strats = [self.trend_master] + self.strategies # PSTRSIEquities() Desactivada
-                    
-                    # Mapeo de nombres para consistencia
+                    # Definir estrategias activas para este ciclo
+                    elite_strats = self.strategies
+
+                    # Mapeo de STRATEGY_NAME → nombre legible para el dashboard
                     STRAT_TRANS = {
-                        "PST-TrendMaster": "Trend Master",
-                        "PST-RSI-Equities": "RSI Equities",
-                        "PST-EMA-Flow": "EMA Flow",
-                        "PST-Mean-Reversion": "Mean Reversion",
-                        "PST-Scalper-Pro": "Scalp",
-                        "PST-Scalper-Active": "Scalper V2",
-                        "PST-AI-Oracle-gemini": "🤖 IA Gemini",
-                        "PST-AI-Oracle-groq": "🚀 IA Groq",
-                        "PST-AI-Oracle-ollama": "🏠 IA Ollama"
+                        "PST-AlphaTrend":        "AlphaTrend (Tendencia H1)",
+                        "PST-RangeBreaker":      "RangeBreaker (Reversión M15)",
+                        "PST-PrecisionScalping": "PrecisionScalping (Scalp M1)",
                     }
 
                     # Obtener configuración de estrategias para este símbolo (NEW V3.3)
@@ -480,6 +469,11 @@ class SymbolTask:
                             if not is_strat_active:
                                 continue
 
+                            # Pausa automática por drawdown semanal de estrategia
+                            if await self.db.is_strategy_paused(strat_id):
+                                logger.debug(f"⏸️ [{self.symbol}] {strat_id} pausada por drawdown semanal.")
+                                continue
+
                             # 1. Calcular señal
                             # Pasar info extra como spread y configuración de la estrategia
                             spread_pts = symbol_info.spread if symbol_info else 0
@@ -507,7 +501,33 @@ class SymbolTask:
                             # Usar el ID sincronizado definido al inicio del bucle: strat_id (STRATEGY_NAME)
                             s_score = s_result.get("score", 0)
                             s_meta = s_result.get("metadata", {})
-                            s_name_raw = strat_id 
+                            s_name_raw = strat_id
+
+                            # --- MACRO TREND FILTER (H1/H4) ---
+                            # Aplica antes de evaluar ejecución para reducir entradas contra tendencia macro
+                            if s_score > 0 and s_result.get("entry", 0) != 0:
+                                _macro = self.macro_filter.analyze(mtf_data)
+                                _sig_dir = s_result.get("entry", 0)
+                                _strat_type = getattr(strat, "STRATEGY_TYPE", "TREND")
+                                _macro_ok, _macro_adj = _macro.allows_direction(_sig_dir, _strat_type)
+                                if not _macro_ok:
+                                    logger.info(
+                                        f"🚫 [MACRO FILTER] {self.symbol}/{strat_id} BLOQUEADO — "
+                                        f"señal {'BUY' if _sig_dir==1 else 'SELL'} vs tendencia macro {_macro.reason}"
+                                    )
+                                    s_score = 0
+                                    s_result["entry"] = 0
+                                    if isinstance(s_meta, dict):
+                                        s_meta["blocked_reason"] = "MACRO_TREND"
+                                        s_meta["macro_reason"] = _macro.reason
+                                elif _macro_adj != 0:
+                                    s_score = max(0, min(100, s_score + _macro_adj))
+                                    if isinstance(s_meta, dict):
+                                        s_meta["macro_bias"] = _macro.reason
+                                    logger.debug(
+                                        f"📊 [MACRO FILTER] {self.symbol}/{strat_id} "
+                                        f"score ajustado {_macro_adj:+d} → {s_score} ({_macro.reason})"
+                                    )
 
                             # --- NEW: STALKING LOGIC (ACECHO) ---
                             is_stalking_signal = s_result.get("is_stalking", False)
@@ -566,17 +586,15 @@ class SymbolTask:
                             elif strat_type == "ALL":
                                 is_strat_in_regime = True
                             
-                            # Mean Reversion: Permitido en Rango y también en Volátil (Reversión de picos explosivos)
-                            if "PSTMeanReversion" in type(strat).__name__:
-                                if mode in [RegimeMode.RANGE, RegimeMode.VOLATILE]:
-                                    is_strat_in_regime = True
-
-                            # EMA Flow: Estrictamente Tendencia (PROHIBIDO en Volátil o Rango)
-                            if "PSTEMAFlow" in type(strat).__name__ and mode != RegimeMode.TREND:
+                            # Reglas de compatibilidad de régimen por STRATEGY_TYPE
+                            # AlphaTrend: solo en tendencia
+                            if strat_type == "TREND" and mode != RegimeMode.TREND:
                                 is_strat_in_regime = False
-
-                            # Si es la Maestra, siempre monitorea
-                            if "TrendMaster" in type(strat).__name__:
+                            # RangeBreaker: rango Y volátil (reversiones de picos)
+                            if strat_type == "RANGE" and mode not in [RegimeMode.RANGE, RegimeMode.VOLATILE]:
+                                is_strat_in_regime = False
+                            # PrecisionScalping: opera en cualquier régimen (ALL implícito por liquidez)
+                            if strat_type == "SCALPING":
                                 is_strat_in_regime = True
 
                             # --- NEW: REGIME BLOCK LOGGING & SCORE CAPPING ---
@@ -956,6 +974,14 @@ async def start_v6(symbols: List[str]):
     from ..utils.notification_manager import notif_mgr
     notif_mgr.db = db
     
+    # Inicializar BucketManager (cubetas de capital por estrategia)
+    from ..utils.bucket_manager import BucketManager
+    import PST_Core.utils.bucket_manager as _bm_module
+    _bm = BucketManager(DB_PATH)
+    await _bm.load_weights()
+    _bm_module.bucket_manager = _bm
+    logger.info(f"💰 [Buckets] Pesos iniciales: { {k: f'{v:.1f}%' for k, v in _bm._weights.items()} }")
+
     executor = PSTExecutor(db, portfolio)
     
     # --- NEW: INITIALIZE TELEGRAM LISTENER (FASE 52.2) ---
@@ -972,8 +998,77 @@ async def start_v6(symbols: List[str]):
     # Tareas de gestión global y sincronización
     management_task = [global_trade_management(executor)]
     sync_task = [sync_trades_task(db)]
-    
-    tasks = symbol_tasks + management_task + sync_task
+
+    # Tarea de watchdog de drawdown semanal por estrategia (cada hora)
+    async def _strategy_drawdown_watchdog():
+        import MetaTrader5 as _mt5
+        from ..config import ENABLED_STRATEGIES, DAILY_LOSS_PCT
+        WEEKLY_DRAWDOWN_LIMIT_PCT = 1.5  # 1.5% del balance → pausa la estrategia
+        while True:
+            try:
+                _acc = _mt5.account_info()
+                if _acc and _acc.balance > 0:
+                    loss_limit = -(_acc.balance * WEEKLY_DRAWDOWN_LIMIT_PCT / 100.0)
+                    now_weekday = datetime.now().weekday()  # 0=Lunes
+
+                    for strat_name in ENABLED_STRATEGIES:
+                        weekly_pnl = await db.get_strategy_weekly_pnl(strat_name)
+                        is_paused = await db.is_strategy_paused(strat_name)
+
+                        # Reactivación automática cada lunes
+                        if is_paused and now_weekday == 0:
+                            await db.set_strategy_paused(strat_name, False)
+                            await notif_mgr.send(
+                                f"▶️ {strat_name} REACTIVADA\n"
+                                f"Nueva semana — drawdown semanal reseteado."
+                            )
+                            logger.info(f"▶️ [Watchdog] {strat_name} reactivada (lunes).")
+                            continue
+
+                        # Pausar si supera el límite semanal y no está ya pausada
+                        if not is_paused and weekly_pnl <= loss_limit:
+                            await db.set_strategy_paused(strat_name, True)
+                            await notif_mgr.send(
+                                f"⏸️ {strat_name} PAUSADA\n"
+                                f"PnL semanal: {weekly_pnl:.2f}\n"
+                                f"Límite ({WEEKLY_DRAWDOWN_LIMIT_PCT}%): {loss_limit:.2f}\n"
+                                f"Se reactivará el próximo lunes."
+                            )
+                            logger.warning(
+                                f"⏸️ [Watchdog] {strat_name} pausada. "
+                                f"PnL semanal {weekly_pnl:.2f} ≤ límite {loss_limit:.2f}"
+                            )
+            except Exception as _we:
+                logger.debug(f"[Watchdog] Error en revisión de drawdown semanal: {_we}")
+            await asyncio.sleep(3600)
+
+    # Tarea de actualización de correlaciones dinámicas (cada hora)
+    async def _correlation_updater():
+        from ..utils.correlation_cache import corr_cache
+        while True:
+            try:
+                if corr_cache.is_stale:
+                    await corr_cache.update(symbols)
+            except Exception as _e:
+                logger.debug(f"[CorrCache] Error en tarea de actualización: {_e}")
+            await asyncio.sleep(3600)
+
+    # Tarea de rebalanceo mensual de cubetas de capital
+    async def _bucket_rebalancer():
+        while True:
+            try:
+                _acc = __import__("MetaTrader5").account_info()
+                if _acc:
+                    await _bm.rebalance_if_needed(_acc.balance)
+            except Exception as _be:
+                logger.debug(f"[Buckets] Error en rebalanceo: {_be}")
+            await asyncio.sleep(86400)  # Revisar una vez al día
+
+    corr_task      = [_correlation_updater()]
+    watchdog_task  = [_strategy_drawdown_watchdog()]
+    bucket_task    = [_bucket_rebalancer()]
+
+    tasks = symbol_tasks + management_task + sync_task + corr_task + watchdog_task + bucket_task
     
     try:
         # Ejecutar todas las tareas en paralelo de forma indefinida

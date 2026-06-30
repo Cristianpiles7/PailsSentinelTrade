@@ -248,6 +248,11 @@ class PSTDatabase:
                     await db.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_def}")
                 except: pass # Ya existe
 
+            # Migración v3.0: Reemplazar estrategias legacy por las nuevas
+            legacy_strategies = ['PST-EMA-Flow', 'PST-TrendMaster', 'PST-Scalper-Pro', 'PST-Scalper-Active']
+            for legacy in legacy_strategies:
+                await db.execute("DELETE FROM symbol_strategies WHERE strategy_name = ?", (legacy,))
+
             # --- NUEVO: SIEMBRA MAESTRA DE 32 SÍMBOLOS Y ESTRATEGIAS (v1.4.2+) ---
             # Configuración Maestra Final (Sincronizada v1.4.4)
             master_config = [
@@ -281,37 +286,29 @@ class PSTDatabase:
                     VALUES (?, ?, ?, 2.5, 3.5, 80.0, 1.6)
                 """, (sym, stype, is_active))
                 
-                # 2. Configurar Scalper Pro (7€ Riesgo Maestro + BE 2.0 + TS 2.5)
-                # Sincronizado a 7.0€ según petición v1.4.4
+                # 2. PST-AlphaTrend — Tendencia en H1 (25€ base)
                 await db.execute("""
-                    INSERT OR IGNORE INTO symbol_strategies 
+                    INSERT OR IGNORE INTO symbol_strategies
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-Scalper-Pro', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.6, 1.6, 2.5)
+                    VALUES (?, 'PST-AlphaTrend', ?, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
                 """, (sym, is_active))
 
-                # 2b. Configurar Scalper Active (V2)
+                # 3. PST-RangeBreaker — Rango en M15 (20€ base)
                 await db.execute("""
-                    INSERT OR IGNORE INTO symbol_strategies 
+                    INSERT OR IGNORE INTO symbol_strategies
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-Scalper-Active', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.3, 1.6, 1.8)
+                    VALUES (?, 'PST-RangeBreaker', ?, 'MONEY', 20.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
                 """, (sym, is_active))
 
-                # 3. Configurar EMA Flow (25€ Riesgo Maestro)
+                # 4. PST-PrecisionScalping — Scalping en M1 (7€ base, TP técnico)
                 await db.execute("""
-                    INSERT OR IGNORE INTO symbol_strategies 
+                    INSERT OR IGNORE INTO symbol_strategies
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-EMA-Flow', ?, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.5, 2.5, 3.5)
-                """, (sym, is_active))
-
-                # 4. Configurar Trend Master (Líneas de Usuario)
-                await db.execute("""
-                    INSERT OR IGNORE INTO symbol_strategies 
-                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-TrendMaster', ?, 'MONEY', 15.0, 1, 0, 2.0, 2.5, 1.5, 2.5, 3.5)
+                    VALUES (?, 'PST-PrecisionScalping', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.8, 1.6, 2.5)
                 """, (sym, is_active))
 
             await db.commit()
-            logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v1.4.4) en {self.db_path}")
+            logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v3.0) en {self.db_path}")
 
     async def add_log(self, level, message, source="SYSTEM"):
         """Añade un mensaje de log a la base de datos."""
@@ -671,6 +668,37 @@ class PSTDatabase:
             logger.error(f"❌ Error updating config {key}: {e}")
             return False
 
+    async def get_strategy_weekly_pnl(self, strategy_name: str) -> float:
+        """Retorna el PnL total de la estrategia en los últimos 7 días."""
+        try:
+            from datetime import datetime, timedelta
+            since = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            async with aiosqlite.connect(self.db_path, timeout=10) as db:
+                async with db.execute(
+                    "SELECT COALESCE(SUM(profit), 0) FROM trades "
+                    "WHERE strategy_name = ? AND time_out >= ?",
+                    (strategy_name, since),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return float(row[0]) if row else 0.0
+        except Exception as e:
+            logger.error(f"❌ Error get_strategy_weekly_pnl({strategy_name}): {e}")
+            return 0.0
+
+    async def is_strategy_paused(self, strategy_name: str) -> bool:
+        """Comprueba si una estrategia está pausada por drawdown semanal."""
+        key = f"strategy_paused_{strategy_name}"
+        val = await self.get_config(key, default="false")
+        return val.lower() == "true"
+
+    async def set_strategy_paused(self, strategy_name: str, paused: bool):
+        """Activa o desactiva la pausa de drawdown semanal para una estrategia."""
+        key = f"strategy_paused_{strategy_name}"
+        await self.update_config(key, "true" if paused else "false")
+        logger.warning(
+            f"{'⏸️ PAUSA' if paused else '▶️ REACTIVACIÓN'} de estrategia por drawdown semanal: {strategy_name}"
+        )
+
     async def clear_all_logs(self):
         """Borra todos los historiales pero mantiene la configuración."""
         try:
@@ -755,9 +783,9 @@ class PSTDatabase:
                         symbol, strategy_name, 
                         1 if is_active is None or is_active else 0,
                         risk_mode, risk_value, sl_mult, tp_mult, score_threshold,
-                        1 if use_trailing else 0 if use_trailing is not None else (0 if strategy_name in ['PST-Scalper-Pro', 'PST-Scalper-Active'] else 1),
+                        1 if use_trailing else 0 if use_trailing is not None else (0 if strategy_name == 'PST-PrecisionScalping' else 1),
                         1 if use_breakeven else 0 if use_breakeven is not None else 1,
-                        be_mult if be_mult is not None else (3.5 if strategy_name in ['PST-Scalper-Pro', 'PST-Scalper-Active'] else 2.0),
+                        be_mult if be_mult is not None else (3.5 if strategy_name == 'PST-PrecisionScalping' else 2.0),
                         ts_mult if ts_mult is not None else 2.5,
                         min_rr if min_rr is not None else 1.5
                     ))
