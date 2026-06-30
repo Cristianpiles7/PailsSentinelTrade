@@ -1,71 +1,48 @@
-import multiprocessing
 import sys
 import os
-import time
+import logging
 
-# Añadir el directorio raíz al path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Configuración de logs de emergencia para el ejecutable
+def setup_emergency_logging():
+    log_path = "PST_Startup.log"
+    if hasattr(sys, '_MEIPASS'):
+        exe_dir = os.path.dirname(sys.executable)
+        log_path = os.path.join(exe_dir, "PST_Startup.log")
 
-def run_bot():
-    """Ejecuta el núcleo del Pails Sentinel Trade."""
-    setup_logging_silence()
-    from PST_Core.run_pst import start_v6, SYMBOLS_TO_TRADE
-    import asyncio
-    print("🚀 [SISTEMA] Arrancando Motor de Trading PST...")
-    asyncio.run(start_v6(SYMBOLS_TO_TRADE))
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[
+            logging.FileHandler(log_path, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout) if sys.stdout else logging.NullHandler()
+        ]
+    )
+    return logging.getLogger("PST-Startup")
 
-def run_dashboard():
-    """Ejecuta el servidor del Dashboard."""
-    setup_logging_silence()
-    from PST_Core.dashboard.server import app
-    print("📊 [DASHBOARD] Arrancando Interfaz Web en http://0.0.0.0:5000")
-    # Desactivamos el reloader para evitar conflictos con multiprocessing
-    app.run(debug=False, port=5000, host='0.0.0.0')
+logger = setup_emergency_logging()
 
-def setup_logging_silence():
-    """Silencia los logs ruidosos de librerías externas."""
-    import logging
-    # Silenciar spam de la API de Telegram y peticiones HTTP
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("telegram").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("telegram.ext").setLevel(logging.WARNING)
-    # También silenciar logs de flask si son pesados
-    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+if hasattr(sys, '_MEIPASS'):
+    project_root = sys._MEIPASS
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+# Redirigir stdout y stderr si no existen (en modo windowed de PyInstaller)
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+
+from PST_API.main import start_app
 
 if __name__ == "__main__":
-    setup_logging_silence()
-    print("\n" + "="*50)
-    print("💎 PAILS SENTINEL TRADE - UNIFIED MASTER LAUNCHER 💎")
-    print("="*50 + "\n")
-
-    # Inicializar Base de Datos antes de lanzar procesos
-    from PST_Core.models.database import PSTDatabase
-    import asyncio
-    asyncio.run(PSTDatabase().initialize())
-
-    # Crear procesos independientes
-    bot_process = multiprocessing.Process(target=run_bot)
-    dashboard_process = multiprocessing.Process(target=run_dashboard)
-
     try:
-        # Iniciar Dashboard primero
-        dashboard_process.start()
-        time.sleep(2) # Dar un momento al servidor para respirar
-        
-        # Iniciar Motor de Trading
-        bot_process.start()
-
-        # Mantener el script vivo mientras ambos procesos corran
-        while True:
-            time.sleep(1)
-            if not bot_process.is_alive() or not dashboard_process.is_alive():
-                print("⚠️ Uno de los procesos se ha detenido. Cerrando sistema...")
-                break
-
-    except KeyboardInterrupt:
-        print("\n🛑 [SISTEMA] Apagado solicitado por el usuario...")
-    finally:
-        bot_process.terminate()
-        dashboard_process.terminate()
-        print("✅ Sistema cerrado correctamente.\n")
+        logger.info("🚀 Iniciando Pails Sentinel Trade (PST)...")
+        start_app()
+    except Exception as e:
+        logger.critical(f"❌ FALLO CRÍTICO EN EL ARRANQUE: {e}", exc_info=True)
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, f"Error al iniciar PST:\n{str(e)}\n\nRevisa PST_Startup.log para más detalles.", "PST Error", 0x10)
+        except:
+            pass
+        sys.exit(1)

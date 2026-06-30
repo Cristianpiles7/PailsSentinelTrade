@@ -25,6 +25,17 @@ import { TradingChart } from './components/TradingChart'
 import { MarketHeatmap } from './components/MarketHeatmap'
 import { MultiChartWorkspace } from './components/MultiChartWorkspace'
 import { StrategyLab } from './components/StrategyLab'
+import { PerformanceDashboard } from './components/PerformanceDashboard'
+import { NavItem } from './components/ui/NavItem'
+import { Sparkline } from './components/ui/Sparkline'
+import { Toast } from './components/ui/Toast'
+import { StatBox } from './components/ui/StatBox'
+import { LiveConsole } from './components/ui/LiveConsole'
+import { StatCard } from './components/ui/StatCard'
+import { EquityCurve } from './components/ui/EquityCurve'
+import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
+import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
+import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 
 
 
@@ -32,7 +43,7 @@ import { StrategyLab } from './components/StrategyLab'
 
 
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
 
 // Interceptores Globales (FASE 43)
 axios.interceptors.response.use(
@@ -55,232 +66,6 @@ const api = {
 
 
 
-const EquityCurve = ({ data }) => {
-  if (!data || data.length < 2) return (
-
-
-
-    <div className="h-full flex items-center justify-center text-zinc-700 font-black uppercase text-[10px] italic">
-
-
-
-      Insufficient Data for Curve Analysis
-
-
-
-    </div>
-
-
-
-  );
-
-
-
-
-
-
-
-  const padding = 20;
-
-
-
-  const width = 800;
-
-
-
-  const height = 200;
-
-
-
-
-
-
-
-  const balances = data.map(d => d.balance);
-
-
-
-  const min = Math.min(...balances);
-
-
-
-  const max = Math.max(...balances);
-
-
-
-  const range = max - min || 1;
-
-
-
-
-
-
-
-  const points = data.map((d, i) => {
-
-
-
-    const x = padding + (i * (width - 2 * padding)) / (data.length - 1);
-
-
-
-    const y = height - padding - ((d.balance - min) * (height - 2 * padding)) / range;
-
-
-
-    return `${x},${y}`;
-
-  }).join(' ');
-
-
-
-
-
-
-
-
-  return (
-
-
-
-    <div className="w-full h-full p-4">
-
-
-
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full drop-shadow-[0_0_15px_rgba(99,102,241,0.3)]">
-
-
-
-        <defs>
-
-
-
-          <linearGradient id="curveGradient" x1="0" y1="0" x2="0" y2="1">
-
-
-
-            <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.5" />
-
-
-
-            <stop offset="100%" stopColor="#4f46e5" stopOpacity="0" />
-
-
-
-          </linearGradient>
-
-
-
-        </defs>
-
-
-
-        <path
-
-
-
-          d={`M ${points} L ${width - padding},${height} L ${padding},${height} Z`}
-
-
-
-          fill="url(#curveGradient)"
-
-
-
-        />
-
-
-
-        <polyline
-
-
-
-          fill="none"
-
-
-
-          stroke="#6366f1"
-
-
-
-          strokeWidth="3"
-
-
-
-          strokeLinecap="round"
-
-
-
-          strokeLinejoin="round"
-
-
-
-          points={points}
-
-
-
-        />
-
-
-
-        {/* Puntos de control visual */}
-
-
-
-        {data.map((d, i) => {
-
-
-
-          if (i % Math.ceil(data.length / 10) !== 0 && i !== data.length - 1) return null;
-
-
-
-          const x = padding + (i * (width - 2 * padding)) / (data.length - 1);
-
-
-
-          const y = height - padding - ((d.balance - min) * (height - 2 * padding)) / range;
-
-
-
-          return (
-
-
-
-            <g key={i}>
-
-
-
-              <circle cx={x} cy={y} r="3" fill="#6366f1" className="animate-pulse" />
-
-
-
-              <text x={x} y={y - 8} fontSize="8" fill="#64748b" fontWeight="black" textAnchor="middle">{d.balance.toFixed(0)}</text>
-
-
-
-            </g>
-
-
-
-          );
-
-
-
-        })}
-
-
-
-      </svg>
-
-
-
-    </div>
-
-
-
-  );
-};
 
 
 
@@ -337,9 +122,10 @@ function App() {
 
 
   const [isSmartMode, setIsSmartMode] = useState(true)
-
-
-
+  const [riskAmount, setRiskAmount] = useState(25)
+  const [slPrice, setSlPrice] = useState('')
+  const [tpPrice, setTpPrice] = useState('')
+  const [rrRatio, setRrRatio] = useState(2.0)
   const [isExecuting, setIsExecuting] = useState(false)
 
 
@@ -397,6 +183,12 @@ function App() {
   const [journalSnapshot, setJournalSnapshot] = useState(null)
   const [isJournalLoading, setIsJournalLoading] = useState(false)
 
+  const [perfData, setPerfData] = useState(null)
+  const [equityCurve, setEquityCurve] = useState([])
+  const [stratPerf, setStratPerf] = useState([])
+  const [bucketData, setBucketData] = useState(null)
+
+  const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
   const activeSymbols = symbols.filter(s => s.is_active)
   const strategies = symbols.length > 0 ? Object.keys(symbols[0].factors_map || {}) : []
 
@@ -544,8 +336,12 @@ function App() {
     const id = Date.now()
     setToasts(prev => [...prev, { id, message, type }])
     setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id))
-    }, 5000)
+      removeToast(id)
+    }, 3000) // Reducido a 3s para v1.5.0
+  }
+
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(t => t.id !== id))
   }
 
   const fetchData = async () => {
@@ -584,14 +380,16 @@ function App() {
 
   const fetchPerformance = async () => {
     try {
-      const [perfRes, eqRes, stratRes] = await Promise.all([
+      const [perfRes, eqRes, stratRes, buckRes] = await Promise.all([
         api.get(`${API_BASE}/performance`),
         api.get(`${API_BASE}/performance/equity`),
-        api.get(`${API_BASE}/performance/strategies`)
+        api.get(`${API_BASE}/performance/strategies`),
+        api.get(`${API_BASE}/performance/buckets`)
       ])
       setPerfData(perfRes.data)
       setEquityCurve(eqRes.data || [])
       setStratPerf(stratRes.data || [])
+      setBucketData(buckRes.data || null)
     } catch (err) { console.error(err) }
   }
 
@@ -749,9 +547,13 @@ function App() {
         symbol,
         action,
         volume: manualLot,
-        is_smart: isSmartMode
+        is_smart: isSmartMode,
+        risk_amount: isSmartMode ? riskAmount : null,
+        sl_price: isSmartMode && slPrice !== '' ? parseFloat(slPrice) : null,
+        tp_price: isSmartMode && tpPrice !== '' ? parseFloat(tpPrice) : null,
+        rr_ratio: isSmartMode ? rrRatio : null
       })
-      addToast(`${action} ${symbol} executed`, 'success')
+      addToast(`${isSmartMode ? 'Smart' : 'Market'} ${action} ${symbol} executed`, 'success')
       fetchData()
     } catch (err) { addToast('Error executing trade', 'error') }
     finally { setIsExecuting(false) }
@@ -877,7 +679,7 @@ function App() {
 
 
 
-          <Toast key={t.id} {...t} />
+          <Toast key={t.id} {...t} onClose={removeToast} />
 
 
 
@@ -1012,6 +814,13 @@ function App() {
           />
 
 
+
+          <NavItem
+            icon={<TrendingUp size={24} />}
+            active={currentView === 'performance'}
+            onClick={() => { setCurrentView('performance'); fetchPerformance(); fetchHistory(); }}
+            label="Perf"
+          />
 
           <NavItem
 
@@ -1426,7 +1235,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V8.3</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.1.0 SMC</span>
 
 
 
@@ -1469,6 +1278,16 @@ function App() {
 
 
 
+
+        {currentView === 'performance' && (
+          <PerformanceDashboard
+            perfData={perfData}
+            equityCurve={equityCurve}
+            stratPerf={stratPerf}
+            historyTrades={historyTrades}
+            bucketData={bucketData}
+          />
+        )}
 
         {currentView === 'analytics' && (
           <div className="w-full px-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
@@ -1526,6 +1345,10 @@ function App() {
             </div>
 
             <div className="px-4 mt-8">
+              <PerformanceCalendar trades={historyTrades} />
+            </div>
+
+            <div className="px-4 mt-8">
               <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
                 <h3 className="text-xl font-black text-white italic tracking-tighter uppercase mb-8">Intelligence Breakdown: Strategy Win Rates</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -1537,7 +1360,7 @@ function App() {
                           <h4 className="text-lg font-black text-white italic tracking-tighter uppercase">{name}</h4>
                         </div>
                         <div className="text-right">
-                          <div className={`px-3 py-1 rounded-full text-[10px] font-black mb-2 inline-block ${data.win_rate >= 50 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                          <div className={`px-3 py-1 rounded-full text-[10px] font-black mb-2 ${data.win_rate >= 50 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
                             {data.win_rate}% WR
                           </div>
                           <div className={`text-xs font-black font-mono block ${data.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -1744,7 +1567,12 @@ function App() {
                           </div>
                           <div>
                             <h4 className="text-white font-black italic text-sm leading-none">{t.symbol}</h4>
-                            <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
+                            <div className="flex flex-col mt-1">
+                                <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
+                                <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-0.5">
+                                    {t.price_current?.toFixed((t.symbol.includes('EURUSD') || t.symbol.includes('GBPUSD')) ? 5 : (t.symbol.includes('JPY') || t.symbol.includes('XAU')) ? 3 : 2)}
+                                </span>
+                            </div>
                           </div>
                         </div>
                         <div className="text-right">
@@ -1754,6 +1582,8 @@ function App() {
                           <div className="text-[7px] font-black text-zinc-600 uppercase">Yield</div>
                         </div>
                       </div>
+
+                      <TradeRiskVisualizer trade={t} />
 
                       <div className="flex items-center justify-between gap-2 border-t border-white/5 pt-3 mt-1">
                         <div className="flex flex-col">
@@ -1826,9 +1656,9 @@ function App() {
                 const bgClass = `bg-${colorBase}-500`;
                 const borderClass = `border-${colorBase}-500/40`;
 
-                // Sentinel Heatmap Logic (PnL 24h)
-                const hasProfit = (s.profit_24h || 0) > 0;
-                const hasLoss = (s.profit_24h || 0) < 0;
+                // Sentinel Heatmap Logic (Daily PnL)
+                const hasProfit = (s.daily_pnl || 0) > 0;
+                const hasLoss = (s.daily_pnl || 0) < 0;
                 let heatClass = borderClass;
                 let heatGlow = '';
 
@@ -1872,21 +1702,10 @@ function App() {
                         <div className="h-6 w-20 flex-shrink-0">
                           {s.sparkline && s.sparkline.length > 0 && <Sparkline data={s.sparkline} color={colorBase} />}
                         </div>
-                        <div className="flex-1 hidden xl:flex items-center justify-around gap-2 px-2 border-l border-white/5">
-                          {['M5', 'M15', 'H1'].map(tf => {
-                            const tel = s.telemetry?.[tf] || {};
-                            return (
-                              <div key={tf} className="flex flex-col items-center">
-                                <span className="text-[6px] font-bold text-zinc-600 leading-none">{tf}</span>
-                                <span className={`text-[9px] font-black ${tel.rsi >= 70 ? 'text-rose-400' : tel.rsi <= 30 ? 'text-emerald-400' : 'text-zinc-300'}`}>{tel.rsi || '--'}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
                         <div className="flex flex-col items-center min-w-[60px] border-l border-white/5 pl-4">
-                          <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase">PnL 24H</span>
-                          <span className={`text-[10px] font-black ${(s.profit_24h || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {(s.profit_24h || 0) >= 0 ? '+' : ''}{(s.profit_24h || 0).toFixed(2)}€
+                          <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase tracking-tighter">Day PNL</span>
+                          <span className={`text-[10px] font-black ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                           </span>
                         </div>
                       </div>
@@ -1897,7 +1716,15 @@ function App() {
                             {isBlocked && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" title="GATED" />}
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
-                          <span className="text-[6px] font-black text-zinc-600 uppercase tracking-widest">
+                          <div className="flex gap-1 mt-0.5">
+                            {["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
+                              const score = s.factors_map?.[strat]?.score || 0;
+                              return (
+                                <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
+                              );
+                            })}
+                          </div>
+                          <span className="text-[5px] font-black text-zinc-700 uppercase tracking-widest mt-1">
                             {(() => {
                               const factors = s.factors_map ? Object.entries(s.factors_map) : [];
                               if (factors.length === 0) return s.active_strategy || "PST-AUTO";
@@ -1972,13 +1799,21 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Telemetry Grid (Multi-Timeframe + PnL 24h) */}
+                    {/* Telemetry Grid (Multi-Timeframe + Daily PnL) */}
                     <div className="grid grid-cols-4 gap-2 bg-black/20 p-3 rounded-2xl border border-white/5 relative z-10">
-                      <div className="flex flex-col items-center justify-center border-r border-white/5">
-                        <span className="text-[7px] font-black text-zinc-600 mb-1">PNL 24H</span>
-                        <span className={`text-[10px] font-black ${(s.profit_24h || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {(s.profit_24h || 0) >= 0 ? '+' : ''}{(s.profit_24h || 0).toFixed(2)}€
-                        </span>
+                      <div className="flex flex-col items-center justify-center border-r border-white/5 px-1 min-w-[65px]">
+                        <div className="flex flex-col items-center mb-1">
+                          <span className="text-[7px] font-black text-zinc-600 uppercase">PNL 24H</span>
+                          <span className={`text-[10px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
+                          </span>
+                        </div>
+                        <div className="flex flex-col items-center border-t border-white/5 pt-1 w-full">
+                          <span className="text-[7px] font-black text-zinc-600 uppercase">TOTAL PNL</span>
+                          <span className={`text-[9px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
+                          </span>
+                        </div>
                       </div>
                       {['M5', 'M15', 'H1'].map(tf => {
                         const tel = s.telemetry?.[tf] || {};
@@ -1996,6 +1831,20 @@ function App() {
                               <span className={`text-[10px] font-black ${rsiColor}`}>{rsi || '--'}</span>
                               <span className="text-[7px] font-bold text-zinc-500">A:{adx || '--'}</span>
                             </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Core Strategies Scores */}
+                    <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
+                      {["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
+                        const score = s.factors_map?.[strat]?.score || 0;
+                        const label = strat.replace("PST-", "").replace("AlphaTrend", "Alpha").replace("RangeBreaker", "Range").replace("PrecisionScalping", "Scalp").toUpperCase();
+                        return (
+                          <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
+                            <span className="text-[6px] font-black text-zinc-600 mb-0.5">{label}</span>
+                            <span className={`text-[9px] font-black ${score >= 70 ? 'text-indigo-400' : 'text-zinc-500'}`}>{Math.round(score)}</span>
                           </div>
                         );
                       })}
@@ -2331,25 +2180,11 @@ function App() {
 
 
                       const allStrategies = Object.keys(sym.factors_map);
-
-
-
                       const strategies = allStrategies.filter(s => {
-
-
-
                         const name = String(s).toUpperCase();
-
-
-
-                        return !name.includes('CHANNEL') && !name.includes('MASTER');
-
-
-
+                        if (name.includes('CHANNEL')) return false;
+                        return true;
                       });
-
-
-
                       if (strategies.length === 0) return null;
 
 
@@ -2938,12 +2773,60 @@ function App() {
 
 
                 </div>
+                {/* Smart Risk Configuration (FASE 72) */}
+                <AnimatePresence>
+                  {isSmartMode && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden space-y-3"
+                    >
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Riesgo (€)</p>
+                          <div className="flex items-center gap-2">
+                            <Zap size={10} className="text-amber-500" />
+                            <input 
+                              type="number" 
+                              value={riskAmount} 
+                              onChange={(e) => setRiskAmount(Number(e.target.value))}
+                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">RR Ratio</p>
+                          <div className="flex items-center gap-2">
+                            <Target size={10} className="text-indigo-400" />
+                            <input 
+                              type="number" 
+                              step="0.1"
+                              value={rrRatio} 
+                              onChange={(e) => setRrRatio(Number(e.target.value))}
+                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
+                            />
+                          </div>
+                        </div>
+                      </div>
 
-
-
-
-
-
+                      <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                        <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Stop Loss Price (Optional)</p>
+                        <div className="flex items-center gap-2">
+                          <Shield size={10} className="text-rose-500" />
+                          <input 
+                            type="number" 
+                            step="0.00001"
+                            placeholder="Vacío = Estructural"
+                            value={slPrice} 
+                            onChange={(e) => setSlPrice(e.target.value)}
+                            className="w-full bg-transparent text-xs font-bold text-white outline-none border-none p-0 placeholder:text-zinc-700 placeholder:italic"
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 {/* Volume Selector */}
 
@@ -3215,279 +3098,21 @@ function App() {
 
 
           currentView === 'terminal' && (
-
-
-
             <div className="w-full animate-in slide-in-from-right-4 duration-500 pr-6">
-
-
-
               <div className="space-y-6">
-
-
-
-                {/* System Live Logs Console */}
-
-
-
                 <section>
-
-
-
                   <LiveConsole logs={logs} />
-
-
-
                 </section>
-
-
-
-
-
-
-
-                {/* Positions Table */}
-
-
-
-                <section className="bg-zinc-900/30 border border-zinc-800/50 rounded-[2.5rem] overflow-hidden backdrop-blur-2xl shadow-2xl">
-
-
-
-                  <div className="p-6 border-b border-zinc-800 flex justify-between items-center bg-[#070707]/60">
-
-
-
-                    <div className="flex items-center gap-4">
-
-
-
-                      <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
-
-
-
-                        <ShoppingCart className="text-indigo-500" size={24} />
-
-
-
-                      </div>
-
-
-
-                      <div>
-
-
-
-
-
-
-
-
-
-                      </div>
-
-
-
-                    </div>
-
-
-
-                    <div className="flex items-center gap-4">
-
-
-
-                      <div className="px-5 py-1.5 bg-zinc-900/50 border border-zinc-800 rounded-xl">
-
-
-
-                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Active Fleet: </span>
-
-
-
-                        <span className="text-xs font-black text-indigo-400 italic font-mono">{trades.length} Trades</span>
-
-
-
-                      </div>
-
-
-
-                    </div>
-
-
-
-                  </div>
-
-
-
-                  <div className="overflow-x-auto">
-
-
-
-                    <table className="w-full text-left">
-
-
-
-                      <thead className="text-[9px] uppercase text-zinc-600 font-black tracking-[0.25em]">
-
-
-
-                        <tr className="border-b border-zinc-800/30">
-
-
-
-                          <th className="px-10 py-5">Security Identification</th>
-
-
-
-                          <th className="px-10 py-5">Action</th>
-
-
-
-                          <th className="px-10 py-5">Volume</th>
-
-
-
-                          <th className="px-10 py-5 text-right">Yield</th>
-
-
-
-                        </tr>
-
-
-
-                      </thead>
-
-
-
-                      <tbody className="divide-y divide-zinc-800/20">
-
-
-
-                        {sortedTrades.length === 0 ? (
-
-
-
-                          <tr>
-
-
-
-                            <td colSpan="4" className="px-10 py-16 text-center text-zinc-700 font-black uppercase tracking-[0.5em] italic opacity-40 text-[10px]">System Idle € No Active Positions monitored</td>
-
-
-
-                          </tr>
-
-
-
-                        ) : (
-
-
-
-                          sortedTrades.map((trade) => (
-
-
-
-                            <tr key={trade.ticket} onClick={() => { setSelectedSymbol(trade.symbol); setCurrentView('surveillance'); }} className={`hover:bg-indigo-500/5 transition-all group cursor-pointer border-l-4 border-transparent`}>
-
-
-
-                              <td className="px-10 py-5 text-lg font-black text-white uppercase italic tracking-tighter">
-
-
-
-                                {trade.symbol} <span className="text-[9px] text-zinc-600 ml-3 font-mono not-italic tracking-normal">#{trade.ticket}</span>
-
-
-
-                              </td>
-
-
-
-                              <td className="px-10 py-5">
-
-
-
-                                <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black tracking-[0.2em] border shadow-2xl ${trade.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-rose-500/10 text-rose-500 border-rose-500/20'}`}>
-
-
-
-                                  {trade.type}
-
-
-
-                                </span>
-
-
-
-                              </td>
-
-
-
-                              <td className="px-10 py-5 font-mono text-zinc-400 font-bold italic text-xs">
-
-
-
-                                {trade.volume.toFixed(2)} LOTS
-
-
-
-                              </td>
-
-
-
-                              <td className={`px-10 py-5 text-right font-black text-2xl italic tracking-tighter ${trade.profit >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-
-
-
-                                {trade.profit >= 0 ? '+' : ''}{trade.profit.toFixed(2)}€
-
-
-
-                              </td>
-
-
-
-                            </tr>
-
-
-
-                          ))
-
-
-
-                        )}
-
-
-
-                      </tbody>
-
-
-
-                    </table>
-
-
-
-                  </div>
-
-
-
-                </section>
-
-
-
+                <TradeTerminalTable 
+                  trades={trades}
+                  historyTrades={historyTrades}
+                  filter={terminalTradesFilter}
+                  setFilter={setTerminalTradesFilter}
+                  onSymbolClick={(sym) => { setSelectedSymbol(sym); setCurrentView('surveillance'); }}
+                />
               </div>
-
-
-
             </div>
-
-
-
           )
-
-
-
         }
 
 
@@ -3676,13 +3301,13 @@ function App() {
 
                   // Mapeo de nombres limpios y estratégicos
                   const STRAT_NAME_MAP = {
-                    "PST-EMA-Flow": "EMA Flow",
-                    "PST-Mean-Reversion": "Mean Reversion",
-                    "PST-Scalper-Pro": "Scalper Pro"
+                    "PST-AlphaTrend":        "Alpha Trend",
+                    "PST-RangeBreaker":      "Range Breaker",
+                    "PST-PrecisionScalping": "Precision Scalp",
                   };
 
-                  // Obtener solo las estrategias CORE solicitadas: EMA Flow, Mean Reversion y Scalper Pro
-                  const CORE_STRATS = ["PST-EMA-Flow", "PST-Mean-Reversion", "PST-Scalper-Pro"];
+                  // Estrategias CORE activas (v3.0)
+                  const CORE_STRATS = ["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
@@ -3744,7 +3369,7 @@ function App() {
                             const stratData = symbolStrats[strat];
 
                             // Lógica de activación por defecto
-                            const isCore = ["PST-EMA-Flow"].includes(strat); // Mean Reversion ya no es core activa por defecto
+                            const isCore = ["PST-AlphaTrend", "PST-RangeBreaker"].includes(strat); // AlphaTrend y RangeBreaker activas por defecto
                             const isEnabled = stratData ? (!!stratData.is_active) : isCore;
 
                             // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)
@@ -3868,15 +3493,11 @@ function App() {
                                       type="text"
                                       value={stratData?.tp_mult || ""}
                                       placeholder={params.tp_mult}
-                                      readOnly={strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro"}
-                                      title={(strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") ? "Usa TP Técnico" : "TP Multiplier"}
-                                      onClick={(e) => {
-                                        if (strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") {
-                                          // Optional: Show a toast here explaining it uses technical TP
-                                        }
-                                      }}
+                                      readOnly={strat === "PST-PrecisionScalping"}
+                                      title={strat === "PST-PrecisionScalping" ? "Usa TP Técnico" : "TP Multiplier"}
+                                      onClick={(e) => {}}
                                       onChange={(e) => updateStrategyConfig(s.symbol, strat, 'tp_mult', parseFloat(e.target.value) || null)}
-                                      className={`w-3 bg-transparent outline-none text-center ${(strat === "PST-Mean-Reversion" || strat === "PST-Scalper-Pro") ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
+                                      className={`w-3 bg-transparent outline-none text-center ${strat === "PST-PrecisionScalping" ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
                                     />
                                   </div>
                                 </div>
@@ -4070,546 +3691,6 @@ function App() {
 
 
 
-}
-
-
-
-
-
-
-
-function NavItem({ icon, active = false, onClick, label, badge = 0 }) {
-
-
-
-  return (
-
-
-
-    <button
-
-
-
-      onClick={onClick}
-
-
-
-      className={`p-4 rounded-[1.5rem] transition-all duration-500 group relative flex items-center justify-center ${active ? 'bg-indigo-600/20 text-indigo-400 shadow-[0_0_30px_rgba(99,102,241,0.2)] border border-indigo-500/30' : 'text-zinc-700 hover:text-zinc-200 hover:bg-zinc-800/40'}`}
-
-
-
-      title={label}
-
-
-
-    >
-
-
-
-      {icon}
-
-
-
-      {badge > 0 && (
-
-
-
-        <div className="absolute -top-1 -right-1 min-w-[20px] h-5 bg-rose-600 text-white text-[10px] font-black flex items-center justify-center rounded-full border-2 border-[#070707] shadow-[0_0_15px_rgba(225,29,72,0.4)] animate-in zoom-in duration-300">
-
-
-
-          {badge}
-
-
-
-        </div>
-
-
-
-      )}
-
-
-
-      {active && <div className="absolute -right-0.5 top-1/2 -translate-y-1/2 w-2 h-10 bg-indigo-500 rounded-l-full shadow-[0_0_20px_#6366f1]" />}
-
-
-
-    </button>
-
-
-
-  )
-
-
-
-}
-
-
-
-
-
-
-
-function Sparkline({ data, color }) {
-
-
-
-  if (!data || data.length < 2) return null;
-
-
-
-  const min = Math.min(...data);
-
-
-
-  const max = Math.max(...data);
-
-
-
-  const range = max - min || 1;
-
-
-
-  const width = 100;
-
-
-
-  const height = 40;
-
-
-
-
-
-
-
-  const points = data.map((val, i) => {
-
-
-
-    const x = (i / (data.length - 1)) * width;
-
-
-
-    const y = height - ((val - min) / range) * height;
-
-
-
-    return `${x},${y}`;
-
-
-
-  }).join(' ');
-
-
-
-
-
-
-
-  const strokeColor = color === 'emerald' ? '#10b981' : (color === 'rose' ? '#f43f5e' : (color === 'amber' ? '#f59e0b' : '#6366f1'));
-
-
-
-
-
-
-
-  return (
-
-
-
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-
-
-
-      <defs>
-
-
-
-        <linearGradient id={`grad-${color}`} x1="0" y1="0" x2="0" y2="1">
-
-
-
-          <stop offset="0%" stopColor={strokeColor} stopOpacity="0.2" />
-
-
-
-          <stop offset="100%" stopColor={strokeColor} stopOpacity="0" />
-
-
-
-        </linearGradient>
-
-
-
-      </defs>
-
-
-
-      <polyline
-
-
-
-        fill="none"
-
-
-
-        stroke={strokeColor}
-
-
-
-        strokeWidth="2.5"
-
-
-
-        strokeLinecap="round"
-
-
-
-        strokeLinejoin="round"
-
-
-
-        points={points}
-
-
-
-        className="drop-shadow-[0_0_8px_rgba(0,0,0,0.5)]"
-
-
-
-      />
-
-
-
-      <polygon
-
-
-
-        points={`0,${height} ${points} ${width},${height}`}
-
-
-
-        fill={`url(#grad-${color})`}
-
-
-
-      />
-
-
-
-    </svg>
-
-
-
-  );
-
-
-
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function Toast({ message, type, id }) {
-
-
-
-  const icons = {
-
-
-
-    success: <TrendingUp size={16} className="text-emerald-400" />,
-
-
-
-    error: <ShieldAlert size={16} className="text-rose-400" />,
-
-
-
-    info: <Activity size={16} className="text-indigo-400" />
-
-
-
-  };
-
-
-
-
-
-
-
-  const colors = {
-
-
-
-    success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.1)]',
-
-
-
-    error: 'border-rose-500/30 bg-rose-500/10 text-rose-400 shadow-[0_0_30px_rgba(244,63,94,0.1)]',
-
-
-
-    info: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400 shadow-[0_0_30px_rgba(99,102,241,0.1)]'
-
-
-
-  };
-
-
-
-
-
-
-
-  return (
-
-
-
-    <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl border backdrop-blur-xl animate-in slide-in-from-right-8 fade-in duration-500 ${colors[type]}`}>
-
-
-
-      <div className="p-2 bg-black/20 rounded-lg">{icons[type]}</div>
-
-
-
-      <p className="text-xs font-black uppercase tracking-widest italic">{message}</p>
-
-
-
-    </div>
-
-
-
-  );
-
-
-
-}
-
-
-
-
-
-
-
-function StatBox({ title, value, icon, color, positive }) {
-
-
-
-  const colors = {
-
-
-
-    emerald: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20',
-
-
-
-    rose: 'text-rose-500 bg-rose-500/10 border-rose-500/20',
-
-
-
-    indigo: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
-
-
-
-    amber: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
-
-
-
-    zinc: 'text-zinc-400 bg-zinc-800 border-zinc-700/50'
-
-
-
-  };
-
-
-
-
-
-
-
-  const currentBoxColor = positive !== undefined ? (positive ? colors.emerald : colors.rose) : colors[color];
-
-
-
-
-
-
-
-  return (
-
-
-
-    <div className="bg-[#090909] border border-zinc-800/60 rounded-2xl p-4 transition-all flex flex-col justify-between relative overflow-hidden group">
-
-
-
-      <div className="absolute top-0 right-0 w-16 h-16 bg-white/[0.02] blur-2xl rounded-full -mr-8 -mt-8" />
-
-
-
-      <div className="flex justify-between items-start relative z-10">
-
-
-
-        <div className={`p-1.5 rounded-lg border ${currentBoxColor}`}>
-
-
-
-          {icon}
-
-
-
-        </div>
-
-
-
-        <span className="text-[7px] font-black text-zinc-500 uppercase tracking-widest">{title}</span>
-
-
-
-      </div>
-
-
-
-      <p className={`text-2xl font-black italic tracking-tighter mt-4 relative z-10 ${positive !== undefined ? (positive ? 'text-emerald-500' : 'text-rose-500') : 'text-white'}`}>
-
-
-
-        {value}
-
-
-
-      </p>
-
-
-
-    </div>
-
-
-
-  );
-
-
-
-}
-
-
-
-
-
-
-
-function LiveConsole({ logs }) {
-  const [cleared, setCleared] = useState(0)
-  const [smartFilter, setSmartFilter] = useState(true)
-
-  const KEYWORDS = ['orden', 'order', 'trade', 'ejecut', 'cerr', 'close', 'ticket',
-    'error', 'critical', 'warn', 'rechazad', 'r:r', 'signal', 'blocked', 'sync', 'cleanup', 'profit']
-
-  const visibleLogs = useMemo(() => {
-    let list = logs.slice(cleared)
-    if (smartFilter) {
-      list = list.filter(log => {
-        if (log.level === 'ERROR' || log.level === 'CRITICAL' || log.level === 'WARNING') return true
-        const m = (log.message || '').toLowerCase()
-        return KEYWORDS.some(k => m.includes(k))
-      })
-    }
-    return list
-  }, [logs, cleared, smartFilter])
-
-  return (
-    <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-6 shadow-2xl h-[400px] flex flex-col gap-4 overflow-hidden">
-      <div className="flex justify-between items-center shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_10px_#6366f1]" />
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setSmartFilter(!smartFilter)}
-            title={smartFilter ? 'Ver todos los logs' : 'Solo eventos importantes'}
-            className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider border transition-all ${smartFilter ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-500 hover:text-zinc-300'}`}
-          >
-            {smartFilter ? 'Smart' : 'All'}
-          </button>
-          <button
-            onClick={() => setCleared(logs.length)}
-            title="Limpiar consola"
-            className="px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider border border-zinc-700 bg-zinc-900 text-zinc-500 hover:text-rose-400 hover:border-rose-500/40 transition-all"
-          >
-            Clear
-          </button>
-          <div className="px-3 py-1 bg-zinc-900 rounded-full border border-zinc-800">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">{visibleLogs.length} / {logs.length - cleared}</span>
-          </div>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto font-mono text-[10px] space-y-1.5 no-scrollbar pr-2">
-        {visibleLogs.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-zinc-800 italic uppercase tracking-widest text-[8px]">
-            {smartFilter ? 'Sin eventos importantes...' : 'Waiting for telemetry uplink...'}
-          </div>
-        ) : (
-          visibleLogs.map((log, i) => {
-            const isError = log.level === 'ERROR' || log.level === 'CRITICAL';
-            const isWarning = log.level === 'WARNING';
-            const isTrade = (log.message || '').toLowerCase().includes('trade') || (log.message || '').toLowerCase().includes('orden');
-            let color = 'text-zinc-500';
-            if (isError) color = 'text-rose-500 font-bold';
-            else if (isWarning) color = 'text-amber-500 font-bold';
-            else if (isTrade) color = 'text-emerald-400 font-bold';
-            else if (log.level === 'INFO') color = 'text-indigo-400';
-            return (
-              <div key={log.id || i} className="flex gap-4 group animate-in slide-in-from-left-2 duration-300">
-                <span className="text-zinc-800 shrink-0 whitespace-nowrap">[{(log.timestamp || '').split(' ')[1] || log.timestamp}]</span>
-                <span className={`${color} break-all opacity-90 group-hover:opacity-100 transition-opacity`}>
-                  <span className="opacity-50 mr-2 uppercase">[{log.level}]</span>
-                  {log.message}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ title, value, icon, subtitle, trend, className }) {
-  return (
-    <div className={`bg-zinc-900/40 p-10 border border-zinc-800/50 rounded-[3rem] hover:border-indigo-500/30 transition-all duration-700 backdrop-blur-md group hover:shadow-[0_0_50px_rgba(99,102,241,0.05)] ${className}`}>
-      <div className="flex justify-between items-start mb-8">
-        <div className="p-5 bg-zinc-800 border border-zinc-700/50 rounded-2xl group-hover:bg-indigo-500/10 group-hover:text-indigo-400 group-hover:border-indigo-500/20 transition-all duration-700 shadow-2xl">
-          {icon}
-        </div>
-        {trend && (
-          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border shadow-lg ${trend === 'up' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : trend === 'down' ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' : 'text-zinc-400 bg-zinc-500/10 border-zinc-500/20'}`}>
-            {trend === 'up' ? '↗' : trend === 'down' ? '↘' : '→'}
-          </div>
-        )}
-      </div>
-      <div>
-        <h2 className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em] mb-2">{title}</h2>
-        <p className="text-4xl font-black text-white tracking-tight mb-2">{value}</p>
-        <p className="text-[10px] text-zinc-700 font-bold uppercase tracking-widest opacity-60 font-mono italic">{subtitle}</p>
-      </div>
-    </div>
-  );
 }
 
 export default App

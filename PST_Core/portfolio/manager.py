@@ -1,6 +1,9 @@
 import logging
 import MetaTrader5 as mt5
+import aiosqlite
 from typing import Dict, List
+from ..utils.tech_utils import get_asset_class
+from ..config import SCALPER_MAX_LOSS_EUR, STRATEGY_CATEGORIES
 
 logger = logging.getLogger("PST-Portfolio")
 
@@ -58,18 +61,12 @@ class PortfolioManager:
         today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
         
         # 1. Obtener PnL de trades cerrados hoy desde la DB
-        import sqlite3
-        import os
         closed_pnl = 0.0
         try:
-            # Resolviendo ruta absoluta para que funcione al lanzar desde PST_API
-            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pst_trading.db")
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,))
-            row = cursor.fetchone()
-            closed_pnl = row[0] if row and row[0] else 0.0
-            conn.close()
+            async with aiosqlite.connect(self.db.db_path) as conn:
+                async with conn.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,)) as cursor:
+                    row = await cursor.fetchone()
+                    closed_pnl = row[0] if row and row[0] else 0.0
         except Exception as e:
             logger.error(f"❌ Error consultando PnL hoy: {e}")
             
@@ -112,6 +109,58 @@ class PortfolioManager:
         """
         Lógica de control de riesgo global (FTMO Friendly) y Pyramiding Institucional.
         """
+        # --- NUEVO: LÍMITES GLOBALES POR CATEGORÍA (v1.8.7) ---
+        from ..config import STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY, MAX_TOTAL_OPEN_POSITIONS
+
+        # Traducir nombre legible si es necesario
+        raw_strat_name = strategy_name or ""
+        reverse_map = {
+            "Scalping Pro (Micro-Reversión)": "PST-Scalper-Pro",
+            "Flujo EMA (Tendencia)": "PST-EMA-Flow",
+            "Canal Maestro (T. Híbrido)": "PST-Channel-Master",
+            "TrendMaster (Line Breakout)": "PST-TrendMaster",
+            "Reversión a la Media (Rangos)": "PST-Mean-Reversion",
+            "Liquidez Sentinel (Institucional)": "PST-Liquidity-Hunter"
+        }
+        if raw_strat_name in reverse_map:
+            raw_strat_name = reverse_map[raw_strat_name]
+
+        strategy_category = STRATEGY_CATEGORIES.get(raw_strat_name, "CORE")
+        max_for_cat = MAX_POSITIONS_PER_CATEGORY.get(strategy_category, 1)
+
+        # --- LÍMITE GLOBAL ABSOLUTO (Race Condition Fix) ---
+        # Cuenta posiciones reales + las que están en vuelo (aún no registradas en MT5)
+        n_real = len(current_positions) if current_positions else 0
+        n_inflight = len(self.in_flight_trades)
+        if n_real + n_inflight >= MAX_TOTAL_OPEN_POSITIONS:
+            logger.warning(f"🚫 [GLOBAL CAP] {n_real} abiertas + {n_inflight} en vuelo >= límite {MAX_TOTAL_OPEN_POSITIONS}. Bloqueando {symbol}.")
+            return False
+
+        # Contar posiciones globales de esta categoría (reales + in-flight aproximadas)
+        global_cat_count = 0
+        if current_positions:
+            for p in current_positions:
+                p_strat = p.comment.replace("PST_", "").replace("PST-", "")
+                p_cat = "CORE"
+                for s_name_cfg, s_cat in STRATEGY_CATEGORIES.items():
+                    if s_name_cfg.replace("PST-", "") in p_strat:
+                        p_cat = s_cat
+                        break
+                if p_cat == strategy_category:
+                    global_cat_count += 1
+
+        # Los in-flight se cuentan como si fueran de la misma categoría (conservador)
+        global_cat_count += n_inflight
+
+        if global_cat_count >= max_for_cat:
+            logger.warning(f"🚫 [GLOBAL LIMIT] Límite de {max_for_cat} pos para {strategy_category} alcanzado. Bloqueando {symbol}.")
+            return False
+
+        # --- BLOQUEO DIARIO (v1.8.7) ---
+        if await self.is_daily_locked():
+             logger.warning(f"🔒 [BLOQUEO DIARIO] No se permiten más entradas hoy en {symbol}.")
+             return False
+
         # 0. Evitar duplicados por Símbolo (Filtro Estricto y Robusto)
         target_sym = symbol.upper().strip()
         
@@ -120,14 +169,44 @@ class PortfolioManager:
             return False
 
         if current_positions:
+            target_class = get_asset_class(target_sym)
             for pos in current_positions:
                 pos_sym = pos.symbol.upper().strip()
+                pos_class = get_asset_class(pos_sym)
+                pos_is_buy = getattr(pos, 'type', -1) == 0
+                pos_is_sell = getattr(pos, 'type', -1) == 1
+                
+                # --- RELAXED: ANTI-HEDGING CATEGÓRICO REMOVIDO ---
+                # Ya no bloqueamos activos distintos (ej: BTC vs LINK) por ser de la misma clase.
+                # Solo bloquearemos si es el mismísimo símbolo (manejado abajo) o si el usuario
                 # Coincidencia exacta o parcial (ej: EURUSD vs EURUSD.cash)
                 if pos_sym == target_sym or target_sym in pos_sym or pos_sym in target_sym:
+                    pos_comment = getattr(pos, 'comment', "")
+                    is_scalper = "Scalper" in strategy_name if strategy_name else False
+                    
+                    # NUEVO: Permitir pruebas simultáneas de múltiples estrategias de scalping en el mismo activo
+                    # Mapeo de abreviaturas utilizadas en los comentarios de MT5
+                    abbrev_map = {
+                        "PST-Scalper-Pro": ["ScPro", "Scalper-Pro"],
+                        "PST-Scalper-Active": ["ScV2", "Scalper-Active"],
+                        "PST-Scalper-OrderFlow": ["ScOF", "OrderFlow", "Scalper-OrderFlow"]
+                    }
+                    
+                    pos_is_different_scalper = False
+                    if is_scalper:
+                        current_abbrevs = abbrev_map.get(strategy_name, [])
+                        is_pos_scalper = any(x in pos_comment for x in ["ScPro", "ScV2", "ScOF", "Scalper"])
+                        is_same_strategy = any(abbrev in pos_comment for abbrev in current_abbrevs)
+                        
+                        if is_pos_scalper and not is_same_strategy:
+                            pos_is_different_scalper = True
+                            logger.info(f"⚖️ [PARALLEL SCALPING] {symbol} tiene posición activa de otra estrategia ({pos_comment}). Permitiendo señal paralela de {strategy_name} para testeo.")
+                            continue # Omitimos el bloqueo de duplicado y continuamos evaluando reglas
+
                     # --- PYRAMIDING LOGIC (FASE 55) ---
                     # Comprobamos si la posición existente está libre de riesgo (Break-Even)
-                    is_buy = getattr(pos, 'type', -1) == 0
-                    is_sell = getattr(pos, 'type', -1) == 1
+                    is_buy = pos_is_buy
+                    is_sell = pos_is_sell
                     sig_is_buy = signal_type == "BUY"
                     sig_is_sell = signal_type == "SELL"
                     
@@ -141,23 +220,58 @@ class PortfolioManager:
                         is_risk_free = True
                         
                     # Solo piramidamos a favor de la misma dirección si la original es segura
-                    # EXCEPCIÓN: Desactivamos piramidado para SCALPING para evitar sobre-exposición
-                    is_scalper = "Scalper" in strategy_name if strategy_name else False
+                    # EXCEPCIÓN 1: Permitimos reversiones (señal contraria) para que el Orquestador decida si gira la posición.
+                    if (is_buy and sig_is_sell) or (is_sell and sig_is_buy):
+                        logger.info(f"🔄 [REVERSAL DETECTED] {symbol} tiene señal contraria. Permitiendo evaluación de Giro Seguro.")
+                        continue 
+ 
+                    # EXCEPCIÓN 2: Desactivamos piramidado para SCALPING para evitar sobre-exposición
                     if is_risk_free and ((is_buy and sig_is_buy) or (is_sell and sig_is_sell)) and not is_scalper:
                         logger.info(f"📈 [PYRAMIDING] Permitiendo reingreso en {symbol}. La posición original ya está en Break-Even.")
                         continue # Seguimos validando el resto de las reglas
                     else:
                         reason = "SCALPING NO-PYRAMID" if is_scalper else "RISK IN POS"
-                        logger.debug(f"🛡️ Bloqueando entrada duplicada para {symbol}. Razón: {reason}.")
+                        logger.info(f"🛡️ Bloqueando entrada duplicada para {symbol}. Razón: {reason}.")
                         return False
+
+        # --- CORRELACIÓN DINÁMICA: no abrir si hay una posición altamente correlacionada ---
+        if current_positions:
+            try:
+                from ..utils.correlation_cache import corr_cache
+                for pos in current_positions:
+                    pos_sym = pos.symbol.upper().strip()
+                    if pos_sym == target_sym:
+                        continue  # Duplicado ya manejado arriba
+                    if corr_cache.is_correlated(target_sym, pos_sym, threshold=0.82):
+                        corr_val = corr_cache.get_correlation(target_sym, pos_sym)
+                        pos_dir = "BUY" if getattr(pos, "type", -1) == 0 else "SELL"
+                        # Solo bloqueamos si la dirección propuesta es la misma que la correlacionada
+                        if pos_dir == signal_type:
+                            logger.warning(
+                                f"🔗 [CORR BLOCK] {target_sym} correlacionado con {pos_sym} "
+                                f"({corr_val:.2f}) en la misma dirección {signal_type}. Bloqueando."
+                            )
+                            return False
+            except Exception as _ce:
+                logger.debug(f"[CorrCache] Error en verificación de correlación: {_ce}")
 
         acc = await self.get_account_status()
         if not acc: return False
-        
+
         # 1. Kill-Switch por Drawdown Global (Seguro FTMO al 3.5%)
         if acc["drawdown"] >= self.max_drawdown_pct:
             logger.warning(f"🛑 KILL-SWITCH FTMO: Drawdown del {acc['drawdown']:.2f}% (Límite: {self.max_drawdown_pct}%)")
             return False
+
+        # MODO PRUEBAS: solo bloqueamos si el símbolo ya tiene una posición abierta
+        if current_positions:
+            target_sym = symbol.upper().strip()
+            for pos in current_positions:
+                if pos.symbol.upper().strip() == target_sym:
+                    logger.info(f"🛡️ [{symbol}] Ya tiene posición abierta. Bloqueando nueva entrada.")
+                    return False
+
+        return True
 
         # 2. Filtro de Cierre de Mercado (Solo para Acciones/Índices si aplica)
         # Si faltan menos de 20 min para el cierre, no abrimos compra
@@ -216,7 +330,7 @@ class PortfolioManager:
         # 4. FOREX (Default 1:100)
         return 100, 7000, "FOREX"
 
-    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info, current_atr=None, ma_atr=None, open_positions_count=0, risk_mode="LOTS", risk_value=None):
+    def calculate_lot_size(self, balance, risk_per_trade_pct, stop_loss_points, symbol_info, current_atr=None, ma_atr=None, open_positions_count=0, risk_mode="LOTS", risk_value=None, regime="TREND"):
         """
         Calcula el lotaje usando Lógica Híbrida de Riesgo Dinámico y Cubetas de Margen (FTMO Rules).
         Soporta modos: LOTS (fijo), PCT (% balance), MONEY (nominal €).
@@ -242,6 +356,15 @@ class PortfolioManager:
             # Fallback a cálculo por riesgo global
             risk_money = balance * (risk_per_trade_pct / 100)
 
+        # --- NEW: NOMINAL CAP FOR SCALPING (v2.0.1) ---
+        # Si arriesgar el % del balance supera el tope nominal, usamos el tope.
+        if risk_money > SCALPER_MAX_LOSS_EUR:
+             # Necesitamos saber si es scalping. El orquestador pasa el risk_per_trade_pct específico.
+             # Si el riesgo base es el de scalper (0.08), aplicamos el cap.
+             if abs(risk_per_trade_pct - 0.08) < 0.001: 
+                 logger.info(f"🛡️ [SCALP CAP] Riesgo de {risk_money:.2f}€ excede el máximo de {SCALPER_MAX_LOSS_EUR}€. Ajustando nomina a {SCALPER_MAX_LOSS_EUR}€.")
+                 risk_money = SCALPER_MAX_LOSS_EUR
+
         # --- 2. DYNAMIC RISK SCALING (ARRIESGAR MENOS SI HAY EXPOSICIÓN) ---
         # Reducción de riesgo si hay muchos trades abiertos
         if open_positions_count >= 2:
@@ -249,14 +372,27 @@ class PortfolioManager:
         if open_positions_count >= 5:
             risk_money *= 0.50
             
+        # --- NEW: REGIME RISK ADJUSTMENT (v2.0.1) ---
+        if regime == "VOLATILE":
+            logger.info("⚡ [VOLATILE RISK] Reduciendo riesgo un 25% por régimen volátil.")
+            risk_money *= 0.75
+            
         # --- 3. VOLATILITY ADJUSTMENT ---
         if current_atr and ma_atr and ma_atr > 0:
              vol_factor = ma_atr / current_atr
+             # AJUSTE: Si es modo MONEY, el ajuste de volatilidad solo puede reducir el riesgo, nunca subirlo del nominal (v1.8.7)
+             if risk_mode == "MONEY":
+                 vol_factor = min(1.0, vol_factor)
              risk_money *= vol_factor
              
         # Cap de seguridad de riesgo monetario (no arriesgar más del triple del riesgo base config)
         base_risk_money = balance * (risk_per_trade_pct / 100)
         risk_money = min(risk_money, base_risk_money * 3)
+
+        # CAP FINAL ESTRICTO para modo MONEY (Petición de usuario: No superar el valor nominal)
+        if risk_mode == "MONEY" and risk_value is not None:
+            risk_money = min(risk_money, risk_value)
+            logger.info(f"💰 [RISK CAP] Aplicado cap de {risk_value}€ para modo MONEY. Riesgo final: {risk_money:.2f}€")
 
         tick_value = symbol_info.trade_tick_value
         if tick_value == 0:
@@ -283,5 +419,5 @@ class PortfolioManager:
         lot = max(symbol_info.volume_min, min(symbol_info.volume_max, raw_lot))
         lot = round(lot / symbol_info.volume_step) * symbol_info.volume_step
         
-        logger.info(f"✅ Lot Final para {symbol}: {round(lot, 2)}")
+        logger.info(f"✅ Lot Final para {symbol}: {round(lot, 2)} (Basado en {risk_mode} {risk_value}€, SL {stop_loss_points} pts)")
         return round(lot, 2)

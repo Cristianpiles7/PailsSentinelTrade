@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TradingChart } from './TradingChart';
 import { LayoutGrid, Maximize2, Settings, RefreshCw, X } from 'lucide-react';
 
-const API_BASE = "http://127.0.0.1:8000/api";
+const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
 
 export function MultiChartWorkspace({ symbols, api }) {
     // Estado inicial: 4 ranuras (slots)

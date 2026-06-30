@@ -5,10 +5,12 @@ import logging
 import asyncio
 from datetime import datetime
 
+from ..config import DB_PATH
+
 logger = logging.getLogger("PST-Database")
 
 class PSTDatabase:
-    def __init__(self, db_path="PST_Core/data/pst_trading.db"):
+    def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
         # Asegurar que el directorio existe
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -18,6 +20,34 @@ class PSTDatabase:
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
             # Activar modo WAL para permitir lectura/escritura concurrente
             await db.execute("PRAGMA journal_mode=WAL")
+            
+            # --- TABLA CONFIGURACIÓN SÍMBOLOS (NECESARIA PARA RADAR) ---
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS symbols_config (
+                    symbol TEXT PRIMARY KEY,
+                    type TEXT DEFAULT 'FOREX',
+                    is_active INTEGER DEFAULT 1,
+                    lot_size REAL DEFAULT 0.01,
+                    sl_mult REAL DEFAULT 2.5,
+                    tp_mult REAL DEFAULT 6.0,
+                    score_threshold REAL DEFAULT 80.0,
+                    risk_mode TEXT DEFAULT 'PCT',
+                    risk_value REAL DEFAULT 0.25,
+                    min_rr REAL DEFAULT 1.6
+                )
+            ''')
+            
+            # Insertar símbolos por defecto si la tabla está vacía
+            async with db.execute("SELECT COUNT(*) FROM symbols_config") as cursor:
+                count = (await cursor.fetchone())[0]
+                if count == 0:
+                    default_symbols = [
+                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'),
+                        ('XAUUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
+                        ('US500.cash', 'INDEX')
+                    ]
+                    await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
+
             # Tabla de Operaciones (Trades)
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS trades (
@@ -54,9 +84,13 @@ class PSTDatabase:
                     strategy TEXT,
                     signal_type TEXT, -- BUY/SELL/NONE
                     score REAL,
-                    price REAL
+                    price REAL,
+                    blocked_reason TEXT -- NUEVO: Motivo del bloqueo si aplica
                 )
             ''')
+            try:
+                await db.execute("ALTER TABLE signal_logs ADD COLUMN blocked_reason TEXT")
+            except: pass
             
             # Tabla de Regímenes (Historial de mercado)
             await db.execute('''
@@ -90,7 +124,11 @@ class PSTDatabase:
                     value TEXT
                 )
             ''')
-            # Valor por defecto
+            # Valores por defecto
+            await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('loss_cooldown_minutes', '15')")
+            await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('hysteresis_minutes', '15')")
+            await db.execute("INSERT OR IGNORE INTO bot_config (key, value) VALUES ('daily_drawdown_locked', '0')")
+            await db.commit()
             # Tabla de Niveles del Usuario (Trading Híbrido)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_levels (
@@ -104,7 +142,8 @@ class PSTDatabase:
                     factors_json TEXT,
                     price2 REAL, -- Para lineas de tendencia
                     time2 TEXT   -- Para lineas de tendencia
-                    , time1 TEXT, time1_ts REAL, time2_ts REAL
+                    , time1 TEXT, time1_ts REAL, time2_ts REAL,
+                    mode TEXT DEFAULT 'BOTH'
                 )
             """)
 
@@ -115,6 +154,7 @@ class PSTDatabase:
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time1 TEXT")
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time1_ts REAL")
                 await db.execute("ALTER TABLE user_levels ADD COLUMN time2_ts REAL")
+                await db.execute("ALTER TABLE user_levels ADD COLUMN mode TEXT DEFAULT 'BOTH'")
             except: pass # Ya existen
             
             # Tabla de Configuración de Canales (Nuevo)
@@ -208,9 +248,67 @@ class PSTDatabase:
                     await db.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_def}")
                 except: pass # Ya existe
 
+            # Migración v3.0: Reemplazar estrategias legacy por las nuevas
+            legacy_strategies = ['PST-EMA-Flow', 'PST-TrendMaster', 'PST-Scalper-Pro', 'PST-Scalper-Active']
+            for legacy in legacy_strategies:
+                await db.execute("DELETE FROM symbol_strategies WHERE strategy_name = ?", (legacy,))
+
+            # --- NUEVO: SIEMBRA MAESTRA DE 32 SÍMBOLOS Y ESTRATEGIAS (v1.4.2+) ---
+            # Configuración Maestra Final (Sincronizada v1.4.4)
+            master_config = [
+                ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('USDJPY', 'FOREX'),
+                ('AUDUSD', 'FOREX'), ('USDCHF', 'FOREX'), ('USDCAD', 'FOREX'),
+                ('NZDUSD', 'FOREX'), ('EURGBP', 'FOREX'), ('EURJPY', 'FOREX'),
+                ('XAUUSD', 'COMMODITY'), ('XAGUSD', 'COMMODITY'), ('XTIUSD', 'COMMODITY'),
+                ('XNGUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
+                ('SOLUSD', 'CRYPTO'), ('ADAUSD', 'CRYPTO'), ('DOTUSD', 'CRYPTO'),
+                ('LNKUSD', 'CRYPTO'), ('LTCUSD', 'CRYPTO'), ('UNIUSD', 'CRYPTO'),
+                ('XLMUSD', 'CRYPTO'), ('XRPUSD', 'CRYPTO'), ('NAS100.cash', 'INDEX'),
+                ('US30', 'INDEX'), ('US500.cash', 'INDEX'), ('GER40.cash', 'INDEX'),
+                ('EU50.cash', 'INDEX'), ('UK100.cash', 'INDEX'), ('TSLA', 'STOCK'),
+                ('NVDA', 'STOCK'), ('AAPL', 'STOCK'), ('AMZN', 'STOCK'),
+                ('GOOG', 'STOCK'), ('META', 'STOCK'), ('MSFT', 'STOCK')
+            ]
+            
+            # Lista de símbolos que deben estar DESACTIVADOS (is_active=0) por defecto (Req User v1.4.4)
+            disabled_by_default = [
+                'XNGUSD', 'XTIUSD', 'AUDUSD', 'EURGBP', 'EURJPY', 'NZDUSD', 
+                'USDCAD', 'USDCHF', 'USDJPY', 'GER40.cash', 'NAS100.cash', 
+                'UK100.cash', 'US30'
+            ]
+            
+            for sym, stype in master_config:
+                is_active = 0 if sym in disabled_by_default else 1
+                
+                # 1. Asegurar símbolo en config global con multiplicadores visuales (Header)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, sl_mult, tp_mult, score_threshold, min_rr) 
+                    VALUES (?, ?, ?, 2.5, 3.5, 80.0, 1.6)
+                """, (sym, stype, is_active))
+                
+                # 2. PST-AlphaTrend — Tendencia en H1 (25€ base)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-AlphaTrend', ?, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
+                """, (sym, is_active))
+
+                # 3. PST-RangeBreaker — Rango en M15 (20€ base)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-RangeBreaker', ?, 'MONEY', 20.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
+                """, (sym, is_active))
+
+                # 4. PST-PrecisionScalping — Scalping en M1 (7€ base, TP técnico)
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-PrecisionScalping', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.8, 1.6, 2.5)
+                """, (sym, is_active))
 
             await db.commit()
-            logger.info(f"✅ Base de Datos Inicializada en {self.db_path}")
+            logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v3.0) en {self.db_path}")
 
     async def add_log(self, level, message, source="SYSTEM"):
         """Añade un mensaje de log a la base de datos."""
@@ -255,7 +353,7 @@ class PSTDatabase:
             logger.error(f"❌ Error get_user_levels: {e}")
             return []
 
-    async def save_user_level(self, symbol, price, ltype, label=None, price2=None, time2=None, time1=None, time1_ts=None, time2_ts=None):
+    async def save_user_level(self, symbol, price, ltype, label=None, price2=None, time2=None, time1=None, time1_ts=None, time2_ts=None, mode='BOTH'):
         """Guarda o actualiza un nivel manual (Line u Horizontal)."""
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
             if label and label.startswith('FIXED_'):
@@ -263,10 +361,39 @@ class PSTDatabase:
                  await db.execute("DELETE FROM user_levels WHERE symbol = ? AND label = ?", (symbol, label))
 
             await db.execute("""
-                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1, time1_ts, time2_ts) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (symbol, float(price), ltype, label, price2, time2, time1, time1_ts, time2_ts))
+                INSERT INTO user_levels (symbol, price, type, label, price2, time2, time1, time1_ts, time2_ts, mode) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (symbol, float(price), ltype, label, price2, time2, time1, time1_ts, time2_ts, mode))
             await db.commit()
+
+    async def save_trend_lines(self, symbol: str, lines: list):
+        """Guarda un set completo de líneas de tendencia con reintentos para evitar el bloqueo de la DB."""
+        for attempt in range(10):
+            try:
+                async with aiosqlite.connect(self.db_path, timeout=60) as conn:
+                    # Purgar antiguas
+                    await conn.execute("DELETE FROM user_levels WHERE symbol = ? AND type = 'DIAGONAL'", (symbol,))
+                    # Insertar nuevas
+                    for line in lines:
+                        t1 = int(line.get('p1', {}).get('time', 0) or 0)
+                        t2 = int(line.get('p2', {}).get('time', 0) or 0)
+                        p1 = float(line.get('p1', {}).get('price', 0))
+                        p2 = float(line.get('p2', {}).get('price', 0))
+                        mode = line.get('mode', 'BOTH')
+                        
+                        await conn.execute("""
+                            INSERT INTO user_levels (symbol, price, type, label, price2, time1_ts, time2_ts, mode, is_active) 
+                            VALUES (?, ?, 'DIAGONAL', 'USER_LINE', ?, ?, ?, ?, 1)
+                        """, (symbol, p1, p2, t1, t2, mode))
+                    await conn.commit()
+                return True
+            except Exception as e:
+                logger.error(f"❌ Error en save_trend_lines (Intento {attempt+1}) para {symbol}: {e}")
+                if ("locked" in str(e).lower() or "busy" in str(e).lower()) and attempt < 9:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+                    continue
+                raise e
+        return False
 
     async def delete_user_level(self, level_id):
         """Elimina un nivel manual por ID."""
@@ -290,15 +417,15 @@ class PSTDatabase:
                     await asyncio.sleep(0.1 * (attempt + 1))
                 else: raise
 
-    async def log_signal(self, symbol, regime, strategy, sig_type, score, price):
+    async def log_signal(self, symbol, regime, strategy, sig_type, score, price, blocked_reason=None):
         """Registra una señal para análisis de métricas con reintentos."""
         for attempt in range(5):
             try:
                 async with aiosqlite.connect(self.db_path, timeout=30) as db:
                     await db.execute('''
-                        INSERT INTO signal_logs (timestamp, symbol, regime, strategy, signal_type, score, price)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (datetime.now(), symbol, regime, strategy, sig_type, score, price))
+                        INSERT INTO signal_logs (timestamp, symbol, regime, strategy, signal_type, score, price, blocked_reason)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (datetime.now(), symbol, regime, strategy, sig_type, score, price, blocked_reason))
                     await db.commit()
                 break
             except sqlite3.OperationalError as e:
@@ -325,8 +452,8 @@ class PSTDatabase:
                 await db.execute('''
                     UPDATE trades 
                     SET price_out = ?, profit = ?, time_out = ?
-                    WHERE ticket = ? AND price_out = 0
-                ''', (price_out, profit, str(datetime.now()), ticket))
+                    WHERE ticket = ? AND (price_out = 0 OR price_out IS NULL)
+                ''', (price_out, profit, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), ticket))
                 await db.commit()
         except Exception as e:
             logger.error(f"❌ Error update_trade_cierre: {e}")
@@ -509,10 +636,10 @@ class PSTDatabase:
             return False
 
     async def is_trade_open(self, ticket: int) -> bool:
-        """Verifica si el trade está abierto (price_out = 0)."""
+        """Verifica si el trade está abierto (price_out = 0 o NULL)."""
         try:
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
-                async with db.execute("SELECT 1 FROM trades WHERE ticket = ? AND price_out = 0", (ticket,)) as cursor:
+                async with db.execute("SELECT 1 FROM trades WHERE ticket = ? AND (price_out = 0 OR price_out IS NULL)", (ticket,)) as cursor:
                     result = await cursor.fetchone()
                     return result is not None
         except Exception as e:
@@ -540,6 +667,37 @@ class PSTDatabase:
         except Exception as e:
             logger.error(f"❌ Error updating config {key}: {e}")
             return False
+
+    async def get_strategy_weekly_pnl(self, strategy_name: str) -> float:
+        """Retorna el PnL total de la estrategia en los últimos 7 días."""
+        try:
+            from datetime import datetime, timedelta
+            since = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            async with aiosqlite.connect(self.db_path, timeout=10) as db:
+                async with db.execute(
+                    "SELECT COALESCE(SUM(profit), 0) FROM trades "
+                    "WHERE strategy_name = ? AND time_out >= ?",
+                    (strategy_name, since),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return float(row[0]) if row else 0.0
+        except Exception as e:
+            logger.error(f"❌ Error get_strategy_weekly_pnl({strategy_name}): {e}")
+            return 0.0
+
+    async def is_strategy_paused(self, strategy_name: str) -> bool:
+        """Comprueba si una estrategia está pausada por drawdown semanal."""
+        key = f"strategy_paused_{strategy_name}"
+        val = await self.get_config(key, default="false")
+        return val.lower() == "true"
+
+    async def set_strategy_paused(self, strategy_name: str, paused: bool):
+        """Activa o desactiva la pausa de drawdown semanal para una estrategia."""
+        key = f"strategy_paused_{strategy_name}"
+        await self.update_config(key, "true" if paused else "false")
+        logger.warning(
+            f"{'⏸️ PAUSA' if paused else '▶️ REACTIVACIÓN'} de estrategia por drawdown semanal: {strategy_name}"
+        )
 
     async def clear_all_logs(self):
         """Borra todos los historiales pero mantiene la configuración."""
@@ -625,9 +783,9 @@ class PSTDatabase:
                         symbol, strategy_name, 
                         1 if is_active is None or is_active else 0,
                         risk_mode, risk_value, sl_mult, tp_mult, score_threshold,
-                        1 if use_trailing else 0 if use_trailing is not None else 1,
+                        1 if use_trailing else 0 if use_trailing is not None else (0 if strategy_name == 'PST-PrecisionScalping' else 1),
                         1 if use_breakeven else 0 if use_breakeven is not None else 1,
-                        be_mult if be_mult is not None else 2.0,
+                        be_mult if be_mult is not None else (3.5 if strategy_name == 'PST-PrecisionScalping' else 2.0),
                         ts_mult if ts_mult is not None else 2.5,
                         min_rr if min_rr is not None else 1.5
                     ))
@@ -864,3 +1022,129 @@ class PSTDatabase:
         except Exception as e:
             logger.error(f"❌ Error get_24h_profit_by_symbol: {e}")
             return {}
+
+    async def get_all_time_profit_by_symbol(self) -> dict:
+        """Obtiene el beneficio total acumulado histórico por cada símbolo."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("""
+                    SELECT symbol, SUM(profit) as total_profit 
+                    FROM trades 
+                    WHERE price_out > 0 
+                    GROUP BY symbol
+                """) as cursor:
+                    rows = await cursor.fetchall()
+                    return {r['symbol'].upper(): r['total_profit'] for r in rows}
+        except Exception as e:
+            logger.error(f"❌ Error get_all_time_profit_by_symbol: {e}")
+            return {}
+
+    async def get_today_profit_by_symbol(self) -> dict:
+        """Obtiene el beneficio acumulado solo desde las 00:00:00 de hoy por símbolo."""
+        try:
+            from datetime import datetime, time
+            today_str = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("""
+                    SELECT symbol, SUM(profit) as total_profit 
+                    FROM trades 
+                    WHERE price_out > 0 AND time_out >= ? 
+                    GROUP BY symbol
+                """, (today_str,)) as cursor:
+                    rows = await cursor.fetchall()
+                    return {r['symbol'].upper(): r['total_profit'] for r in rows}
+        except Exception as e:
+            logger.error(f"❌ Error get_today_profit_by_symbol: {e}")
+            return {}
+
+    async def sync_mt5_history(self, deals, days_back=2):
+        """
+        Sincroniza deals de MT5 con la tabla trades. 
+        Maneja trades del bot (por position_id) y externos/manuales.
+        """
+        if not deals:
+            return 0
+        
+        count_synced = 0
+        count_imported = 0
+        
+        try:
+            from datetime import datetime
+            import MetaTrader5 as mt5
+            
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                for d in deals:
+                    # 1. Filtrar solo deals de SALIDA (Cierres totales o parciales)
+                    # ENTRY_OUT=1, ENTRY_INOUT=2 (reversión), ENTRY_OUT_BY=3 (cierre por contra)
+                    if d.entry not in [1, 2, 3]: 
+                        continue
+                    
+                    time_out_dt = datetime.fromtimestamp(d.time)
+                    time_out_str = time_out_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    total_pnl = d.profit + d.swap + d.commission
+                    
+                    # PASO 1: ¿Es un trade del BOT? (Buscamos ticket = position_id)
+                    # El bot guarda apertura con ticket = position_id
+                    async with db.execute(
+                        "SELECT id FROM trades WHERE ticket = ? AND (price_out IS NULL OR price_out = 0)",
+                        (d.position_id,)
+                    ) as cur:
+                        bot_trade = await cur.fetchone()
+                    
+                    if bot_trade:
+                        # Es un trade del bot → ACTUALIZAR con datos de cierre
+                        await db.execute("""
+                            UPDATE trades SET price_out = ?, profit = ?, time_out = ?
+                            WHERE id = ?
+                        """, (d.price, float(total_pnl), time_out_str, bot_trade[0]))
+                        await db.commit()
+                        count_synced += 1
+                        logger.info(f"✅ [SYNC-BOT] Cerrado {d.symbol} (Ticket {d.position_id}) | PnL: {total_pnl:.2f}")
+                        continue
+                    
+                    # PASO 2: ¿Ya importamos este deal específico anteriormente?
+                    # Buscamos en el ticket si es un trade de AUTO_SYNC ya existente
+                    # O si por casualidad ya se cerró un bot trade con este position_id
+                    async with db.execute("SELECT 1 FROM trades WHERE ticket = ? OR (ticket = ? AND price_out > 0)", (d.ticket, d.position_id)) as cur:
+                        already_exists = await cur.fetchone()
+                    
+                    if already_exists:
+                        continue
+                    
+                    # PASO 3: Trade externo/manual → Importar buscando su apertura para ser PRO
+                    trade_type = "BUY" if d.type == 1 else "SELL" # El deal OUT tiene tipo opuesto a la posición
+                    
+                    # Intentar buscar el deal de apertura (ENTRY_IN) para tener price_in y time_in reales
+                    time_in_str = time_out_str
+                    price_in = 0.0
+                    
+                    try:
+                        import time as _time
+                        # Buscamos deals de entrada para esta posición
+                        # Ampliamos el rango a 30 días para la apertura
+                        h_end = d.time + 10
+                        h_start = d.time - (3600 * 24 * 30)
+                        pos_deals = mt5.history_deals_get(h_start, h_end, position=d.position_id)
+                        if pos_deals:
+                            for pd in pos_deals:
+                                if pd.entry == 0: # ENTRY_IN
+                                    price_in = pd.price
+                                    time_in_str = datetime.fromtimestamp(pd.time).strftime('%Y-%m-%d %H:%M:%S')
+                                    break
+                    except:
+                        pass # Fallback a time_out si falla la búsqueda
+
+                    await db.execute("""
+                        INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_in, time_out, ticket, strategy_name, is_partial_closed)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (d.symbol, trade_type, d.volume, price_in, d.price, float(total_pnl), time_in_str, time_out_str, d.ticket, "AUTO_SYNC", 0))
+                    await db.commit()
+                    count_imported += 1
+                    logger.info(f"📥 [SYNC-EXT] Importado manual/externo: {d.symbol} (ID {d.position_id}) | PnL: {total_pnl:.2f}")
+            
+            return count_synced + count_imported
+        except Exception as e:
+            logger.error(f"❌ Error sync_mt5_history: {e}")
+            return 0

@@ -54,6 +54,8 @@ class SymbolStatus(BaseModel):
     signal_direction: Optional[str] = "NONE"
     price: Optional[float] = 0.0
     floating_pnl: Optional[float] = 0.0
+    total_pnl: Optional[float] = 0.0
+    daily_pnl: Optional[float] = 0.0
     profit_24h: Optional[float] = 0.0
     daily_change_pct: Optional[float] = 0.0
     sparkline: Optional[List[float]] = []
@@ -117,6 +119,10 @@ class ManualOrder(BaseModel):
     action: str # "BUY" | "SELL"
     volume: Optional[float] = 0.01
     is_smart: Optional[bool] = False
+    risk_amount: Optional[float] = None
+    sl_price: Optional[float] = None
+    tp_price: Optional[float] = None
+    rr_ratio: Optional[float] = None
 
 class LogEntry(BaseModel):
     id: int

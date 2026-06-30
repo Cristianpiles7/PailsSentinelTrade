@@ -8,7 +8,7 @@ import numpy as np
 from datetime import datetime
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_Core.utils.tech_utils import calculate_channel_boundary, calculate_manual_score
-from ..strategies.pst_channel_master import PSTChannelMaster
+from ..strategies.pst_trendmaster import PSTTrendMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
 from ..strategies.pst_mean_reversion import PSTMeanReversion # NEW V3.2
@@ -336,7 +336,7 @@ def get_symbol_strategies_config(symbol):
         conn.close()
         
         # DEFAULTS: Asegurar que aparezcan aunque no estén en DB aún
-        defaults = ["PSTChannelMaster", "PSTEMAFlow", "PSTMeanReversion", "PSTAIOracle"]
+        defaults = ["PSTTrendMaster", "PSTEMAFlow", "PSTMeanReversion", "PSTAIOracle"]
         for s in defaults:
             if s not in strategies:
                 strategies[s] = True # Default Active
@@ -753,7 +753,7 @@ def get_chart_data(symbol):
             conn_lvl.close()
 
             # Ejecutar estrategia Channel Master
-            strat_master = PSTChannelMaster()
+            strat_master = PSTTrendMaster()
             user_levels_input = {'levels': user_levels, 'config': chan_config, 'symbol': symbol, 'current_time': cur_time_live, 'current_price': cur_price_live}
             master_res = asyncio.run(strat_master.calculate_signal(mtf_data, regime_obj, user_levels=user_levels_input))
             

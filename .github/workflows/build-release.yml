@@ -18,56 +18,67 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Build React Frontend
         working-directory: ./PST_Web
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           architecture: 'x64'
 
       - name: Install Python Dependencies
         run: |
-          # Use the latest requirements
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller pandas_ta
 
       - name: Build PST_MASTER with PyInstaller
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --console --name "PST_MASTER" ^
-          --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" ^
-          --add-data "PST_Core/dashboard/static;PST_Core/dashboard/static" ^
-          --add-data "PST_Web/dist;PST_Web/dist" ^
-          --hidden-import "pandas" ^
-          --hidden-import "pandas_ta" ^
-          --hidden-import "MetaTrader5" ^
-          --hidden-import "fastapi" ^
-          --hidden-import "uvicorn" ^
-          --icon "NONE" ^
-          PST_API/main.py
+          python -m PyInstaller --noconfirm --onefile --windowed --name "PST_MASTER" `
+          --collect-all "PST_Core" `
+          --collect-all "PST_API" `
+          --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" `
+          --add-data "PST_Web/dist;PST_Web/dist" `
+          --hidden-import "pandas" `
+          --hidden-import "pandas_ta" `
+          --hidden-import "MetaTrader5" `
+          --hidden-import "fastapi" `
+          --hidden-import "uvicorn" `
+          --hidden-import "aiosqlite" `
+          --hidden-import "pydantic" `
+          --hidden-import "telegram" `
+          --hidden-import "webview" `
+          --hidden-import "clr" `
+          --hidden-import "aiohttp" `
+          PST_MASTER.py
 
       - name: Build PST_LAUNCHER with PyInstaller
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --console --name "PST_LAUNCHER" ^
-          --hidden-import "requests" ^
-          --icon "NONE" ^
+          python -m PyInstaller --noconfirm --onefile --windowed --name "PST_LAUNCHER" `
+          --hidden-import "requests" `
           Tools/updater_launcher.py
 
-      - name: Prepare Artifacts
+      - name: List dist directory
+        shell: pwsh
         run: |
-          mkdir release_assets
-          copy "dist\PST_MASTER.exe" "release_assets\"
-          copy "dist\PST_LAUNCHER.exe" "release_assets\"
-          copy "version.txt" "release_assets\"
+          if (Test-Path dist) { ls dist } else { Write-Error "Dist directory not found" }
+
+      - name: Prepare Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release_assets
+          Copy-Item "dist\PST_MASTER.exe" -Destination "release_assets\" -ErrorAction Stop
+          Copy-Item "dist\PST_LAUNCHER.exe" -Destination "release_assets\" -ErrorAction Stop
+          Copy-Item "version.txt" -Destination "release_assets\" -ErrorAction Stop
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
