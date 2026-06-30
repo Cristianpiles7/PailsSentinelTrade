@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -30,6 +30,51 @@ from dotenv import load_dotenv
 import logging
 from PST_Core.config import DB_PATH
 
+# --- WEBSOCKET MANAGER (FASE 46) ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                pass
+
+manager = ConnectionManager()
+
+# --- WS LOG HANDLER ---
+class WSLogHandler(logging.Handler):
+    def __init__(self, manager: ConnectionManager):
+        super().__init__()
+        self.manager = manager
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            payload = {
+                "type": "log",
+                "level": record.levelname,
+                "message": msg,
+                "source": record.name,
+                "timestamp": record.created
+            }
+            if asyncio.get_event_loop().is_running():
+                asyncio.create_task(self.manager.broadcast(payload))
+        except:
+            pass
+
+ws_handler = WSLogHandler(manager)
+ws_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
+
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PST_API")
@@ -43,12 +88,15 @@ async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
     await db.initialize()
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
-    logger.info(f"✅ Sentinel v1.9.0: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
+    logger.info(f"✅ Sentinel v2.0.9: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
     if not mt5.initialize():
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
     
     # Iniciar motor de trading en segundo plano (Re-integración unificada)
     try:
+        # Registrar el WSLogHandler en el logger root para capturar todo
+        logging.getLogger().addHandler(ws_handler)
+        
         from PST_Core.engine.orchestrator import start_v6
         # Símbolos por defecto si no hay en la DB
         default_symbols = ["US500.cash", "EU50.cash", "XAGUSD", "XAUUSD", "BTCUSD", "ETHUSD"]
@@ -60,7 +108,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="1.8.7",
+    version="2.1.0",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -95,6 +143,17 @@ async def login(req: LoginRequest):
     if req.password == WEB_PASSWORD:
         return {"token": WEB_PASSWORD, "status": "authenticated"}
     raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Mantener conexión viva
+            data = await websocket.receive_text()
+            # Podríamos procesar comandos desde el Dashboard aquí
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 # --- PERSISTENT PATH LOGIC (FASE 45) ---
 db = PSTDatabase(db_path=DB_PATH)
@@ -699,6 +758,28 @@ async def get_history(limit: int = 20):
         logger.error(f"Error en history: {e}")
         return []
 
+@app.get("/api/performance/buckets", tags=["Performance"])
+async def get_bucket_weights():
+    """Retorna los pesos actuales de las cubetas de capital por categoría de estrategia."""
+    try:
+        from PST_Core.utils.bucket_manager import bucket_manager
+        from PST_Core.config import CAPITAL_BUCKETS
+        if bucket_manager is not None:
+            weights = dict(bucket_manager._weights)
+            pnl = await bucket_manager.get_monthly_pnl_by_category()
+        else:
+            weights = dict(CAPITAL_BUCKETS)
+            pnl = {k: 0.0 for k in CAPITAL_BUCKETS}
+        return {
+            "weights": weights,
+            "monthly_pnl": pnl,
+            "default_weights": CAPITAL_BUCKETS
+        }
+    except Exception as e:
+        logger.error(f"Error in get_bucket_weights: {e}")
+        from PST_Core.config import CAPITAL_BUCKETS
+        return {"weights": dict(CAPITAL_BUCKETS), "monthly_pnl": {}, "default_weights": CAPITAL_BUCKETS}
+
 @app.get("/api/performance/analytics", tags=["Performance"])
 async def get_analytics():
     """Retorna métricas avanzadas y la curva de equidad (Fase 51)."""
@@ -834,7 +915,7 @@ async def execute_manual_trade(order: ManualOrder):
         symbol = order.symbol.upper()
         
         if order.is_smart:
-            # --- MODO SMART: Cálculo automático ---
+            # --- MODO SMART: Cálculo automático optimizado ---
             tf_m5 = mt5.TIMEFRAME_M5
             rates = mt5.copy_rates_from_pos(symbol, tf_m5, 0, 50)
             if rates is None or len(rates) == 0:
@@ -843,26 +924,37 @@ async def execute_manual_trade(order: ManualOrder):
             import pandas as pd
             df = pd.DataFrame(rates)
             atr_s = ta.atr(df['high'], df['low'], df['close'], length=14)
-            if atr_s is None or atr_s.empty:
-                return APIResponse(status="error", message="ATR calculation failed")
-                
-            current_atr = float(atr_s.iloc[-1])
-            sl_atr = current_atr * 3.0
-            tp_atr = current_atr * 6.0
+            current_atr = float(atr_s.iloc[-1]) if atr_s is not None and not atr_s.empty else 0.0
+            
+            # Fallbacks base (ATR x 2.5 / 5.0)
+            sl_atr_fallback = current_atr * 2.5 if current_atr > 0 else 0
+            tp_atr_fallback = current_atr * 5.0 if current_atr > 0 else 0
+            
+            # Construir metadatos para el executor
+            trade_metadata = {
+                "risk_mode": "MONEY" if order.risk_amount else None,
+                "risk_value": order.risk_amount,
+                "target_price_sl": order.sl_price,
+                "target_price_tp": order.tp_price,
+                "rr_ratio": order.rr_ratio
+            }
+            # Limpiar Nones
+            trade_metadata = {k: v for k, v in trade_metadata.items() if v is not None}
             
             result = await executor.execute_trade(
                 symbol=symbol,
                 signal_type=order.action.upper(),
-                stop_loss_atr=sl_atr,
-                take_profit_atr=tp_atr,
+                stop_loss_atr=sl_atr_fallback,
+                take_profit_atr=tp_atr_fallback,
                 strategy_name="Web-Smart",
-                regime="MANUAL"
+                regime="MANUAL",
+                metadata=trade_metadata
             )
             
             if not result:
                 return APIResponse(status="error", message="Smart execution rejected by risk manager")
                 
-            return APIResponse(status="success", message=f"Smart {order.action} executed with SL/TP")
+            return APIResponse(status="success", message=f"Smart {order.action} executed with Risk Logic")
             
         else:
             # --- MODO SIMPLE: Solo volumen ---
@@ -1224,6 +1316,135 @@ if os.path.isdir(react_dist_path):
         return {"error": "Frontend build not found."}
 else:
     logger.warning(f"⚠️ Frontend dist no encontrado en {react_dist_path}")
+
+
+# ── STRATEGY LAB BACKTESTING ──────────────────────────────────────────────────
+
+class BacktestRequest(BaseModel):
+    strategy: str
+    symbol: str
+    days: int = 30
+    timeframe: str = "H1"
+
+@app.post("/api/backtest/run", tags=["StrategyLab"])
+async def run_backtest(req: BacktestRequest):
+    """Ejecuta un backtest real sobre datos históricos de MT5."""
+    if not ensure_mt5_connected():
+        raise HTTPException(status_code=503, detail="MetaTrader 5 not connected")
+
+    STRATEGY_MAP = {
+        "PST-AlphaTrend":        ("PST_Core.strategies.pst_alpha_trend",        "PSTAlphaTrend"),
+        "PST-RangeBreaker":      ("PST_Core.strategies.pst_range_breaker",       "PSTRangeBreaker"),
+        "PST-PrecisionScalping": ("PST_Core.strategies.pst_precision_scalping",  "PSTPrecisionScalping"),
+    }
+
+    if req.strategy not in STRATEGY_MAP:
+        raise HTTPException(status_code=400, detail=f"Estrategia desconocida: {req.strategy}")
+
+    TF_MAP_FETCH = {
+        "M1":  mt5.TIMEFRAME_M1,
+        "M5":  mt5.TIMEFRAME_M5,
+        "M15": mt5.TIMEFRAME_M15,
+        "H1":  mt5.TIMEFRAME_H1,
+        "H4":  mt5.TIMEFRAME_H4,
+    }
+
+    # Timeframes requeridos por estrategia
+    STRATEGY_TFS = {
+        "PST-AlphaTrend":        ["h1", "m15"],
+        "PST-RangeBreaker":      ["m15", "h1"],
+        "PST-PrecisionScalping": ["m1", "m5"],
+    }
+
+    TF_MT5_MAP = {
+        "m1":  mt5.TIMEFRAME_M1,
+        "m5":  mt5.TIMEFRAME_M5,
+        "m15": mt5.TIMEFRAME_M15,
+        "h1":  mt5.TIMEFRAME_H1,
+        "h4":  mt5.TIMEFRAME_H4,
+    }
+
+    try:
+        import importlib
+        import pandas as pd
+        from datetime import datetime, timedelta
+        from PST_Core.backtesting.engine import PSTBacktestEngine
+
+        # Calcular número de barras a pedir según timeframe primario y días
+        bars_per_day = {"m1": 1440, "m5": 288, "m15": 96, "h1": 24, "h4": 6}
+        tfs_needed = STRATEGY_TFS[req.strategy]
+        primary_tf = tfs_needed[0]
+        num_bars = bars_per_day.get(primary_tf, 24) * req.days + 250  # +250 warmup
+
+        # Resolver símbolo real en MT5 (puede tener sufijos como .cash, .a)
+        def resolve_mt5_symbol(base: str) -> str:
+            candidates = [base, base + ".cash", base + ".a", base + "USD"]
+            for c in candidates:
+                info = mt5.symbol_info(c)
+                if info is not None:
+                    mt5.symbol_select(c, True)
+                    return c
+            return base  # fallback: intentar tal cual
+
+        mt5_symbol = resolve_mt5_symbol(req.symbol)
+
+        # Descargar datos de MT5 para cada timeframe requerido
+        all_data = {}
+        for tf_key in tfs_needed:
+            mt5_tf = TF_MT5_MAP.get(tf_key)
+            if mt5_tf is None:
+                continue
+            rates = mt5.copy_rates_from_pos(mt5_symbol, mt5_tf, 0, num_bars)
+            if rates is None or len(rates) == 0:
+                raise HTTPException(status_code=404, detail=f"Sin datos MT5 para {mt5_symbol}/{tf_key}. Verifica que el símbolo está activo en Market Watch.")
+            df = pd.DataFrame(rates)
+            df["time"] = pd.to_datetime(df["time"], unit="s")
+            all_data[tf_key] = df
+
+        # Instanciar estrategia
+        mod_path, cls_name = STRATEGY_MAP[req.strategy]
+        mod = importlib.import_module(mod_path)
+        strategy_cls = getattr(mod, cls_name)
+        strategy_instance = strategy_cls()
+
+        # Ejecutar backtest
+        engine = PSTBacktestEngine(score_threshold=75)
+        result = await engine.run(strategy_instance, req.symbol, all_data)
+
+        # Construir curva de equity
+        equity = 0.0
+        curve = []
+        for i, t in enumerate(result.closed_trades):
+            equity += t.pnl_r
+            curve.append({
+                "trade": i + 1,
+                "equity_r": round(equity, 3),
+                "result": t.result,
+                "direction": "BUY" if t.direction == 1 else "SELL",
+                "entry_time": t.entry_time.strftime("%d/%m %H:%M") if t.entry_time else "",
+            })
+
+        return {
+            "strategy":      req.strategy,
+            "symbol":        req.symbol,
+            "days":          req.days,
+            "total_trades":  len(result.closed_trades),
+            "win_rate":      round(result.win_rate, 1),
+            "profit_factor": round(result.profit_factor, 2) if result.profit_factor != float("inf") else 99.0,
+            "sharpe":        round(result.sharpe_ratio, 2),
+            "max_drawdown_r": round(result.max_drawdown_r, 2),
+            "total_r":       round(result.total_r, 2),
+            "avg_win_r":     round(result.avg_win_r, 2),
+            "avg_loss_r":    round(result.avg_loss_r, 2),
+            "period":        f"{result.period_start.strftime('%d/%m/%Y') if result.period_start else '?'} → {result.period_end.strftime('%d/%m/%Y') if result.period_end else '?'}",
+            "curve":         curve,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error en backtest: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def start_app():

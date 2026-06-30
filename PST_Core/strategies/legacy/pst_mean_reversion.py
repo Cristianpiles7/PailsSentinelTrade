@@ -17,10 +17,10 @@ def get_safe(series, default=0.0):
 def get_mtr_data(df_in, tf_minutes=5):
     if df_in is None or len(df_in) < 20: return None
     try:
-        _rsi = ta.rsi(df_in['close'], length=14).iloc[-1]
-        _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-1]
-        _v = df_in['tick_volume'].iloc[-1] if 'tick_volume' in df_in else 0
-        _v_ma = ta.sma(df_in['tick_volume'], length=20).iloc[-1] if 'tick_volume' in df_in else 1
+        _rsi = ta.rsi(df_in['close'], length=14).iloc[-2]
+        _adx = ta.adx(df_in['high'], df_in['low'], df_in['close'], length=14)['ADX_14'].iloc[-2]
+        _v = df_in['tick_volume'].iloc[-2] if 'tick_volume' in df_in else 0
+        _v_ma = ta.sma(df_in['tick_volume'], length=20).iloc[-2] if 'tick_volume' in df_in else 1
         return {"rsi": _rsi, "adx": _adx, "vol_rel": _v / _v_ma if _v_ma > 0 else 0}
     except: return None
 
@@ -114,24 +114,24 @@ class PSTMeanReversion:
         adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
         adx_val = 0
         if adx_df is not None and not adx_df.empty:
-             adx_val = adx_df.iloc[-1, 0] # ADX_14 suele ser la primera columna
+             adx_val = adx_df.iloc[-2, 0] # Usar la última vela cerrada
 
-        # 3. ANALISIS DE LA VELA ACTUAL
-        close = df['close'].iloc[-1]
-        high = df['high'].iloc[-1]
-        low = df['low'].iloc[-1]
-        rsi = df['rsi'].iloc[-1]
+        # 3. ANALISIS DE LA ULTIMA VELA CERRADA
+        close = df['close'].iloc[-2]
+        high = df['high'].iloc[-2]
+        low = df['low'].iloc[-2]
+        rsi = df['rsi'].iloc[-2]
         
-        bb_upper = df['bb_upper'].iloc[-1]
-        bb_lower = df['bb_lower'].iloc[-1]
-        bb_mid = df['bb_mid'].iloc[-1]
+        bb_upper = df['bb_upper'].iloc[-2]
+        bb_lower = df['bb_lower'].iloc[-2]
+        bb_mid = df['bb_mid'].iloc[-2]
         
         # Estado Anterior (Para detectar cruces/reingresos)
-        prev_close = df['close'].iloc[-2]
-        prev_rfc = df['close'].iloc[-2] # Reference for crossover
-        prev_rsi = df['rsi'].iloc[-2]
-        prev_bb_lower = df['bb_lower'].iloc[-2]
-        prev_bb_upper = df['bb_upper'].iloc[-2]
+        prev_close = df['close'].iloc[-3]
+        prev_rfc = df['close'].iloc[-3] # Reference for crossover
+        prev_rsi = df['rsi'].iloc[-3]
+        prev_bb_lower = df['bb_lower'].iloc[-3]
+        prev_bb_upper = df['bb_upper'].iloc[-3]
 
         # 4. LOGICA DE ENTRADA Y FACTORES
         score = 0
@@ -185,7 +185,9 @@ class PSTMeanReversion:
         adx_now = mtr['adx'] if mtr else adx_val
 
         # ADX Logic
-        if adx_now < 25:
+        if gate_failed:
+            pass
+        elif adx_now < 25:
             factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Ideal Lateral ({int(adx_now)})", "score": 10}
         else:
             factor_groups["ENTORNO"] = {"k": "Fuerza ADX", "v": f"Moderado ({int(adx_now)})", "score": 0}
@@ -207,14 +209,17 @@ class PSTMeanReversion:
         potential_buy = False
         potential_sell = False
         
-        # Lógica de Gatillo Progresivo
-        potential_buy = (low <= bb_lower) or (prev_close <= prev_bb_lower)
-        potential_sell = (high >= bb_upper) or (prev_close >= prev_bb_upper)
-
+        # --- CANDLE CONFIRMATION (GATILLO DE SEGURIDAD) ---
+        c_open = df['open'].iloc[-2]
+        is_bearish = close < c_open
+        is_bullish = close > c_open
+        
         # --- 4.3 Puntuación Estructural Progresiva (%B) ---
         # %B = (Precio - Lower) / (Upper - Lower)
         bb_range = bb_upper - bb_lower if (bb_upper - bb_lower) > 0 else 0.0001
         pct_b = (close - bb_lower) / bb_range
+        
+        trigger_confirmed = False
         
         if pct_b <= 0.2 or potential_buy: # Zona de compra (parte inferior)
              signal_type = "BUY"
@@ -231,13 +236,19 @@ class PSTMeanReversion:
              else:
                  factor_groups["RSI"] = {"k": "RSI", "v": f"Neutral ({rsi:.1f})", "score": 0}
 
-             # GATILLOS (Bonus extra)
+             # GATILLOS (Bonus extra y DESBLOQUEO)
              trigger_buy_reentry = (prev_close < prev_bb_lower) and (close > bb_lower)
+             # Confirmación por color de vela (Gatillo conservador)
              if trigger_buy_reentry:
                  score += 15
                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
+                 trigger_confirmed = True
+             elif is_bullish and (pct_b <= 0.1 or low <= bb_lower):
+                 score += 10
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Vela de Giro (Verde)", "score": 10}
+                 trigger_confirmed = True
              else:
-                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación", "score": 0}
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación (Sin Giro)", "score": 0}
              
              if factor_groups["ENTORNO"]["score"] > 0: score += 10
              if div_type == "BULLISH": score += factor_groups["DIVERGENCIA"]["score"]
@@ -263,8 +274,13 @@ class PSTMeanReversion:
              if trigger_sell_reentry:
                  score += 15
                  factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Reingreso a Banda", "score": 15}
+                 trigger_confirmed = True
+             elif is_bearish and (pct_b >= 0.9 or high >= bb_upper):
+                 score += 10
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Vela de Giro (Roja)", "score": 10}
+                 trigger_confirmed = True
              else:
-                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación", "score": 0}
+                 factor_groups["GATILLO"] = {"k": "Gatillo", "v": "Aproximación (Sin Giro)", "score": 0}
 
              if factor_groups["ENTORNO"]["score"] > 0: score += 10
              if div_type == "BEARISH": score += factor_groups["DIVERGENCIA"]["score"]
@@ -276,11 +292,13 @@ class PSTMeanReversion:
              if factor_groups[k]:
                   factors_final.append(factor_groups[k])
 
-        # --- VALIDACION FINAL ---
+        # --- SAFETY CAPPING: Si no hay REINGRESO o VELA DE GIRO, capamos score a 65 ---
+        if not trigger_confirmed:
+            score = min(65, score)
+        
         final_score = min(100, score)
 
-        # Cálculo de TP Agresivo (Busca el objetivo más cercano que esté ADELANTE del precio)
-        # Para BUY: objetivos > close. Para SELL: objetivos < close.
+        # Cálculo de TP Agresivo ... (lines 282-318)
         ema21_val = get_safe(ta.ema(df['close'], length=21))
         ema50_val = get_safe(ta.ema(df['close'], length=50))
         
@@ -291,13 +309,10 @@ class PSTMeanReversion:
             if ema50_val > close: potential_targets.append(ema50_val)
             
             if not potential_targets:
-                # Si no hay objetivos técnicos claros arriba, usamos un objetivo conservador de 1.5 ATR
                 atr_val = get_safe(ta.atr(df['high'], df['low'], df['close'], length=14))
                 best_init_target = close + (atr_val * 1.5)
             else:
                 best_init_target = min(potential_targets)
-                
-            # TP Agresivos: 10% antes del objetivo
             dist = abs(best_init_target - close)
             target_tp = best_init_target - (dist * 0.10)
             
@@ -311,14 +326,13 @@ class PSTMeanReversion:
                 best_init_target = close - (atr_val * 1.5)
             else:
                 best_init_target = max(potential_targets)
-                
-            # TP Agresivos: 10% antes del objetivo (Ej: 30.0 + 0.1 = 30.1)
             dist = abs(best_init_target - close)
             target_tp = best_init_target + (dist * 0.10)
         else:
             target_tp = 0
 
-        if final_score >= 80 and not gate_failed:
+        # --- VALIDACION FINAL ---
+        if final_score >= 80 and trigger_confirmed and not gate_failed:
              factor_groups["ESTADO"]["v"] = "Oportunidad Confirmada"
              return self._build_result(final_score, factors_final, f"Reversión {signal_type}", gate_failed, entry_signal=signal_type, direction=1 if signal_type == "BUY" else -1, tp_price=target_tp)
         
@@ -327,7 +341,7 @@ class PSTMeanReversion:
         
         # Inyectar motivo de bloqueo si el score era prometedor
         if final_score >= 50 or gate_failed:
-            txt_reason = ", ".join(block_reasons) if block_reasons else "Falta Gatillo Claro (Ej: Reingreso)"
+            txt_reason = ", ".join(block_reasons) if block_reasons else ("Esperando Giro (Vela Confirmación)" if not trigger_confirmed else "Validando...")
             factors_final.insert(0, {"k": "REGLA MAESTRA", "v": txt_reason, "score": -50 if gate_failed else 0})
 
         if final_score >= 50 and not gate_failed:

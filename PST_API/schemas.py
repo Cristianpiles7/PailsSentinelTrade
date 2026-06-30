@@ -119,6 +119,10 @@ class ManualOrder(BaseModel):
     action: str # "BUY" | "SELL"
     volume: Optional[float] = 0.01
     is_smart: Optional[bool] = False
+    risk_amount: Optional[float] = None
+    sl_price: Optional[float] = None
+    tp_price: Optional[float] = None
+    rr_ratio: Optional[float] = None
 
 class LogEntry(BaseModel):
     id: int

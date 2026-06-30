@@ -90,7 +90,7 @@ def export_losses(limit=10, strategy=None, parse_today=False):
             "losses": export_data
         }, f, indent=4)
 
-    print(f"✅ Éxito: Se exportaron {len(export_data)} registros de operaciones en pérdida a {out_file}")
+    print(f"Exito: Se exportaron {len(export_data)} registros de operaciones en perdida a {out_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Exporta el contexto (OHLC) de las últimas operaciones fallidas.")
@@ -100,5 +100,5 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    print(f"⏳ Exportando Autopsias...")
+    print(f"Exportando Autopsias...")
     export_losses(limit=args.limit, strategy=args.strategy, parse_today=args.today)

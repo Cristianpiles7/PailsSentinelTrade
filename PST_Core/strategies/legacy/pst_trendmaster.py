@@ -54,9 +54,9 @@ class PSTTrendMaster:
                 }
             }
 
-        # Velas de cierre
-        current_candle = df.iloc[-1]
-        previous_candle = df.iloc[-2]
+        # Trabajar siempre con la última vela cerrada para evitar falsos breakouts intrabar.
+        current_candle = df.iloc[-2]
+        previous_candle = df.iloc[-3]
         
         # El DataFrame usa la fecha como índice (DatetimeIndex), obtenemos el Unix timestamp en segundos
         current_time_ts = int(current_candle.name.timestamp())
@@ -82,9 +82,23 @@ class PSTTrendMaster:
             line_price_current = slope * (current_time_ts - t1) + p1
             line_price_previous = slope * (previous_time_ts - t1) + p1
 
-            # Breakout Detection
-            is_breakout_up = (previous_candle['close'] <= line_price_previous) and (current_candle['close'] > line_price_current)
-            is_breakout_down = (previous_candle['close'] >= line_price_previous) and (current_candle['close'] < line_price_current)
+            body_size = abs(current_candle['close'] - current_candle['open'])
+            candle_range = max(0.00001, current_candle['high'] - current_candle['low'])
+            body_ratio = body_size / candle_range
+            breakout_buffer = max(current_atr * 0.10, spread_dist * 2 if spread_dist > 0 else 0.0)
+            has_breakout_intent = body_size >= (current_atr * 0.35) and body_ratio >= 0.50
+
+            # Breakout Detection: exigir cierre confirmado más allá de la línea y una vela con intención.
+            is_breakout_up = (
+                (previous_candle['close'] <= line_price_previous) and
+                (current_candle['close'] > line_price_current + breakout_buffer) and
+                has_breakout_intent
+            )
+            is_breakout_down = (
+                (previous_candle['close'] >= line_price_previous) and
+                (current_candle['close'] < line_price_current - breakout_buffer) and
+                has_breakout_intent
+            )
 
             # Filtro por Modo de Línea
             line_mode = line.get('mode', 'BOTH').upper()
@@ -115,8 +129,8 @@ class PSTTrendMaster:
                 
                 if score > best_score:
                     best_score = score
-                    # Señal de "Tensión" pre-breakout
-                    best_entry = 1 if current_candle['close'] < line_price_current else -1 
+                    # La proximidad solo informa; no debe disparar orden real.
+                    best_entry = 0
                     status_msg = f"ACECHANDO (Dist: {dist_in_atr:.2f} ATR)"
 
         factors_detailed = [

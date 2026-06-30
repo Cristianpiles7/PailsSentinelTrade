@@ -251,13 +251,25 @@ def get_asset_class(symbol: str) -> str:
     if "XAU" in s or "XAG" in s or "GOLD" in s:
         return "METAL"
     
-    # INDICES
-    indices_keywords = ["US500", "SPX", "NAS100", "US30", "GER30", "DAX", "EU50", "STOXX50", "NVDA", "TSLA", "AAPL", "MSFT"]
+    # INDICES (Tratados como activos de alta correlación con el mercado)
+    indices_keywords = [
+        "US500", "SPX", "NAS100", "US30", "GER30", "DAX", "EU50", "STOXX50"
+    ]
     if any(k in s for k in indices_keywords):
         return "INDEX"
         
+    # ACCIONES INDIVIDUALES (EQUITIES)
+    equities_keywords = [
+        "NVDA", "TSLA", "AAPL", "MSFT", "GOOG", "AMZN", "META", "NFLX"
+    ]
+    if any(k in s for k in equities_keywords):
+        return "EQUITIES"
+        
     # CRYPTO
-    crypto_keywords = ["BTC", "ETH", "SOL", "ADA", "XRP", "LTC", "DOT", "UNI", "LINK", "XLM", "MATIC"]
+    crypto_keywords = [
+        "BTC", "ETH", "SOL", "ADA", "XRP", "LTC", "DOT", "UNI", 
+        "LINK", "LNK", "XLM", "MATIC", "AVAX", "DOGE", "SHIB"
+    ]
     if any(k in s for k in crypto_keywords):
         return "CRYPTO"
     

@@ -25,6 +25,7 @@ import { TradingChart } from './components/TradingChart'
 import { MarketHeatmap } from './components/MarketHeatmap'
 import { MultiChartWorkspace } from './components/MultiChartWorkspace'
 import { StrategyLab } from './components/StrategyLab'
+import { PerformanceDashboard } from './components/PerformanceDashboard'
 import { NavItem } from './components/ui/NavItem'
 import { Sparkline } from './components/ui/Sparkline'
 import { Toast } from './components/ui/Toast'
@@ -122,9 +123,10 @@ function App() {
 
 
   const [isSmartMode, setIsSmartMode] = useState(true)
-
-
-
+  const [riskAmount, setRiskAmount] = useState(25)
+  const [slPrice, setSlPrice] = useState('')
+  const [tpPrice, setTpPrice] = useState('')
+  const [rrRatio, setRrRatio] = useState(2.0)
   const [isExecuting, setIsExecuting] = useState(false)
 
 
@@ -185,6 +187,7 @@ function App() {
   const [perfData, setPerfData] = useState(null)
   const [equityCurve, setEquityCurve] = useState([])
   const [stratPerf, setStratPerf] = useState([])
+  const [bucketData, setBucketData] = useState(null)
 
   const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
   const activeSymbols = symbols.filter(s => s.is_active)
@@ -475,14 +478,16 @@ function App() {
 
   const fetchPerformance = async () => {
     try {
-      const [perfRes, eqRes, stratRes] = await Promise.all([
+      const [perfRes, eqRes, stratRes, buckRes] = await Promise.all([
         api.get(`${API_BASE}/performance`),
         api.get(`${API_BASE}/performance/equity`),
-        api.get(`${API_BASE}/performance/strategies`)
+        api.get(`${API_BASE}/performance/strategies`),
+        api.get(`${API_BASE}/performance/buckets`)
       ])
       setPerfData(perfRes.data)
       setEquityCurve(eqRes.data || [])
       setStratPerf(stratRes.data || [])
+      setBucketData(buckRes.data || null)
     } catch (err) { console.error(err) }
   }
 
@@ -640,9 +645,13 @@ function App() {
         symbol,
         action,
         volume: manualLot,
-        is_smart: isSmartMode
+        is_smart: isSmartMode,
+        risk_amount: isSmartMode ? riskAmount : null,
+        sl_price: isSmartMode && slPrice !== '' ? parseFloat(slPrice) : null,
+        tp_price: isSmartMode && tpPrice !== '' ? parseFloat(tpPrice) : null,
+        rr_ratio: isSmartMode ? rrRatio : null
       })
-      addToast(`${action} ${symbol} executed`, 'success')
+      addToast(`${isSmartMode ? 'Smart' : 'Market'} ${action} ${symbol} executed`, 'success')
       fetchData()
     } catch (err) { addToast('Error executing trade', 'error') }
     finally { setIsExecuting(false) }
@@ -903,6 +912,13 @@ function App() {
           />
 
 
+
+          <NavItem
+            icon={<TrendingUp size={24} />}
+            active={currentView === 'performance'}
+            onClick={() => { setCurrentView('performance'); fetchPerformance(); fetchHistory(); }}
+            label="Perf"
+          />
 
           <NavItem
 
@@ -1317,7 +1333,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V1.8.7 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.1.0 SMC</span>
 
 
 
@@ -1360,6 +1376,16 @@ function App() {
 
 
 
+
+        {currentView === 'performance' && (
+          <PerformanceDashboard
+            perfData={perfData}
+            equityCurve={equityCurve}
+            stratPerf={stratPerf}
+            historyTrades={historyTrades}
+            bucketData={bucketData}
+          />
+        )}
 
         {currentView === 'analytics' && (
           <div className="w-full px-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
@@ -1789,7 +1815,7 @@ function App() {
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
                           <div className="flex gap-1 mt-0.5">
-                            {["PST-EMA-Flow", "PST-Mean-Reversion", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
+                            {["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
                               const score = s.factors_map?.[strat]?.score || 0;
                               return (
                                 <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
@@ -1910,9 +1936,9 @@ function App() {
 
                     {/* Core Strategies Scores */}
                     <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      {["PST-EMA-Flow", "PST-Mean-Reversion", "PST-Scalper-Pro", "PST-Scalper-Active"].map(strat => {
+                      {["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
                         const score = s.factors_map?.[strat]?.score || 0;
-                        const label = strat.replace("PST-", "").replace("Scalper-Active", "Scalp V2").replace("Scalper-Pro", "Scalp").replace("EMA-Flow", "Flow").replace("Mean-Reversion", "Reversion").toUpperCase();
+                        const label = strat.replace("PST-", "").replace("AlphaTrend", "Alpha").replace("RangeBreaker", "Range").replace("PrecisionScalping", "Scalp").toUpperCase();
                         return (
                           <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
                             <span className="text-[6px] font-black text-zinc-600 mb-0.5">{label}</span>
@@ -2846,12 +2872,60 @@ function App() {
 
 
                 </div>
+                {/* Smart Risk Configuration (FASE 72) */}
+                <AnimatePresence>
+                  {isSmartMode && (
+                    <motion.div 
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden space-y-3"
+                    >
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Riesgo (€)</p>
+                          <div className="flex items-center gap-2">
+                            <Zap size={10} className="text-amber-500" />
+                            <input 
+                              type="number" 
+                              value={riskAmount} 
+                              onChange={(e) => setRiskAmount(Number(e.target.value))}
+                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">RR Ratio</p>
+                          <div className="flex items-center gap-2">
+                            <Target size={10} className="text-indigo-400" />
+                            <input 
+                              type="number" 
+                              step="0.1"
+                              value={rrRatio} 
+                              onChange={(e) => setRrRatio(Number(e.target.value))}
+                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
+                            />
+                          </div>
+                        </div>
+                      </div>
 
-
-
-
-
-
+                      <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+                        <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Stop Loss Price (Optional)</p>
+                        <div className="flex items-center gap-2">
+                          <Shield size={10} className="text-rose-500" />
+                          <input 
+                            type="number" 
+                            step="0.00001"
+                            placeholder="Vacío = Estructural"
+                            value={slPrice} 
+                            onChange={(e) => setSlPrice(e.target.value)}
+                            className="w-full bg-transparent text-xs font-bold text-white outline-none border-none p-0 placeholder:text-zinc-700 placeholder:italic"
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 {/* Volume Selector */}
 
@@ -3326,14 +3400,13 @@ function App() {
 
                   // Mapeo de nombres limpios y estratégicos
                   const STRAT_NAME_MAP = {
-                    "PST-EMA-Flow": "EMA Flow",
-                    "PST-TrendMaster": "Trend Master",
-                    "PST-Scalper-Pro": "Scalper Pro",
-                    "PST-Scalper-Active": "Scalper V2"
+                    "PST-AlphaTrend":        "Alpha Trend",
+                    "PST-RangeBreaker":      "Range Breaker",
+                    "PST-PrecisionScalping": "Precision Scalp",
                   };
 
-                  // Obtener solo las estrategias CORE solicitadas: EMA Flow, TrendMaster, Scalper Pro y Liquidity Hunter
-                  const CORE_STRATS = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Scalper-Pro", "PST-Scalper-Active"];
+                  // Estrategias CORE activas (v3.0)
+                  const CORE_STRATS = ["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
@@ -3395,7 +3468,7 @@ function App() {
                             const stratData = symbolStrats[strat];
 
                             // Lógica de activación por defecto
-                            const isCore = ["PST-EMA-Flow", "PST-TrendMaster", "PST-Mean-Reversion"].includes(strat); // Trend y Reversion por defecto
+                            const isCore = ["PST-AlphaTrend", "PST-RangeBreaker"].includes(strat); // AlphaTrend y RangeBreaker activas por defecto
                             const isEnabled = stratData ? (!!stratData.is_active) : isCore;
 
                             // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)
@@ -3519,15 +3592,11 @@ function App() {
                                       type="text"
                                       value={stratData?.tp_mult || ""}
                                       placeholder={params.tp_mult}
-                                      readOnly={strat.includes("PST-Scalper")}
-                                      title={(strat.includes("PST-Scalper")) ? "Usa TP Técnico" : "TP Multiplier"}
-                                      onClick={(e) => {
-                                        if (strat === "PST-Scalper-Pro" || strat === "PST-Scalper-Active") {
-                                          // Optional: Show a toast here explaining it uses technical TP
-                                        }
-                                      }}
+                                      readOnly={strat === "PST-PrecisionScalping"}
+                                      title={strat === "PST-PrecisionScalping" ? "Usa TP Técnico" : "TP Multiplier"}
+                                      onClick={(e) => {}}
                                       onChange={(e) => updateStrategyConfig(s.symbol, strat, 'tp_mult', parseFloat(e.target.value) || null)}
-                                      className={`w-3 bg-transparent outline-none text-center ${(strat.includes("PST-Scalper")) ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
+                                      className={`w-3 bg-transparent outline-none text-center ${strat === "PST-PrecisionScalping" ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
                                     />
                                   </div>
                                 </div>

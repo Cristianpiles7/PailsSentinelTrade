@@ -52,7 +52,8 @@ DB_PATH = get_db_path()
 # TRADING RISK PARAMETERS (Dynamic & Conservative)
 MAX_RISK_PCT = 0.25          # Riesgo base por operación (0.25%)
 MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día (FTMO Safe)
-DAILY_LOSS_EXIT_USD = 400    # STOP DIARIO CRÍTICO ($: Cierre total a los $400 de pérdida)
+DAILY_LOSS_PCT = 2.0         # Kill-switch diario: para si el día pierde más de este % del balance
+DAILY_LOSS_EXIT_USD = 999999 # STOP DIARIO DESACTIVADO (Modo Pruebas: $999,999)
 # MAX_POSITION_COST_PCT = 25  # REMOVED: Usaremos Cubetas de Margen Dinámicas
 
 # DINAMIC PROTECTION (ATR MULTIPLIERS)
@@ -89,33 +90,48 @@ TIMEFRAME_DEFAULT = 5        # M5 base
 CRYPTO_KEYWORDS = ["BTC", "ETH", "ADA", "SOL", "DOT", "LNK", "LTC", "UNI", "XLM", "XRP", "MATIC", "AVAX"]
 # STRATEGY MANAGEMENT
 STRATEGY_CATEGORIES = {
-    "PST-EMA-Flow": "CORE",
-    "PST-Channel-Master": "CORE",
-    "PST-Mean-Reversion": "CORE",
-    "PST-Scalper-Pro": "SCALPING",
-    "PST-Scalper-Active": "SCALPING",
-    "PST-AI-Oracle-gemini": "AI",
-    "PST-AI-Oracle-groq": "AI",
-    "PST-AI-Oracle-ollama": "AI"
+    "PST-AlphaTrend":        "TREND",
+    "PST-RangeBreaker":      "RANGE",
+    "PST-PrecisionScalping": "SCALPING",
 }
 
 # PARALLEL OPERATIVE LIMITS
-MAX_POSITIONS_PER_CATEGORY = {"CORE": 2, "SCALPING": 4, "AI": 1}
-MAX_SYMBOL_EXPOSURE_PCT = 1.25  # Riesgo total sumado por activo
+MAX_TOTAL_OPEN_POSITIONS = 999  # Sin límite global (filtrado por estrategia/categoría)
+MAX_POSITIONS_PER_CATEGORY = {"TREND": 999, "RANGE": 999, "SCALPING": 999, "ALL": 999}
+MAX_SYMBOL_EXPOSURE_PCT = 2.5
 
 # SCALPER DEFAULTS
 SCALPER_TARGETS = ["BTCUSD", "ETHUSD", "US500.cash", "XAUUSD", "EURUSD", "NAS100"]
-SCALPER_RISK_DEFAULT = 0.08 # Reducido a 0.08% para mantener pérdidas entre 5-10€
+SCALPER_RISK_DEFAULT = 0.08
+SCALPER_MAX_LOSS_EUR = 12.0
 
-# Estrategias activas globalmente (Nombres internos estándar)
+# FILTROS DE SESIONES HORARIAS (CET/Hora MT5 local del bot)
+SESSION_SESSIONS_ONLY = True
+LONDRES_SESSION_START = "08:00"
+LONDRES_SESSION_END = "16:30"
+NY_SESSION_START = "13:30"
+NY_SESSION_END = "21:00"
+
+# PARCIALES
+SCALPER_PARTIAL_CLOSE_ENABLED = True
+SCALPER_PARTIAL_CLOSE_PCT = 0.50
+SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS = 2.0
+
+# Estrategias activas globalmente
 ENABLED_STRATEGIES = [
-    "PST-EMA-Flow",
-    "PST-TrendMaster", # NEW: Activada por defecto v1.8.6
-    "PST-Channel-Master",
-    "PST-Mean-Reversion", # RESTAURED: Rubber-Band
-    "PST-Scalper-Pro", # NEW
-    "PST-Scalper-Active", # NEW V2
-    "PST-AI-Oracle-gemini",
-    "PST-AI-Oracle-groq",
-    "PST-AI-Oracle-ollama"
+    "PST-AlphaTrend",
+    "PST-RangeBreaker",
+    "PST-PrecisionScalping",
 ]
+
+# CUBETAS DE CAPITAL POR TIPO DE ESTRATEGIA
+# Porcentaje del balance total asignado a cada categoría.
+# La suma debe ser <= 100. El resto queda como reserva.
+CAPITAL_BUCKETS = {
+    "TREND":   40.0,   # AlphaTrend — tendencia, mayor horizonte temporal
+    "RANGE":   30.0,   # RangeBreaker — operativa en rango
+    "SCALPING": 30.0,  # PrecisionScalping — alta frecuencia, menor riesgo unitario
+}
+# Rebalanceo automático: si el rendimiento de una cubeta supera este umbral
+# respecto a las demás, se redistribuyen los pesos (revisión mensual)
+BUCKET_REBALANCE_THRESHOLD_PCT = 15.0
