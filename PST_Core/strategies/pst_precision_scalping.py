@@ -147,6 +147,9 @@ class PSTPrecisionScalping:
         near_upper1 = price >= vwap_upper1 * 0.999
         near_lower1 = price <= vwap_lower1 * 1.001
 
+        # Anti-chase: se premia la entrada CERCA del VWAP (pullback, con recorrido hacia
+        # ±1σ/±2σ como TP) y se penaliza comprar/vender ya extendido, que es donde la
+        # reversión hacia el VWAP dispara la salida y deja la operación en pérdida.
         if direction == 1:
             if price > vwap_val:
                 if near_upper2:
@@ -154,28 +157,28 @@ class PSTPrecisionScalping:
                     score -= 25
                     factors.append({"k": "VWAP", "v": f"Precio en +2σ ({vwap_upper2:.5f}) — sobre-extendido, riesgo de reversión ❌", "score": -25})
                 elif near_upper1:
-                    score += 20
-                    factors.append({"k": "VWAP", "v": f"Precio sobre VWAP+1σ ({vwap_upper1:.5f}) ✅", "score": 20})
+                    score -= 5
+                    factors.append({"k": "VWAP", "v": f"Precio en VWAP+1σ ({vwap_upper1:.5f}) — ya extendido, no perseguir ⚠️", "score": -5})
                 else:
-                    score += 30
-                    factors.append({"k": "VWAP", "v": f"Precio > VWAP ({vwap_val:.5f}) — momentum ✅", "score": 30})
+                    score += 15
+                    factors.append({"k": "VWAP", "v": f"Precio > VWAP ({vwap_val:.5f}) — momentum controlado ✅", "score": 15})
             else:
-                score -= 10
-                factors.append({"k": "VWAP", "v": f"BUY bajo VWAP ({vwap_val:.5f}) ❌", "score": -10})
+                score += 20
+                factors.append({"k": "VWAP", "v": f"BUY cerca/bajo VWAP ({vwap_val:.5f}) — pullback sano ✅", "score": 20})
         elif direction == -1:
             if price < vwap_val:
                 if near_lower2:
                     score -= 25
                     factors.append({"k": "VWAP", "v": f"Precio en -2σ ({vwap_lower2:.5f}) — sobre-extendido, riesgo de reversión ❌", "score": -25})
                 elif near_lower1:
-                    score += 20
-                    factors.append({"k": "VWAP", "v": f"Precio bajo VWAP-1σ ({vwap_lower1:.5f}) ✅", "score": 20})
+                    score -= 5
+                    factors.append({"k": "VWAP", "v": f"Precio en VWAP-1σ ({vwap_lower1:.5f}) — ya extendido, no perseguir ⚠️", "score": -5})
                 else:
-                    score += 30
-                    factors.append({"k": "VWAP", "v": f"Precio < VWAP ({vwap_val:.5f}) — momentum ✅", "score": 30})
+                    score += 15
+                    factors.append({"k": "VWAP", "v": f"Precio < VWAP ({vwap_val:.5f}) — momentum controlado ✅", "score": 15})
             else:
-                score -= 10
-                factors.append({"k": "VWAP", "v": f"SELL sobre VWAP ({vwap_val:.5f}) ❌", "score": -10})
+                score += 20
+                factors.append({"k": "VWAP", "v": f"SELL cerca/sobre VWAP ({vwap_val:.5f}) — pullback sano ✅", "score": 20})
 
         # 3. Momentum M5 (RSI) — hasta 20 pts
         if direction == 1 and rsi5 > 55:
@@ -316,9 +319,19 @@ class PSTPrecisionScalping:
 
             price = float(close_m1.iloc[-1])
 
-            if position_type == "BUY" and price < vwap_val:
+            # Colchón ATR + confirmación de momentum (EMA9/21): evita salidas por ruido
+            # cuando el precio solo roza el VWAP. Solo salimos si cruza con margen Y el
+            # momentum de las EMAs se ha girado realmente en contra de la posición.
+            atr_s = ta.atr(high_m1, low_m1, close_m1, length=14)
+            buf = float(atr_s.iloc[-1]) * 0.25 if atr_s is not None else 0.0
+            ema9 = ta.ema(close_m1, length=9)
+            ema21 = ta.ema(close_m1, length=21)
+            mom_down = ema9 is not None and ema21 is not None and float(ema9.iloc[-1]) < float(ema21.iloc[-1])
+            mom_up = ema9 is not None and ema21 is not None and float(ema9.iloc[-1]) > float(ema21.iloc[-1])
+
+            if position_type == "BUY" and price < (vwap_val - buf) and mom_down:
                 return True
-            if position_type == "SELL" and price > vwap_val:
+            if position_type == "SELL" and price > (vwap_val + buf) and mom_up:
                 return True
 
             return False

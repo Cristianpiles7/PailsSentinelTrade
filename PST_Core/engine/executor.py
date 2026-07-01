@@ -474,8 +474,11 @@ class PSTExecutor:
                             logger.info(f"📉 [TRAILING] {symbol} (Ticket: {ticket}). Siguiendo tendencia a {new_sl:.5f} (Mult: {mult})")
 
                 # C. LÓGICA DE SALIDA DINÁMICA
-                # PST-PrecisionScalping: salida si el precio cruza el VWAP en contra
-                if "PrecisionScalping" in p.comment:
+                # PST-PrecisionScalping: salida si el precio cruza el VWAP en contra.
+                # Tiempo mínimo de sostenimiento (120s): impide que la salida VWAP cierre
+                # la posición en su propia vela de entrada por un simple tick de ruido.
+                pos_age_secs = (datetime.now() - datetime.fromtimestamp(p.time_setup if hasattr(p, "time_setup") else p.time)).total_seconds()
+                if "PrecisionScalping" in p.comment and pos_age_secs >= 120:
                     from ..strategies.pst_precision_scalping import PSTPrecisionScalping
                     ps_strat = PSTPrecisionScalping()
                     mtf_exit = {"m1": await fetch_rates_async(symbol, 1, 50), "m5": df}
