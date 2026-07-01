@@ -71,7 +71,7 @@ export function MarketHeatmap({ symbols, onSelectSymbol }) {
                         </div>
                     </div>
                     <div className="bg-[#050505] border border-zinc-900 rounded-2xl p-4 flex flex-col items-center justify-center min-w-[120px]">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Active Pars</span>
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Active Pairs</span>
                         <div className="flex items-end gap-1">
                             <span className="text-3xl font-black text-white leading-none">{stats.activeCount}</span>
                             <span className="text-xs text-zinc-500 font-bold mb-0.5">SYMBOLS</span>

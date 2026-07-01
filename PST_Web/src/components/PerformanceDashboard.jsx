@@ -213,7 +213,7 @@ export function PerformanceDashboard({
                   <div className="flex justify-between items-center mb-1">
                     <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">{cat}</span>
                     <div className="flex items-center gap-3">
-                      <span className={`text-[9px] font-black font-mono ${(bucketPnl[cat] ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <span className={`text-[11px] font-black font-mono ${(bucketPnl[cat] ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {(bucketPnl[cat] ?? 0) >= 0 ? '+' : ''}{(bucketPnl[cat] ?? 0).toFixed(2)}€
                       </span>
                       <span className="text-xs font-black text-white">{pct.toFixed(1)}%</span>

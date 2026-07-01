@@ -83,7 +83,7 @@ export function PerformanceCalendar({ trades = [] }) {
             {week.map((day, dIndex) => (
               <div
                 key={dIndex}
-                title={`${day.date}\nPnL: ${day.profit !== undefined ? '$' + day.profit.toFixed(2) : 'No trades'}\nTrades: ${day.count}`}
+                title={`${day.date}\nPnL: ${day.profit !== undefined ? day.profit.toFixed(2) + '€' : 'No trades'}\nTrades: ${day.count}`}
                 className={`w-3.5 h-3.5 rounded-sm border transition-all duration-300 hover:scale-[1.5] hover:z-20 cursor-crosshair ${getColor(day.profit)}`}
               />
             ))}

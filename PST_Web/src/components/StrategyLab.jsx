@@ -9,7 +9,7 @@ import {
     XCircle, ChevronRight, Clock
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
 
 const STRATEGIES = [
     {
@@ -102,7 +102,7 @@ export function StrategyLab({ symbols }) {
         }, 2000);
 
         try {
-            const resp = await fetch(`${API_BASE}/api/backtest/run`, {
+            const resp = await fetch(`${API_BASE}/backtest/run`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

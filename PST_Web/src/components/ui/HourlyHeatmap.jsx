@@ -6,7 +6,7 @@ const SESSION_LABELS = {
   8:  'London',9:  'London',10: 'London',11: 'London',
   12: 'London',13: 'London',14: 'NY',    15: 'NY',
   16: 'NY',    17: 'NY',    18: 'NY',    19: 'NY',
-  20: 'NY',    21: 'Cierre',22: 'Cierre',23: 'Cierre'
+  20: 'NY',    21: 'Close', 22: 'Close', 23: 'Close'
 }
 
 const SESSION_COLORS = {
@@ -14,7 +14,7 @@ const SESSION_COLORS = {
   Frankfurt: '#f59e0b',
   London:    '#10b981',
   NY:        '#3b82f6',
-  Cierre:    '#71717a'
+  Close:     '#71717a'
 }
 
 function getHeatColor(pnl, maxAbs, trades) {

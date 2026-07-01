@@ -7,10 +7,10 @@ const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
 export function MultiChartWorkspace({ symbols, api }) {
     // Estado inicial: 4 ranuras (slots)
     const [slots, setSlots] = useState([
-        { id: 1, symbol: 'US30' },
+        { id: 1, symbol: 'US500.cash' },
         { id: 2, symbol: 'EURUSD' },
         { id: 3, symbol: 'XAUUSD' },
-        { id: 4, symbol: 'GER40' }
+        { id: 4, symbol: 'EU50.cash' }
     ]);
 
     const [chartData, setChartData] = useState({});
@@ -71,7 +71,7 @@ export function MultiChartWorkspace({ symbols, api }) {
                                     onChange={(e) => handleSymbolChange(slot.id, e.target.value)}
                                     className="appearance-none bg-zinc-900/80 backdrop-blur-md border border-zinc-800 text-white font-black uppercase text-sm px-4 py-2 pr-10 rounded-xl cursor-pointer hover:border-indigo-500/50 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                                 >
-                                    <option value="">-- SELECT PARR --</option>
+                                    <option value="">-- SELECT PAIR --</option>
                                     {activeSymbols.map(sym => (
                                         <option key={sym} value={sym}>{sym}</option>
                                     ))}

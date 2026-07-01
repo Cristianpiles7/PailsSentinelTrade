@@ -1238,7 +1238,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.2.3 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.3.0 SMC</span>
 
 
 
@@ -1573,7 +1573,7 @@ function App() {
                             <h4 className="text-white font-black italic text-sm leading-none">{t.symbol}</h4>
                             <div className="flex flex-col mt-1">
                                 <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
-                                <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-0.5">
+                                <span className="text-[11px] font-black text-indigo-400 uppercase tracking-widest mt-0.5">
                                     {t.price_current?.toFixed((t.symbol.includes('EURUSD') || t.symbol.includes('GBPUSD')) ? 5 : (t.symbol.includes('JPY') || t.symbol.includes('XAU')) ? 3 : 2)}
                                 </span>
                             </div>
@@ -1591,8 +1591,8 @@ function App() {
 
                       <div className="flex items-center justify-between gap-2 border-t border-white/5 pt-3 mt-1">
                         <div className="flex flex-col">
-                          <span className="text-[7px] font-black text-zinc-600 uppercase">Strategy</span>
-                          <span className="text-[9px] font-black text-indigo-400 uppercase truncate max-w-[120px]">{t.strategy}</span>
+                          <span className="text-[8px] font-black text-zinc-600 uppercase">Strategy</span>
+                          <span className="text-[11px] font-black text-indigo-400 uppercase truncate max-w-[120px]">{t.strategy}</span>
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -1814,7 +1814,7 @@ function App() {
                         </div>
                         <div className="flex flex-col items-center border-t border-white/5 pt-1 w-full">
                           <span className="text-[7px] font-black text-zinc-600 uppercase">TOTAL PNL</span>
-                          <span className={`text-[9px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className={`text-[11px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
                           </span>
                         </div>
@@ -1847,8 +1847,8 @@ function App() {
                         const label = strat.replace("PST-", "").replace("RangeBreaker", "Range").replace("PrecisionScalping", "Scalp").toUpperCase();
                         return (
                           <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
-                            <span className="text-[6px] font-black text-zinc-600 mb-0.5">{label}</span>
-                            <span className={`text-[9px] font-black ${score >= 70 ? 'text-indigo-400' : 'text-zinc-500'}`}>{Math.round(score)}</span>
+                            <span className="text-[7px] font-black text-zinc-600 mb-0.5">{label}</span>
+                            <span className={`text-[11px] font-black ${score >= 70 ? 'text-indigo-400' : 'text-zinc-500'}`}>{Math.round(score)}</span>
                           </div>
                         );
                       })}
@@ -1867,7 +1867,7 @@ function App() {
                         </span>
                         <div className="flex items-center gap-2">
                           {isBlocked && <span className="text-amber-500 text-[7px] border border-amber-500/30 px-1 rounded">GATED</span>}
-                          <span className={colorClass}>{Math.round(s.score)}%</span>
+                          <span className={`text-xs font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                         </div>
                       </div>
                       <div className="h-1.5 w-full bg-zinc-800/50 rounded-full border border-white/5 overflow-hidden">
@@ -3177,7 +3177,7 @@ function App() {
 
 
 
-                  <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-[0.35em] mt-1.5">Control total de par€metros por activo € Persistencia en tiempo real</p>
+                  <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-[0.35em] mt-1.5">Control total de parámetros por activo · Persistencia en tiempo real</p>
 
 
 
@@ -3225,15 +3225,15 @@ function App() {
 
 
 
-                  { label: 'SL€ATR', desc: 'Multiplicador de Stop Loss', color: 'rose' },
+                  { label: 'SL/ATR', desc: 'Multiplicador de Stop Loss', color: 'rose' },
 
 
 
-                  { label: 'TP€ATR', desc: 'Multiplicador de Take Profit', color: 'emerald' },
+                  { label: 'TP/ATR', desc: 'Multiplicador de Take Profit', color: 'emerald' },
 
 
 
-                  { label: 'Min Score', desc: 'Umbral de se€al m€nima', color: 'amber' },
+                  { label: 'Min Score', desc: 'Umbral de señal mínima', color: 'amber' },
 
 
 
@@ -3552,11 +3552,11 @@ function App() {
 
 
 
-                  <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Los cambios se aplican en el pr€ximo ciclo del bot (~10s)</p>
+                  <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Los cambios se aplican en el próximo ciclo del bot (~10s)</p>
 
 
 
-                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-wider mt-0.5">El orquestador lee `lot_size`, `sl_mult` y `tp_mult` antes de cada operaci€n. `score_threshold` filtra se€ales de baja calidad.</p>
+                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-wider mt-0.5">El orquestador lee `lot_size`, `sl_mult` y `tp_mult` antes de cada operación. `score_threshold` filtra señales de baja calidad.</p>
 
 
 

@@ -47,7 +47,7 @@ export function TradeRiskVisualizer({ trade }) {
 
   return (
     <div className="flex flex-col gap-2 w-full bg-black/60 p-3 rounded-xl border border-white/5 shadow-inner scale-[1.02] origin-left">
-      <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-tight">
+      <div className="flex justify-between items-center text-[11px] font-black uppercase tracking-tight">
         <span className="text-rose-500 flex items-center gap-1.5">
           {isBE ? 'SHIELD ON' : 'STOP LOSS'} <span className="text-zinc-400 font-bold bg-rose-500/10 px-1 rounded">[{sl.toFixed(5)}]</span>
         </span>
@@ -87,7 +87,7 @@ export function TradeRiskVisualizer({ trade }) {
         />
       </div>
 
-      <div className="flex justify-between items-baseline text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none">
+      <div className="flex justify-between items-baseline text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none">
         <span className="flex items-baseline gap-1">
           GUARD: <span className="text-zinc-200">{(Math.abs(price_current - sl)).toFixed(5)}</span> <span className="text-[7px] opacity-50">PIPS</span>
         </span>
