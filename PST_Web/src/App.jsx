@@ -1238,7 +1238,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.2.2 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.2.3 SMC</span>
 
 
 

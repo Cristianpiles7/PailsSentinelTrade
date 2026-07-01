@@ -695,7 +695,7 @@ class SymbolTask:
                                                         tp_mult = 5.0  # Antes 3.0
 
                                                     # En régimen VOLATILE el precio necesita más espacio para respirar
-                                                    if self.current_regime == "VOLATILE":
+                                                    if mode == RegimeMode.VOLATILE:
                                                         sl_mult *= 1.5
 
                                                     sl_dist = atr_current * sl_mult
