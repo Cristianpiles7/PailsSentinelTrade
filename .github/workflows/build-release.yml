@@ -60,6 +60,13 @@ jobs:
           --hidden-import "aiohttp" `
           PST_MASTER.py
 
+      - name: Inject distribution token for PST_LAUNCHER
+        shell: pwsh
+        env:
+          DIST_TOKEN: ${{ secrets.DIST_TOKEN }}
+        run: |
+          Set-Content -Path "Tools/_dist_token.py" -Value "DIST_TOKEN = `"$env:DIST_TOKEN`"" -Encoding utf8
+
       - name: Build PST_LAUNCHER with PyInstaller
         shell: pwsh
         run: |

@@ -41,6 +41,12 @@ def get_headers():
                     if line.startswith("GITHUB_TOKEN="):
                         token = line.split("=", 1)[1].strip()
                         break
+    if not token:
+        try:
+            from _dist_token import DIST_TOKEN
+            token = DIST_TOKEN
+        except ImportError:
+            pass
     return {"Authorization": f"token {token}"} if token else {}
 
 def get_remote_release():
