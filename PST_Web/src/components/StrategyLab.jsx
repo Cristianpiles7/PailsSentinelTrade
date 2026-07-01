@@ -13,13 +13,6 @@ const API_BASE = 'http://localhost:8000';
 
 const STRATEGIES = [
     {
-        id: 'PST-AlphaTrend',
-        label: 'Alpha Trend',
-        desc: 'Trend-following multitimeframe H1/M15',
-        color: '#6366f1',
-        icon: TrendingUp,
-    },
-    {
         id: 'PST-RangeBreaker',
         label: 'Range Breaker',
         desc: 'Breakout de rangos M15/H1 con ATR',

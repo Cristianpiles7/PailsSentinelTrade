@@ -1238,7 +1238,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.2.1 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.2.2 SMC</span>
 
 
 
@@ -1721,7 +1721,7 @@ function App() {
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
                           <div className="flex gap-1 mt-0.5">
-                            {["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
+                            {["PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
                               const score = s.factors_map?.[strat]?.score || 0;
                               return (
                                 <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
@@ -1842,9 +1842,9 @@ function App() {
 
                     {/* Core Strategies Scores */}
                     <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      {["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
+                      {["PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
                         const score = s.factors_map?.[strat]?.score || 0;
-                        const label = strat.replace("PST-", "").replace("AlphaTrend", "Alpha").replace("RangeBreaker", "Range").replace("PrecisionScalping", "Scalp").toUpperCase();
+                        const label = strat.replace("PST-", "").replace("RangeBreaker", "Range").replace("PrecisionScalping", "Scalp").toUpperCase();
                         return (
                           <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
                             <span className="text-[6px] font-black text-zinc-600 mb-0.5">{label}</span>
@@ -3305,13 +3305,12 @@ function App() {
 
                   // Mapeo de nombres limpios y estratégicos
                   const STRAT_NAME_MAP = {
-                    "PST-AlphaTrend":        "Alpha Trend",
                     "PST-RangeBreaker":      "Range Breaker",
                     "PST-PrecisionScalping": "Precision Scalp",
                   };
 
                   // Estrategias CORE activas (v3.0)
-                  const CORE_STRATS = ["PST-AlphaTrend", "PST-RangeBreaker", "PST-PrecisionScalping"];
+                  const CORE_STRATS = ["PST-RangeBreaker", "PST-PrecisionScalping"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
@@ -3373,7 +3372,7 @@ function App() {
                             const stratData = symbolStrats[strat];
 
                             // Lógica de activación por defecto
-                            const isCore = ["PST-AlphaTrend", "PST-RangeBreaker"].includes(strat); // AlphaTrend y RangeBreaker activas por defecto
+                            const isCore = ["PST-RangeBreaker"].includes(strat); // RangeBreaker activa por defecto
                             const isEnabled = stratData ? (!!stratData.is_active) : isCore;
 
                             // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)
