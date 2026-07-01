@@ -5,7 +5,6 @@ from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sy
 from ..models.classifier import RegimeClassifier, RegimeMode
 from ..models.database import PSTDatabase
 from .executor import PSTExecutor
-from ..strategies.pst_alpha_trend import PSTAlphaTrend
 from ..strategies.pst_range_breaker import PSTRangeBreaker
 from ..strategies.pst_precision_scalping import PSTPrecisionScalping
 from ..portfolio.manager import PortfolioManager
@@ -48,13 +47,11 @@ class SymbolTask:
         self.classifier = RegimeClassifier()
         self.macro_filter = MacroTrendFilter()
         # Instancias de estrategias
-        self.alpha_trend = PSTAlphaTrend()
         self.range_breaker = PSTRangeBreaker()
         self.precision_scalping = PSTPrecisionScalping()
 
         # Lista maestra para filtrado dinámico en update_active_strategies()
         self._all_strategies = [
-            self.alpha_trend,
             self.range_breaker,
             self.precision_scalping,
         ]
