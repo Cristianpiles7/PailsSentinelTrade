@@ -1540,7 +1540,7 @@ def start_app():
 
     # Lanzar ventana nativa única apuntando al puerto dinámico
     webview.create_window(
-        'Pails Sentinel Trade Bot', 
+        f'Pails Sentinel Trade Bot - v{app.version}',
         f'http://{host}:{port}',
         width=1280, 
         height=850,
