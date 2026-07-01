@@ -105,6 +105,10 @@ SCALPER_TARGETS = ["BTCUSD", "ETHUSD", "US500.cash", "XAUUSD", "EURUSD", "NAS100
 SCALPER_RISK_DEFAULT = 0.08
 SCALPER_MAX_LOSS_EUR = 12.0
 
+# CAP GLOBAL DE PÉRDIDA POR OPERACIÓN (modo MONEY)
+# Ninguna estrategia puede arriesgar más de este valor en una sola operación.
+MAX_LOSS_EUR = 7.0
+
 # FILTROS DE SESIONES HORARIAS (CET/Hora MT5 local del bot)
 SESSION_SESSIONS_ONLY = True
 LONDRES_SESSION_START = "08:00"
@@ -119,7 +123,6 @@ SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS = 2.0
 
 # Estrategias activas globalmente
 ENABLED_STRATEGIES = [
-    "PST-AlphaTrend",
     "PST-RangeBreaker",
     "PST-PrecisionScalping",
 ]
@@ -127,10 +130,12 @@ ENABLED_STRATEGIES = [
 # CUBETAS DE CAPITAL POR TIPO DE ESTRATEGIA
 # Porcentaje del balance total asignado a cada categoría.
 # La suma debe ser <= 100. El resto queda como reserva.
+# NOTA: PST-AlphaTrend (categoría TREND, H1, horizonte multi-hora) fue retirada:
+# FTMO no permite posiciones abiertas con el mercado cerrado, y su horizonte
+# no encajaba con el cierre forzado de fin de día. Capital reasignado a RANGE/SCALPING.
 CAPITAL_BUCKETS = {
-    "TREND":   40.0,   # AlphaTrend — tendencia, mayor horizonte temporal
-    "RANGE":   30.0,   # RangeBreaker — operativa en rango
-    "SCALPING": 30.0,  # PrecisionScalping — alta frecuencia, menor riesgo unitario
+    "RANGE":   50.0,   # RangeBreaker — operativa en rango
+    "SCALPING": 50.0,  # PrecisionScalping — alta frecuencia, menor riesgo unitario
 }
 # Rebalanceo automático: si el rendimiento de una cubeta supera este umbral
 # respecto a las demás, se redistribuyen los pesos (revisión mensual)

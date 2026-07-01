@@ -286,18 +286,11 @@ class PSTDatabase:
                     VALUES (?, ?, ?, 2.5, 3.5, 80.0, 1.6)
                 """, (sym, stype, is_active))
                 
-                # 2. PST-AlphaTrend — Tendencia en H1 (25€ base)
+                # 3. PST-RangeBreaker — Rango en M15 (7€ base, cap global MAX_LOSS_EUR)
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-AlphaTrend', ?, 'MONEY', 25.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
-                """, (sym, is_active))
-
-                # 3. PST-RangeBreaker — Rango en M15 (20€ base)
-                await db.execute("""
-                    INSERT OR IGNORE INTO symbol_strategies
-                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-RangeBreaker', ?, 'MONEY', 20.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
+                    VALUES (?, 'PST-RangeBreaker', ?, 'MONEY', 7.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
                 """, (sym, is_active))
 
                 # 4. PST-PrecisionScalping — Scalping en M1 (7€ base, TP técnico)

@@ -150,9 +150,9 @@ class PSTPrecisionScalping:
         if direction == 1:
             if price > vwap_val:
                 if near_upper2:
-                    # Precio en banda +2σ: sobrecomprado, peor entrada para BUY
-                    score += 5
-                    factors.append({"k": "VWAP", "v": f"Precio en +2σ ({vwap_upper2:.5f}) — extendido ⚠️", "score": 5})
+                    # Precio en banda +2σ: sobre-extendido, alto riesgo de reversión
+                    score -= 25
+                    factors.append({"k": "VWAP", "v": f"Precio en +2σ ({vwap_upper2:.5f}) — sobre-extendido, riesgo de reversión ❌", "score": -25})
                 elif near_upper1:
                     score += 20
                     factors.append({"k": "VWAP", "v": f"Precio sobre VWAP+1σ ({vwap_upper1:.5f}) ✅", "score": 20})
@@ -165,8 +165,8 @@ class PSTPrecisionScalping:
         elif direction == -1:
             if price < vwap_val:
                 if near_lower2:
-                    score += 5
-                    factors.append({"k": "VWAP", "v": f"Precio en -2σ ({vwap_lower2:.5f}) — extendido ⚠️", "score": 5})
+                    score -= 25
+                    factors.append({"k": "VWAP", "v": f"Precio en -2σ ({vwap_lower2:.5f}) — sobre-extendido, riesgo de reversión ❌", "score": -25})
                 elif near_lower1:
                     score += 20
                     factors.append({"k": "VWAP", "v": f"Precio bajo VWAP-1σ ({vwap_lower1:.5f}) ✅", "score": 20})
@@ -219,6 +219,24 @@ class PSTPrecisionScalping:
             else:
                 factors.append({"k": "Volatilidad", "v": f"ATR ratio {atr_ratio:.2f}", "score": 0})
 
+        # 5b. Filtro anti-spike: vela de entrada con rango > 3x ATR indica movimiento parabólico
+        last_candle_range = float(high_m1.iloc[-1]) - float(low_m1.iloc[-1])
+        move_5candles = abs(float(close_m1.iloc[-1]) - float(close_m1.iloc[-6])) if len(close_m1) >= 6 else 0.0
+        if atr > 0 and last_candle_range > atr * 3.0:
+            score -= 40
+            factors.append({
+                "k": "Anti-Spike",
+                "v": f"Rango vela {last_candle_range:.4f} > 3x ATR ({atr*3:.4f}) — spike detectado ❌",
+                "score": -40
+            })
+        elif atr > 0 and move_5candles > atr * 4.0:
+            score -= 30
+            factors.append({
+                "k": "Anti-Spike (acumulado)",
+                "v": f"Movimiento 5 velas {move_5candles:.4f} > 4x ATR ({atr*4:.4f}) — persiguiendo impulso agotado ❌",
+                "score": -30
+            })
+
         # 6. Spread estricto — crítico para scalping (1.5x ATR M1 es el límite)
         if spread_dist > atr * 1.5:
             score -= 20
@@ -233,7 +251,8 @@ class PSTPrecisionScalping:
         # Sin cruce fresco, no puede superar el umbral de entrada aunque todo lo demás esté bien
         if not has_fresh_cross:
             score = min(score, 65)
-        entry = direction if score >= 70 else 0
+        entry_threshold = 80 if current_regime == "VOLATILE" else 70
+        entry = direction if score >= entry_threshold else 0
 
         # TP técnico: máximo entre 1.5x el rango de la vela actual y 1.0x ATR M1
         tp_price = 0.0

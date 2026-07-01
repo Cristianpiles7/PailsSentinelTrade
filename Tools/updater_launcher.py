@@ -30,11 +30,30 @@ def get_local_version():
             return f.read().strip()
     return "v0.0.0"
 
+def get_headers():
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("GITHUB_TOKEN="):
+                        token = line.split("=", 1)[1].strip()
+                        break
+    if not token:
+        try:
+            from _dist_token import DIST_TOKEN
+            token = DIST_TOKEN
+        except ImportError:
+            pass
+    return {"Authorization": f"token {token}"} if token else {}
+
 def get_remote_release():
     """Consulta la API de GitHub para la última Release."""
     try:
         log(f"Comprobando actualizaciones en GitHub: {GITHUB_USER}/{GITHUB_REPO}...")
-        r = requests.get(API_URL, timeout=10)
+        r = requests.get(API_URL, timeout=10, headers=get_headers())
         if r.status_code == 200:
             data = r.json()
             return data
@@ -56,7 +75,9 @@ def download_update(download_url, new_version):
     """Descarga e instala el binario desde los assets de GitHub."""
     log("🔽 Descargando nueva versión... (Puede tardar dependiento de tu conexión)")
     try:
-        r = requests.get(download_url, stream=True)
+        headers = get_headers()
+        headers["Accept"] = "application/octet-stream"
+        r = requests.get(download_url, stream=True, headers=headers)
         if r.status_code == 200:
             temp_name = APP_NAME + ".new"
             with open(temp_name, 'wb') as f:
