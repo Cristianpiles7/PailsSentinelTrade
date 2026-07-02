@@ -501,6 +501,9 @@ class PSTPrecisionScalping:
             "vwap_lower2": vwap_lower2,
             "adx_m5": adx5,
             "chop_m5": chop5,
+            # Umbral REAL de entrada (viene de filter_profile.entry_threshold). El orquestador
+            # prioriza este valor sobre score_threshold → fuente única de verdad del gate.
+            "threshold_used": entry_threshold,
         }
         # Exponer SL estructural al executor (valida el lado antes de aplicarlo)
         if target_price_sl > 0:

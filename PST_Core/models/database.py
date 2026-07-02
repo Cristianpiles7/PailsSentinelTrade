@@ -334,11 +334,16 @@ class PSTDatabase:
                 """, (sym, is_active, g['risk_mode'], g['risk_value'], g['use_breakeven'], g['use_trailing'],
                       g['be_mult'], g['ts_mult'], g['min_rr'], g['sl_mult'], g['tp_mult'], g['filter_profile']))
 
-                # Backfill para BBDD ya existentes: fija el perfil de grupo si está vacío (no pisa ediciones).
+                # Backfill para BBDD ya existentes: fija el perfil de grupo si está vacío O si tiene
+                # un perfil AUTO-sembrado antiguo (solo noise_mode, sin entry_threshold). Así el
+                # tuneo (entry_threshold 72) llega a instalaciones previas. NO pisa ediciones
+                # manuales del usuario (que tendrían otro contenido).
                 await db.execute("""
                     UPDATE symbol_strategies SET filter_profile = ?
                     WHERE symbol = ? AND strategy_name = 'PST-PrecisionScalping'
-                      AND (filter_profile IS NULL OR filter_profile = '')
+                      AND (filter_profile IS NULL OR filter_profile = ''
+                           OR filter_profile = '{"noise_mode": "on"}'
+                           OR filter_profile = '{"noise_mode": "soft"}')
                 """, (g['filter_profile'], sym))
 
             await db.commit()

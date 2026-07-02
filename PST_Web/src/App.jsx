@@ -290,13 +290,16 @@ function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
             </div>
           </div>
 
-          {/* Señal */}
-          <div className="space-y-3">
-            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Señal</p>
-            <div className="grid grid-cols-3 gap-4">
-              <Num label="Score threshold" value={sd.score_threshold} onChange={v => setField(tab, 'score_threshold', v)} color="text-amber-300" hint="Score mínimo del orquestador para ejecutar" />
+          {/* Señal — solo RangeBreaker usa score_threshold como gate. En PrecisionScalping
+              el umbral real es entry_threshold (sección Filtros), así que se oculta aquí. */}
+          {!isScalp && (
+            <div className="space-y-3">
+              <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Señal</p>
+              <div className="grid grid-cols-3 gap-4">
+                <Num label="Score threshold" value={sd.score_threshold} onChange={v => setField(tab, 'score_threshold', v)} color="text-amber-300" hint="Score mínimo del orquestador para ejecutar" />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Filtros (solo PrecisionScalping) */}
           {isScalp && (
@@ -3617,14 +3620,21 @@ function App() {
                           const isEnabled = stratData.is_active ? true : ["PST-RangeBreaker"].includes(strat);
                           const displayName = STRAT_NAME_MAP[strat] || strat.replace("PST-", "").replace(/-/g, " ");
                           let noiseMode = null;
+                          // Para PrecisionScalping el umbral real de entrada es entry_threshold
+                          // (del filter_profile), no la columna score_threshold. Mostramos ese.
+                          let scoreVal = stratData.score_threshold ?? '—';
                           if (strat === "PST-PrecisionScalping" && stratData.filter_profile) {
-                            try { noiseMode = JSON.parse(stratData.filter_profile).noise_mode; } catch { /* noop */ }
+                            try {
+                              const fp = JSON.parse(stratData.filter_profile);
+                              noiseMode = fp.noise_mode;
+                              scoreVal = fp.entry_threshold ?? '—';   // '—' = usa el default de la estrategia
+                            } catch { /* noop */ }
                           }
                           const stats = [
                             { label: 'RISK', val: `${stratData.risk_value ?? '—'}${stratData.risk_mode === 'MONEY' ? '€' : stratData.risk_mode === 'PCT' ? '%' : ''}`, color: 'indigo' },
                             { label: 'SL', val: stratData.sl_mult ?? '—', color: 'rose' },
                             { label: 'TP', val: strat === 'PST-PrecisionScalping' ? 'TEC' : (stratData.tp_mult ?? '—'), color: 'emerald' },
-                            { label: 'SCORE', val: stratData.score_threshold ?? '—', color: 'amber' },
+                            { label: 'SCORE', val: scoreVal, color: 'amber' },
                             ...(noiseMode ? [{ label: 'NOISE', val: String(noiseMode).toUpperCase(), color: 'indigo' }] : []),
                           ];
                           return (
