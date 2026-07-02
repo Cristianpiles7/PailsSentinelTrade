@@ -46,7 +46,8 @@ class PSTDatabase:
                     default_symbols = [
                         ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'),
                         ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
-                        ('US500.cash', 'INDEX')
+                        ('US500.cash', 'INDEX'),
+                        ('AAPL', 'STOCK'), ('NVDA', 'STOCK')
                     ]
                     await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
 
@@ -280,6 +281,7 @@ class PSTDatabase:
                 'EURUSD', 'GBPUSD',           # FOREX
                 'BTCUSD', 'ETHUSD',           # CRYPTO
                 'US500.cash',                 # INDEX
+                'AAPL', 'NVDA',               # STOCK (AAPL rentable, NVDA breakeven — experimental)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
