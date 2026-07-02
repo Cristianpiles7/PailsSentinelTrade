@@ -85,7 +85,7 @@ class FaithfulScalpingEngine:
         while i < n:
             bar = df_m1.iloc[i]
             if pos is not None:
-                closed = self._manage(pos, bar, df_m1, df_m5, t_m5, i, strategy)
+                closed = self._manage(pos, bar, df_m1, df_m5, t_m5, i, strategy, symbol, profile)
                 if closed:
                     res.trades.append(pos)
                     pos = None
@@ -169,7 +169,7 @@ class FaithfulScalpingEngine:
         return t
 
     # ------------------------------------------------------------------ gestión
-    def _manage(self, t, bar, df_m1, df_m5, t_m5, j, strategy) -> bool:
+    def _manage(self, t, bar, df_m1, df_m5, t_m5, j, strategy, symbol, profile) -> bool:
         """Gestiona la posición en la barra j. Devuelve True si se cerró del todo."""
         h, l, c = float(bar["high"]), float(bar["low"]), float(bar["close"])
         d, fill, R = t.direction, t.entry_price, t._R
@@ -214,7 +214,10 @@ class FaithfulScalpingEngine:
             m5s = df_m5.iloc[max(0, end5 - self.lookback_m5): end5]
             pos_type = "BUY" if d == 1 else "SELL"
             try:
-                if strategy.check_exit_signal({"m1": m1s, "m5": m5s}, pos_type):
+                # symbol + filter_profile: igual que el executor real, para que vwap_exit
+                # on/off por símbolo/grupo se respete también en el backtest.
+                if strategy.check_exit_signal({"m1": m1s, "m5": m5s}, pos_type,
+                                              symbol=symbol, filter_profile=profile.get("filter_profile")):
                     self._close_remaining(t, c, bar["time"], "VWAP_EXIT"); return True
             except Exception:
                 pass

@@ -409,9 +409,14 @@ class PSTExecutor:
                 if not atr or not s_info: continue
 
                 # --- NEW: OBTENER PREFERENCIAS DE ESTRATEGIA ---
-                # Usamos el comentario del trade para identificar la estrategia de origen
-                strat_name_from_comment = p.comment.replace("PST_", "")
+                # El comentario de la orden es el nombre SIN el prefijo "PST-" (ver
+                # execute_trade: abbrev = raw_name.replace("PST-", "")), p.ej. "PrecisionScalping_M1".
+                # Buscamos qué estrategia registrada en DB coincide por substring (igual que
+                # el check "Scalping" in p.comment ya usado más abajo para is_scalper_pos).
                 all_sym_strats = await self.db.get_symbol_strategies(symbol)
+                strat_name_from_comment = next(
+                    (k for k in all_sym_strats if k.replace("PST-", "") in p.comment), None
+                )
                 strat_cfg = all_sym_strats.get(strat_name_from_comment, {})
                 
                 use_be = strat_cfg.get("use_breakeven", 0) == 1
@@ -482,7 +487,7 @@ class PSTExecutor:
                     from ..strategies.pst_precision_scalping import PSTPrecisionScalping
                     ps_strat = PSTPrecisionScalping()
                     mtf_exit = {"m1": await fetch_rates_async(symbol, 1, 50), "m5": df}
-                    if ps_strat.check_exit_signal(mtf_exit, p_type):
+                    if ps_strat.check_exit_signal(mtf_exit, p_type, symbol=symbol, filter_profile=strat_cfg.get("filter_profile")):
                         logger.info(f"🛑 [SCALPING EXIT] {symbol} (Ticket: {ticket}) — Precio cruzó VWAP en contra.")
                         req = {
                             "action": mt5.TRADE_ACTION_DEAL,

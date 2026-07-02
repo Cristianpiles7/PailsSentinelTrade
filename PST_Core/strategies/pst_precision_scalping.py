@@ -123,6 +123,17 @@ class PSTPrecisionScalping:
         "noise_penalty": 8,
         "rsi_strong": 55.0,           # RSI M5 para momentum fuerte (short usa 100-rsi_strong)
         "rsi_ok": 50.0,
+        "m1_eff_mode": "off",         # 'off' = no evalúa (default forex/index/metal); 'on' = activo
+        "m1_eff_lookback": 20,        # velas M1 para el ratio de eficiencia (Kaufman ER)
+        "m1_eff_clean": 0.25,         # eficiencia alta → micro-tendencia limpia, bonus
+        "m1_eff_ok": 0.10,            # por debajo → whipsaw M1, penaliza
+        "m1_eff_penalty": 10,
+        # Salida dinámica (check_exit_signal): 'on' = activa (cruce VWAP en contra + giro de
+        # momentum, o cruce EMA9/21 fresco opuesto). El backtest fiel (A/B por grupo) mostró
+        # que esta salida AYUDA en forex (corta pérdidas antes del SL) pero PERJUDICA en
+        # cripto e índices (corta rachas ganadoras antes de tiempo) — se ajusta por grupo
+        # en el seed de la BBDD, no aquí (este 'on' es el default genérico).
+        "vwap_exit": "on",
     }
 
     @classmethod
@@ -134,6 +145,9 @@ class PSTPrecisionScalping:
         prof = dict(cls.FILTER_DEFAULTS)
         if is_crypto:
             prof["noise_mode"] = "soft"   # cripto: impulsos válidos con ADX bajo, no penalizar ruido
+            # m1_eff_mode NO se activa por clase de activo: el backtest mostró que el whipsaw M1
+            # que castiga a ETHUSD es un patrón propio de ese símbolo, no de "cripto" en general
+            # (BTCUSD empeoró con el mismo filtro). Se activa por símbolo vía filter_profile.
         raw = kwargs.get("filter_profile")
         if raw:
             try:
@@ -177,6 +191,24 @@ class PSTPrecisionScalping:
             return -1, "Pin bar bajista"
 
         return 0, ""
+
+    @staticmethod
+    def _trend_efficiency(close, lookback):
+        """
+        Kaufman Efficiency Ratio sobre M1: avance neto / recorrido bruto en la ventana.
+        1.0 = tendencia pura, 0.0 = ida-y-vuelta puro (whipsaw). A diferencia de ADX/Chop
+        M5 (miden calidad de tendencia a 5 min), esta mide ruido a la escala real de
+        entrada (M1), donde ocurre el whipsaw que el filtro M5 no detecta.
+        """
+        try:
+            seg = close.iloc[-lookback:] if len(close) >= lookback else close
+            if len(seg) < 2:
+                return 0.0
+            net = abs(float(seg.iloc[-1]) - float(seg.iloc[0]))
+            total = float(seg.diff().abs().sum())
+            return net / total if total > 0 else 0.0
+        except Exception:
+            return 0.0
 
     # ------------------------------------------------------------------ #
     #  Señal principal                                                   #
@@ -423,6 +455,25 @@ class PSTPrecisionScalping:
             # noise_mode 'soft'/'off' (p.ej. cripto): el ruido moderado no penaliza.
             factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — ruido tolerado", "score": 0})
 
+        # 7b. Filtro de ruido M1: eficiencia de tendencia (Kaufman ER) — GRADUADO, apagado por
+        # defecto (ver m1_eff_mode). Complementa el filtro M5: un cruce fresco con ADX M5
+        # "aceptable" puede seguir siendo whipsaw a la escala de 1 minuto en la que entra la
+        # estrategia; el filtro M5 no lo detecta porque promedia a 5x esa escala.
+        if prof.get("m1_eff_mode", "off") != "off":
+            eff_lookback = int(prof.get("m1_eff_lookback", 20))
+            m1_eff = self._trend_efficiency(close_m1, eff_lookback)
+            eff_clean = float(prof.get("m1_eff_clean", 0.25))
+            eff_ok = float(prof.get("m1_eff_ok", 0.10))
+            if m1_eff >= eff_clean:
+                score += 6
+                factors.append({"k": "Eficiencia M1", "v": f"{m1_eff:.2f} — micro-tendencia limpia ✅", "score": 6})
+            elif m1_eff < eff_ok:
+                pen = int(prof.get("m1_eff_penalty", 10))
+                score -= pen
+                factors.append({"k": "Eficiencia M1", "v": f"{m1_eff:.2f} — whipsaw M1 (ruido bajo la señal) ⚠️", "score": -pen})
+            else:
+                factors.append({"k": "Eficiencia M1", "v": f"{m1_eff:.2f} — aceptable", "score": 0})
+
         # 8. Anti-spike: vela parabólica o impulso agotado
         last_candle_range = self._last(high_m1) - self._last(low_m1)
         move_5candles = abs(self._last(close_m1) - self._last(close_m1.iloc[:-5])) if len(close_m1) >= 6 else 0.0
@@ -521,14 +572,18 @@ class PSTPrecisionScalping:
     # ------------------------------------------------------------------ #
     #  Salida dinámica                                                   #
     # ------------------------------------------------------------------ #
-    def check_exit_signal(self, mtf_data: dict, position_type: str) -> bool:
+    def check_exit_signal(self, mtf_data: dict, position_type: str, symbol: str = "", **kwargs) -> bool:
         """
-        Salida dinámica en dos vías:
+        Salida dinámica en dos vías (desactivable por símbolo/grupo vía filter_profile.vwap_exit):
           A) El precio cruza el VWAP de sesión en contra (con colchón ATR) Y el
              momentum EMA9/21 se ha girado en contra.
           B) Aparece un cruce fresco de EMA9/21 opuesto a la posición (giro claro).
         """
         try:
+            prof = self._resolve_profile(kwargs, self._is_crypto(symbol))
+            if str(prof.get("vwap_exit", "on")).lower() == "off":
+                return False
+
             df_m1 = mtf_data.get("m1")
             if df_m1 is None or len(df_m1) < 21:
                 return False

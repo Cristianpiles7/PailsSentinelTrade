@@ -1,6 +1,7 @@
 import sqlite3
 import aiosqlite
 import os
+import json
 import logging
 import asyncio
 from datetime import datetime
@@ -299,19 +300,37 @@ class PSTDatabase:
                 # ~38% (6.3→3.9R) con expectancy/Sharpe estables.
                 "COMMODITY": {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
                 "METAL":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
-                # INDEX/STOCK: sin datos en este bróker → default de experto coherente con lo
-                # validado (entry_threshold 72, noise on). Afinar con el harness cuando haya datos.
-                "INDEX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                # INDEX: entry_threshold 72 + vwap_exit OFF — validado en US500.cash: la salida
+                # dinámica corta rachas ganadoras antes de tiempo (A/B fiel), mejor dejarlas correr.
+                "INDEX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72, "vwap_exit": "off"}'},
+                # STOCK: sin A/B propio de vwap_exit (empate en AAPL) → se mantiene "on" por defecto.
                 "STOCK":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
-                # CRYPTO: ruido soft (impulsos con ADX bajo) + entry_threshold 72 — validado en
-                # BTC/ETH: recorta drawdown de ETH ~39% (32.8→20.1R) y sube su expectancy.
-                "CRYPTO":    {**_SCALP_BASE, "filter_profile": '{"noise_mode": "soft", "entry_threshold": 72}'},
+                # CRYPTO: ruido soft + entry_threshold 72 + vwap_exit OFF — validado en BTC/ETH:
+                # la salida dinámica corta rachas ganadoras antes de tiempo; sin ella, ETH reduce
+                # su pérdida ~29% y BTC/expectancy mejoran. Recorta drawdown de ETH ~39% (Fase 2).
+                "CRYPTO":    {**_SCALP_BASE, "filter_profile": '{"noise_mode": "soft", "entry_threshold": 72, "vwap_exit": "off"}'},
             }
             _SCALP_FALLBACK = {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'}
+
+            # Overrides de filter_profile por SÍMBOLO (no por grupo): para ajustes que el
+            # backtest fiel validó como específicos de un símbolo y que, aplicados a todo el
+            # grupo, perjudican a otros miembros. m1_eff_mode (filtro de eficiencia de
+            # tendencia M1 / whipsaw) ayuda a ETHUSD pero empeoró a BTCUSD en el A/B pese a
+            # ser ambos CRYPTO — A/B 10d motor fiel: expectancy -0.169R→-0.132R, total
+            # -30.5R→-18.5R en ETHUSD, sin tocar BTCUSD/resto del universo.
+            SYMBOL_FILTER_OVERRIDES = {
+                'ETHUSD': {'m1_eff_mode': 'on'},
+            }
 
             for sym, stype in master_config:
                 is_active = 1 if sym in enabled_by_default else 0
                 g = GROUP_DEFAULTS.get(stype, _SCALP_FALLBACK)
+                filter_profile = g['filter_profile']
+                sym_override = SYMBOL_FILTER_OVERRIDES.get(sym)
+                if sym_override:
+                    merged = json.loads(filter_profile)
+                    merged.update(sym_override)
+                    filter_profile = json.dumps(merged)
 
                 # 1. Asegurar símbolo en config global con multiplicadores visuales (Header)
                 await db.execute("""
@@ -332,19 +351,21 @@ class PSTDatabase:
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult, filter_profile)
                     VALUES (?, 'PST-PrecisionScalping', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (sym, is_active, g['risk_mode'], g['risk_value'], g['use_breakeven'], g['use_trailing'],
-                      g['be_mult'], g['ts_mult'], g['min_rr'], g['sl_mult'], g['tp_mult'], g['filter_profile']))
+                      g['be_mult'], g['ts_mult'], g['min_rr'], g['sl_mult'], g['tp_mult'], filter_profile))
 
                 # Backfill para BBDD ya existentes: fija el perfil de grupo si está vacío O si tiene
-                # un perfil AUTO-sembrado antiguo (solo noise_mode, sin entry_threshold). Así el
-                # tuneo (entry_threshold 72) llega a instalaciones previas. NO pisa ediciones
-                # manuales del usuario (que tendrían otro contenido).
+                # un perfil AUTO-sembrado de una fase anterior (solo noise_mode, o noise+entry_threshold
+                # sin vwap_exit). Así el tuneo llega a instalaciones previas. NO pisa ediciones
+                # manuales del usuario (que tendrían otro contenido, p.ej. distinto entry_threshold).
                 await db.execute("""
                     UPDATE symbol_strategies SET filter_profile = ?
                     WHERE symbol = ? AND strategy_name = 'PST-PrecisionScalping'
                       AND (filter_profile IS NULL OR filter_profile = ''
                            OR filter_profile = '{"noise_mode": "on"}'
-                           OR filter_profile = '{"noise_mode": "soft"}')
-                """, (g['filter_profile'], sym))
+                           OR filter_profile = '{"noise_mode": "soft"}'
+                           OR filter_profile = '{"noise_mode": "on", "entry_threshold": 72}'
+                           OR filter_profile = '{"noise_mode": "soft", "entry_threshold": 72}')
+                """, (filter_profile, sym))
 
             await db.commit()
             logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v3.0) en {self.db_path}")

@@ -91,7 +91,7 @@ const FILTER_KNOBS = [
   { k: "rsi_strong", label: "RSI fuerte", hint: "RSI M5 momentum fuerte (short usa 100-x)" },
   { k: "rsi_ok", label: "RSI ok", hint: "RSI M5 momentum aceptable" },
 ];
-const FILTER_KNOB_KEYS = FILTER_KNOBS.map(f => f.k).concat(["noise_mode"]);
+const FILTER_KNOB_KEYS = FILTER_KNOBS.map(f => f.k).concat(["noise_mode", "vwap_exit"]);
 
 function _parseFilter(raw) {
   let knobs = {}, advanced = {};
@@ -124,6 +124,7 @@ function _buildDraft(fm) {
     if (strat === "PST-PrecisionScalping") {
       const f = _parseFilter(s.filter_profile);
       d[strat].__noise = f.knobs.noise_mode || "on";
+      d[strat].__vwapExit = f.knobs.vwap_exit || "on";
       d[strat].__knobs = {};
       for (const kk of FILTER_KNOBS) d[strat].__knobs[kk.k] = f.knobs[kk.k] ?? "";
       d[strat].__advanced = f.advancedStr;
@@ -175,6 +176,7 @@ function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
       obj = { ...JSON.parse(sd.__advanced) }; // lanza si es inválido → capturado en save()
     }
     obj.noise_mode = sd.__noise;
+    obj.vwap_exit = sd.__vwapExit;
     for (const [k, v] of Object.entries(sd.__knobs || {})) {
       if (v !== "" && v !== null && v !== undefined) obj[k] = Number(v);
     }
@@ -313,6 +315,12 @@ function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
                 <Seg options={[{ value: 'on', label: 'On' }, { value: 'soft', label: 'Soft' }, { value: 'off', label: 'Off' }]}
                   value={sd.__noise} onChange={v => setField(tab, '__noise', v)} />
                 <span className="text-[8px] text-zinc-600 italic">on=penaliza ruido · soft=solo veto extremo · off=sin penalización</span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Salida VWAP dinámica</span>
+                <Seg options={[{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }]}
+                  value={sd.__vwapExit} onChange={v => setField(tab, '__vwapExit', v)} />
+                <span className="text-[8px] text-zinc-600 italic">on=cierra si el precio cruza VWAP en contra · off=deja correr el trade (mejor en cripto/índices, validado)</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {FILTER_KNOBS.map(kk => (
@@ -1509,7 +1517,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.5.2 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.5.3 SMC</span>
 
 
 
@@ -3620,6 +3628,7 @@ function App() {
                           const isEnabled = stratData.is_active ? true : ["PST-RangeBreaker"].includes(strat);
                           const displayName = STRAT_NAME_MAP[strat] || strat.replace("PST-", "").replace(/-/g, " ");
                           let noiseMode = null;
+                          let vwapExitOff = false;
                           // Para PrecisionScalping el umbral real de entrada es entry_threshold
                           // (del filter_profile), no la columna score_threshold. Mostramos ese.
                           let scoreVal = stratData.score_threshold ?? '—';
@@ -3627,6 +3636,7 @@ function App() {
                             try {
                               const fp = JSON.parse(stratData.filter_profile);
                               noiseMode = fp.noise_mode;
+                              vwapExitOff = String(fp.vwap_exit || 'on').toLowerCase() === 'off';
                               scoreVal = fp.entry_threshold ?? '—';   // '—' = usa el default de la estrategia
                             } catch { /* noop */ }
                           }
@@ -3636,6 +3646,7 @@ function App() {
                             { label: 'TP', val: strat === 'PST-PrecisionScalping' ? 'TEC' : (stratData.tp_mult ?? '—'), color: 'emerald' },
                             { label: 'SCORE', val: scoreVal, color: 'amber' },
                             ...(noiseMode ? [{ label: 'NOISE', val: String(noiseMode).toUpperCase(), color: 'indigo' }] : []),
+                            ...(vwapExitOff ? [{ label: 'VWAP-EXIT', val: 'OFF', color: 'rose' }] : []),
                           ];
                           return (
                             <div key={strat} className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${isEnabled ? 'bg-indigo-500/[0.06] border-indigo-500/25' : 'bg-transparent border-zinc-800/40 opacity-50'}`}>
