@@ -41,9 +41,11 @@ class PSTDatabase:
             async with db.execute("SELECT COUNT(*) FROM symbols_config") as cursor:
                 count = (await cursor.fetchone())[0]
                 if count == 0:
+                    # Universo activo por defecto (is_active=1 por la columna). Debe coincidir con
+                    # enabled_by_default de la siembra maestra para no dejar símbolos activos de más.
                     default_symbols = [
                         ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'),
-                        ('XAUUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
+                        ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
                         ('US500.cash', 'INDEX')
                     ]
                     await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
@@ -271,12 +273,14 @@ class PSTDatabase:
                 ('GOOG', 'STOCK'), ('META', 'STOCK'), ('MSFT', 'STOCK')
             ]
             
-            # Lista de símbolos que deben estar DESACTIVADOS (is_active=0) por defecto (Req User v1.4.4)
-            disabled_by_default = [
-                'XNGUSD', 'XTIUSD', 'AUDUSD', 'EURGBP', 'EURJPY', 'NZDUSD', 
-                'USDCAD', 'USDCHF', 'USDJPY', 'GER40.cash', 'NAS100.cash', 
-                'UK100.cash', 'US30'
-            ]
+            # Universo ACTIVO por defecto (whitelist). Solo estos arrancan operando; el resto
+            # queda desactivado hasta activarlo desde el Matrix Editor. Son los símbolos con
+            # perfil de scalping tuneado y validado en el harness fiel (entry_threshold 72).
+            enabled_by_default = {
+                'EURUSD', 'GBPUSD',           # FOREX
+                'BTCUSD', 'ETHUSD',           # CRYPTO
+                'US500.cash',                 # INDEX
+            }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
             # Fuente única de verdad para la creación desde cero: cada grupo arranca con su set
@@ -286,17 +290,25 @@ class PSTDatabase:
             _SCALP_BASE = dict(risk_mode='MONEY', risk_value=7.0, use_breakeven=1, use_trailing=0,
                                be_mult=3.5, ts_mult=2.5, min_rr=1.8, sl_mult=1.6, tp_mult=2.5)
             GROUP_DEFAULTS = {
-                "FOREX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
-                "COMMODITY": {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
-                "METAL":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
-                "INDEX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
-                "STOCK":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
-                "CRYPTO":    {**_SCALP_BASE, "filter_profile": '{"noise_mode": "soft"}'},
+                # FOREX: entry_threshold 72 (más selectivo) — validado en harness fiel sobre
+                # EURUSD/GBPUSD/USDJPY: sube WR y baja drawdown en los 3, rescata USDJPY.
+                "FOREX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                # COMMODITY/METAL: entry_threshold 72 — validado en XAUUSD: recorta drawdown
+                # ~38% (6.3→3.9R) con expectancy/Sharpe estables.
+                "COMMODITY": {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                "METAL":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                # INDEX/STOCK: sin datos en este bróker → default de experto coherente con lo
+                # validado (entry_threshold 72, noise on). Afinar con el harness cuando haya datos.
+                "INDEX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                "STOCK":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                # CRYPTO: ruido soft (impulsos con ADX bajo) + entry_threshold 72 — validado en
+                # BTC/ETH: recorta drawdown de ETH ~39% (32.8→20.1R) y sube su expectancy.
+                "CRYPTO":    {**_SCALP_BASE, "filter_profile": '{"noise_mode": "soft", "entry_threshold": 72}'},
             }
-            _SCALP_FALLBACK = {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'}
+            _SCALP_FALLBACK = {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'}
 
             for sym, stype in master_config:
-                is_active = 0 if sym in disabled_by_default else 1
+                is_active = 1 if sym in enabled_by_default else 0
                 g = GROUP_DEFAULTS.get(stype, _SCALP_FALLBACK)
 
                 # 1. Asegurar símbolo en config global con multiplicadores visuales (Header)

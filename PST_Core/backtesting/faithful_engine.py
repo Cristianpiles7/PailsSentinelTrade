@@ -34,10 +34,13 @@ except Exception:  # ejecución fuera del paquete (carga suelta)
 
 
 class FaithfulScalpingEngine:
-    SL_MULT = 1.25            # SL scalper por ATR (fallback)
-    MIN_RR = 1.2             # R:R mínimo (auto-fix)
+    # Defaults alineados con el seed de PrecisionScalping (symbol_strategies) para que el
+    # backtest refleje lo que corre en real. Sobreescribibles por símbolo vía el profile
+    # (sl_mult / min_rr / be_mult), igual que en la BBDD.
+    SL_MULT = 1.6            # SL scalper por ATR (fallback si no hay Donchian) — seed sl_mult
+    MIN_RR = 1.8             # R:R mínimo (auto-fix) — seed min_rr, executor scalping = max(min_rr,1.2)
     MIN_SL_PCT = 0.0008      # suelo de SL (0.08% del precio) — espejo executor
-    SAFE_BE_MULT = 1.5       # BE a 1.5·ATR (scalper)
+    SAFE_BE_MULT = 3.5       # BE a 3.5·ATR (scalper) — executor safe_be = max(1.5, be_mult=3.5)
     HOLD_SECS = 120          # sostenimiento mínimo antes de salida VWAP
     TIMEOUT_SECS = 30 * 60   # cierre por estancamiento
 
@@ -143,10 +146,11 @@ class FaithfulScalpingEngine:
         if tp == 0:
             tp = fill + direction * tp_mult * atr
 
-        # auto-fix R:R mínimo (estirar TP)
+        # auto-fix R:R mínimo (estirar TP) — min_rr por símbolo o default (seed 1.8)
+        min_rr = float(profile.get("min_rr") or self.MIN_RR)
         sl_dist = abs(fill - sl)
-        if sl_dist > 0 and abs(tp - fill) / sl_dist < self.MIN_RR:
-            tp = fill + direction * sl_dist * self.MIN_RR
+        if sl_dist > 0 and abs(tp - fill) / sl_dist < min_rr:
+            tp = fill + direction * sl_dist * min_rr
 
         t = BacktestTrade(
             entry_time=bar["time"], exit_time=None, symbol=symbol, strategy="PST-PrecisionScalping",
@@ -160,6 +164,8 @@ class FaithfulScalpingEngine:
         t._partial = False
         t._be = False
         t._be_pad = be_pad
+        # BE por símbolo: executor usa max(1.5, be_mult) para scalpers
+        t._be_mult = max(1.5, float(profile.get("be_mult") or self.SAFE_BE_MULT))
         return t
 
     # ------------------------------------------------------------------ gestión
@@ -193,9 +199,10 @@ class FaithfulScalpingEngine:
                 t.sl_price = fill + d * t._be_pad   # SL a breakeven con padding
                 t.exit_reason = "PARTIAL_1R"
 
-        # 3) Breakeven a safe_be_mult·ATR (si aún no hubo parcial/BE)
+        # 3) Breakeven a be_mult·ATR (si aún no hubo parcial/BE)
         if not t._be and t.atr > 0:
-            reached_be = (h >= fill + self.SAFE_BE_MULT * t.atr) if d == 1 else (l <= fill - self.SAFE_BE_MULT * t.atr)
+            be_atr = getattr(t, "_be_mult", self.SAFE_BE_MULT)
+            reached_be = (h >= fill + be_atr * t.atr) if d == 1 else (l <= fill - be_atr * t.atr)
             if reached_be:
                 t.sl_price = fill + d * t._be_pad
                 t._be = True
