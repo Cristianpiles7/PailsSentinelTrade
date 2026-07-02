@@ -73,6 +73,273 @@ const api = {
 
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 3 · Matrix Editor: modal de configuración por símbolo
+// ─────────────────────────────────────────────────────────────────────────────
+const MODAL_STRATS = ["PST-RangeBreaker", "PST-PrecisionScalping"];
+const MODAL_STRAT_LABELS = { "PST-RangeBreaker": "Range Breaker", "PST-PrecisionScalping": "Precision Scalp" };
+// Knobs de filter_profile expuestos (solo PrecisionScalping)
+const FILTER_KNOBS = [
+  { k: "entry_threshold", label: "Entry Score", hint: "Score mínimo para entrar (régimen normal)" },
+  { k: "entry_threshold_volatile", label: "Entry Score · Volátil", hint: "Score mínimo en régimen VOLÁTIL" },
+  { k: "adx_clean", label: "ADX limpio", hint: "ADX ≥ y Chop ≤ límite → tendencia limpia (+6)" },
+  { k: "chop_clean", label: "Chop limpio", hint: "Chop ≤ este valor → tendencia limpia" },
+  { k: "adx_ok", label: "ADX ok", hint: "ADX ≥ este valor → aceptable (neutro)" },
+  { k: "chop_ok", label: "Chop ok", hint: "Chop ≤ este valor → aceptable (neutro)" },
+  { k: "adx_extreme", label: "ADX extremo", hint: "ADX < y Chop > → lateral extrema (veto)" },
+  { k: "chop_extreme", label: "Chop extremo", hint: "Chop > y ADX < → lateral extrema (veto)" },
+  { k: "rsi_strong", label: "RSI fuerte", hint: "RSI M5 momentum fuerte (short usa 100-x)" },
+  { k: "rsi_ok", label: "RSI ok", hint: "RSI M5 momentum aceptable" },
+];
+const FILTER_KNOB_KEYS = FILTER_KNOBS.map(f => f.k).concat(["noise_mode"]);
+
+function _parseFilter(raw) {
+  let knobs = {}, advanced = {};
+  try {
+    const o = raw ? JSON.parse(raw) : {};
+    for (const [k, v] of Object.entries(o)) {
+      if (FILTER_KNOB_KEYS.includes(k)) knobs[k] = v; else advanced[k] = v;
+    }
+  } catch { /* ignora perfil corrupto */ }
+  return { knobs, advancedStr: Object.keys(advanced).length ? JSON.stringify(advanced) : "" };
+}
+
+function _buildDraft(fm) {
+  const d = {};
+  for (const strat of MODAL_STRATS) {
+    const s = fm[strat] || {};
+    d[strat] = {
+      is_active: !!s.is_active,
+      risk_mode: s.risk_mode || "MONEY",
+      risk_value: s.risk_value ?? "",
+      sl_mult: s.sl_mult ?? "",
+      tp_mult: s.tp_mult ?? "",
+      score_threshold: s.score_threshold ?? "",
+      use_breakeven: !!s.use_breakeven,
+      be_mult: s.be_mult ?? "",
+      use_trailing: !!s.use_trailing,
+      ts_mult: s.ts_mult ?? "",
+      min_rr: s.min_rr ?? "",
+    };
+    if (strat === "PST-PrecisionScalping") {
+      const f = _parseFilter(s.filter_profile);
+      d[strat].__noise = f.knobs.noise_mode || "on";
+      d[strat].__knobs = {};
+      for (const kk of FILTER_KNOBS) d[strat].__knobs[kk.k] = f.knobs[kk.k] ?? "";
+      d[strat].__advanced = f.advancedStr;
+    }
+  }
+  return d;
+}
+
+// Campos reutilizables (nivel de módulo → identidad estable, sin pérdida de foco)
+const Num = ({ label, value, onChange, hint, ph, color = "text-white", disabled }) => (
+  <label className="flex flex-col gap-1" title={hint || ""}>
+    <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">{label}</span>
+    <input type="number" step="0.1" value={value} placeholder={ph || ""} disabled={disabled}
+      onChange={e => onChange(e.target.value)}
+      className={`bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[12px] font-black ${color} outline-none focus:border-indigo-500/50 disabled:opacity-40 disabled:cursor-not-allowed`} />
+  </label>
+);
+const Toggle = ({ label, on, onClick, hint }) => (
+  <button onClick={onClick} title={hint || ""}
+    className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border transition-all ${on ? 'bg-indigo-500/10 border-indigo-500/40' : 'bg-black/30 border-white/10'}`}>
+    <span className={`text-[9px] font-black uppercase tracking-widest ${on ? 'text-indigo-300' : 'text-zinc-500'}`}>{label}</span>
+    <div className={`w-8 h-4 rounded-full relative transition-all ${on ? 'bg-indigo-600' : 'bg-zinc-800'}`}>
+      <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${on ? 'right-0.5' : 'left-0.5'}`} />
+    </div>
+  </button>
+);
+const Seg = ({ options, value, onChange }) => (
+  <div className="flex items-center bg-black/40 p-1 rounded-xl border border-white/10 gap-1">
+    {options.map(o => (
+      <button key={o.value} onClick={() => onChange(o.value)}
+        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${value === o.value ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>
+        {o.label}
+      </button>
+    ))}
+  </div>
+);
+
+function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
+  const [tab, setTab] = useState("PST-PrecisionScalping");
+  const [draft, setDraft] = useState(() => _buildDraft(symData.factors_map || {}));
+  const [saving, setSaving] = useState(false);
+
+  const setField = (strat, field, val) => setDraft(p => ({ ...p, [strat]: { ...p[strat], [field]: val } }));
+  const setKnob = (strat, k, val) => setDraft(p => ({ ...p, [strat]: { ...p[strat], __knobs: { ...p[strat].__knobs, [k]: val } } }));
+
+  const buildFilterProfile = (sd) => {
+    let obj = {};
+    if (sd.__advanced && sd.__advanced.trim()) {
+      obj = { ...JSON.parse(sd.__advanced) }; // lanza si es inválido → capturado en save()
+    }
+    obj.noise_mode = sd.__noise;
+    for (const [k, v] of Object.entries(sd.__knobs || {})) {
+      if (v !== "" && v !== null && v !== undefined) obj[k] = Number(v);
+    }
+    return JSON.stringify(obj);
+  };
+
+  const numOrNull = (v) => (v === "" || v === null || v === undefined ? null : Number(v));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      for (const strat of MODAL_STRATS) {
+        const sd = draft[strat];
+        const fields = {
+          is_active: sd.is_active,
+          risk_mode: sd.risk_mode,
+          risk_value: numOrNull(sd.risk_value),
+          sl_mult: numOrNull(sd.sl_mult),
+          tp_mult: numOrNull(sd.tp_mult),
+          score_threshold: numOrNull(sd.score_threshold),
+          use_breakeven: sd.use_breakeven,
+          be_mult: numOrNull(sd.be_mult),
+          use_trailing: sd.use_trailing,
+          ts_mult: numOrNull(sd.ts_mult),
+          min_rr: numOrNull(sd.min_rr),
+        };
+        if (strat === "PST-PrecisionScalping") fields.filter_profile = buildFilterProfile(sd);
+        await api.post(`${API_BASE}/config/strategy`, { symbol, strategy: strat, ...fields });
+      }
+      addToast(`${symbol} configurado`, "success");
+      onSaved();
+      onClose();
+    } catch (e) {
+      const msg = e?.response?.data?.detail || (e instanceof SyntaxError ? "JSON avanzado inválido" : e.message) || "Error al guardar";
+      addToast(msg, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sd = draft[tab];
+  const isScalp = tab === "PST-PrecisionScalping";
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#020202]/90 backdrop-blur-md" onClick={onClose}>
+      <motion.div initial={{ scale: 0.9, opacity: 0, y: 30 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 30 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-4xl bg-[#050505] border border-white/10 rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 bg-indigo-500/10 rounded-2xl flex items-center justify-center border border-indigo-500/20">
+              <Settings className="text-indigo-400" size={20} />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-white italic tracking-tighter uppercase">Configurar {symbol}</h2>
+              <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-0.5">{symData.type || ""} · aplica en ~10s</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-3 bg-zinc-900 border border-white/5 rounded-2xl text-zinc-500 hover:text-white hover:border-rose-500/30 transition-all">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Tabs de estrategia */}
+        <div className="px-8 pt-5 flex items-center gap-2">
+          {MODAL_STRATS.map(st => (
+            <button key={st} onClick={() => setTab(st)}
+              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === st ? 'bg-indigo-600 text-white' : 'bg-white/[0.03] text-zinc-500 hover:text-zinc-300'}`}>
+              {MODAL_STRAT_LABELS[st]}
+              <span className={`ml-2 inline-block w-1.5 h-1.5 rounded-full ${draft[st].is_active ? 'bg-emerald-400' : 'bg-zinc-700'}`} />
+            </button>
+          ))}
+        </div>
+
+        {/* Cuerpo */}
+        <div className="flex-1 p-8 overflow-y-auto space-y-6">
+          <Toggle label="Estrategia activa para este símbolo" on={sd.is_active} onClick={() => setField(tab, 'is_active', !sd.is_active)} />
+
+          {/* Riesgo */}
+          <div className="space-y-3">
+            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Riesgo</p>
+            <div className="flex items-end gap-4 flex-wrap">
+              <Seg options={[{ value: 'LOTS', label: 'Lotes' }, { value: 'PCT', label: '%' }, { value: 'MONEY', label: '€' }]}
+                value={sd.risk_mode} onChange={v => setField(tab, 'risk_mode', v)} />
+              <Num label="Valor de riesgo" value={sd.risk_value} onChange={v => setField(tab, 'risk_value', v)} ph="auto" color="text-indigo-300" hint="Riesgo por operación en la unidad elegida" />
+            </div>
+          </div>
+
+          {/* SL / TP */}
+          <div className="space-y-3">
+            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Stop Loss / Take Profit</p>
+            <div className="grid grid-cols-3 gap-4">
+              <Num label="SL × ATR" value={sd.sl_mult} onChange={v => setField(tab, 'sl_mult', v)} color="text-rose-300" hint="Multiplicador de Stop Loss (fallback si no hay SL estructural)" />
+              <Num label={isScalp ? "TP (usa técnico)" : "TP × ATR"} value={sd.tp_mult} onChange={v => setField(tab, 'tp_mult', v)} color="text-emerald-300" disabled={isScalp} hint={isScalp ? "PrecisionScalping usa TP técnico/banda VWAP" : "Multiplicador de Take Profit"} />
+              <Num label="Min R:R" value={sd.min_rr} onChange={v => setField(tab, 'min_rr', v)} color="text-indigo-300" hint="Ratio R:R mínimo para ejecutar" />
+            </div>
+          </div>
+
+          {/* Gestión */}
+          <div className="space-y-3">
+            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Gestión de la posición</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-end gap-3">
+                <Toggle label="Breakeven" on={sd.use_breakeven} onClick={() => setField(tab, 'use_breakeven', !sd.use_breakeven)} />
+                <Num label="BE × ATR" value={sd.be_mult} onChange={v => setField(tab, 'be_mult', v)} color="text-amber-300" disabled={!sd.use_breakeven} />
+              </div>
+              <div className="flex items-end gap-3">
+                <Toggle label="Trailing" on={sd.use_trailing} onClick={() => setField(tab, 'use_trailing', !sd.use_trailing)} />
+                <Num label="TS × ATR" value={sd.ts_mult} onChange={v => setField(tab, 'ts_mult', v)} color="text-emerald-300" disabled={!sd.use_trailing} />
+              </div>
+            </div>
+          </div>
+
+          {/* Señal */}
+          <div className="space-y-3">
+            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Señal</p>
+            <div className="grid grid-cols-3 gap-4">
+              <Num label="Score threshold" value={sd.score_threshold} onChange={v => setField(tab, 'score_threshold', v)} color="text-amber-300" hint="Score mínimo del orquestador para ejecutar" />
+            </div>
+          </div>
+
+          {/* Filtros (solo PrecisionScalping) */}
+          {isScalp && (
+            <div className="space-y-3 pt-2 border-t border-white/5">
+              <div className="flex items-center gap-2">
+                <Zap size={13} className="text-indigo-400" />
+                <p className="text-[9px] font-black text-indigo-300 uppercase tracking-[0.25em]">Filtros de precisión (filter_profile)</p>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Filtro de ruido</span>
+                <Seg options={[{ value: 'on', label: 'On' }, { value: 'soft', label: 'Soft' }, { value: 'off', label: 'Off' }]}
+                  value={sd.__noise} onChange={v => setField(tab, '__noise', v)} />
+                <span className="text-[8px] text-zinc-600 italic">on=penaliza ruido · soft=solo veto extremo · off=sin penalización</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {FILTER_KNOBS.map(kk => (
+                  <Num key={kk.k} label={kk.label} value={sd.__knobs[kk.k]} onChange={v => setKnob(tab, kk.k, v)} ph="def" hint={kk.hint} color="text-zinc-200" />
+                ))}
+              </div>
+              <label className="flex flex-col gap-1">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">JSON avanzado (claves no expuestas · se fusiona al guardar)</span>
+                <textarea rows={2} value={sd.__advanced} onChange={e => setField(tab, '__advanced', e.target.value)}
+                  placeholder='{"noise_penalty": 10}'
+                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-[11px] font-mono text-zinc-300 outline-none focus:border-indigo-500/50 resize-none" />
+              </label>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-8 py-5 border-t border-white/5 flex items-center justify-end gap-3 bg-white/[0.02]">
+          <button onClick={onClose} className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-white border border-white/10 transition-all">Cancelar</button>
+          <button onClick={save} disabled={saving}
+            className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${saving ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/20'}`}>
+            {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+            {saving ? 'Guardando' : 'Guardar configuración'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function App() {
 
 
@@ -138,7 +405,8 @@ function App() {
 
   const [historyTrades, setHistoryTrades] = useState([])
 
-
+  // Fase 3: símbolo seleccionado para el modal de configuración del Matrix Editor
+  const [configModal, setConfigModal] = useState(null)
 
   const [activeStrategyTab, setActiveStrategyTab] = useState(null)
 
@@ -1238,7 +1506,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.4.0 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.5.0 SMC</span>
 
 
 
@@ -3322,206 +3590,67 @@ function App() {
                   const allStratNames = CORE_STRATS; // Forzamos a que siempre aparezcan estas dos
 
                   return (
-                    <div key={s.symbol} className={`bg-[#050505] border rounded-[1.5rem] p-3 flex flex-col gap-2 transition-all duration-300 hover:shadow-[0_0_30px_rgba(99,102,241,0.15)] ${s.is_active
-                      ? 'border-indigo-500/40'
-                      : 'border-zinc-800/40 opacity-50'
-                      }`}>
-
-                      {/* Nano Header - Larger symbols */}
-                      <div className="flex justify-between items-center mb-0.5">
+                    <div
+                      key={s.symbol}
+                      onClick={() => setConfigModal(s.symbol)}
+                      className={`group bg-[#050505] border rounded-[1.5rem] p-4 flex flex-col gap-3 cursor-pointer transition-all duration-300 hover:border-indigo-500/60 hover:shadow-[0_0_30px_rgba(99,102,241,0.15)] ${s.is_active ? 'border-indigo-500/40' : 'border-zinc-800/40 opacity-60'}`}
+                    >
+                      {/* Header: símbolo + tipo + toggle rápido */}
+                      <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2">
                           <Activity size={16} className={s.is_active ? 'text-indigo-400 animate-pulse' : 'text-zinc-600'} />
                           <h3 className="text-base font-black text-white italic tracking-tighter">{s.symbol}</h3>
+                          {s.type ? <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest px-1.5 py-0.5 bg-white/5 rounded">{s.type}</span> : null}
                         </div>
                         <button
-                          onClick={() => toggleSymbolStatus(s.symbol, s.is_active)}
+                          onClick={(e) => { e.stopPropagation(); toggleSymbolStatus(s.symbol, s.is_active); }}
                           className={`w-9 h-4.5 rounded-full relative transition-all ${s.is_active ? 'bg-indigo-600' : 'bg-zinc-800'}`}
                         >
                           <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${s.is_active ? 'right-0.5' : 'left-0.5'}`} />
                         </button>
                       </div>
 
-                      {/* Global Params Row: Larger fonts */}
-                      <div className="flex items-center justify-between gap-1 bg-zinc-900/40 p-2 rounded-xl border border-zinc-800/50">
-                        {[
-                          { id: 'sl_mult', label: 'SL', color: 'rose' },
-                          { id: 'tp_mult', label: 'TP', color: 'emerald' },
-                          { id: 'score_threshold', label: 'SCORE', color: 'amber' }
-                        ].map(p => (
-                          <div key={p.id} className="flex-1 flex items-center justify-center gap-1.5">
-                            <span className="text-[9px] font-black text-zinc-500 uppercase">{p.label}</span>
-                            <input
-                              type="text"
-                              value={params[p.id]}
-                              onChange={(e) => updateParam(s.symbol, p.id, parseFloat(e.target.value) || 0)}
-                              className={`w-10 bg-transparent text-[11px] font-black text-${p.color}-500 text-center outline-none`}
-                            />
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Strategy Controller: Core logic for defaults */}
-                      <div className="flex-1 min-h-[160px] flex flex-col bg-black/50 rounded-xl border border-zinc-800/40 p-2.5 overflow-hidden">
-                        <div className="flex items-center justify-between mb-2.5 px-1">
-                          <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Active Systems</span>
-                          <span className="text-[9px] font-bold text-indigo-500/40 uppercase">{allStratNames.length}</span>
-                        </div>
-
-                        <div className="flex-1 overflow-y-auto no-scrollbar space-y-1.5 pr-1">
-                          {allStratNames.map(strat => {
-                            const stratData = symbolStrats[strat];
-
-                            // Lógica de activación por defecto
-                            const isCore = ["PST-RangeBreaker"].includes(strat); // RangeBreaker activa por defecto
-                            const isEnabled = stratData ? (!!stratData.is_active) : isCore;
-
-                            // Riesgo por defecto para TODAS las estrategias: 25€ (MONEY)
-                            const sRiskMode = stratData?.risk_mode || 'MONEY';
-                            const sRiskVal = stratData?.risk_value || 25;
-
-                            const displayName = STRAT_NAME_MAP[strat] || strat.replace("PST-", "").replace(/-/g, " ");
-
-                            return (
-                              <div key={strat} className={`group/strat flex flex-col p-2 rounded-lg border transition-all ${isEnabled ? 'bg-indigo-500/[0.06] border-indigo-500/30 shadow-md' : 'bg-transparent border-zinc-800/30 opacity-40 hover:opacity-100'}`}>
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className={`text-[10px] font-black uppercase truncate max-w-[130px] ${isEnabled ? 'text-white' : 'text-zinc-500'}`}>{displayName}</span>
-                                  <button
-                                    onClick={() => updateStrategyConfig(s.symbol, strat, 'is_active', !isEnabled)}
-                                    className={`w-6 h-3 rounded-full relative transition-all ${isEnabled ? 'bg-indigo-500' : 'bg-zinc-800'}`}
-                                  >
-                                    <div className={`absolute top-0.5 w-2 h-2 rounded-full bg-white transition-all ${isEnabled ? 'right-0.5' : 'left-0.5'}`} />
-                                  </button>
-                                </div>
-
-                                <div className="flex items-center justify-between gap-0.5">
-                                  <div className="flex items-center bg-black/60 p-0.5 rounded-md border border-zinc-800/60">
-                                    {['L', '%', '€'].map((mLabel, idx) => {
-                                      const mVal = idx === 0 ? 'LOTS' : idx === 1 ? 'PCT' : 'MONEY';
-                                      const isSelected = sRiskMode === mVal;
-                                      return (
-                                        <button
-                                          key={mLabel}
-                                          onClick={() => updateStrategyConfig(s.symbol, strat, 'risk_mode', isSelected ? null : mVal)}
-                                          className={`px-1 py-0.5 rounded-sm text-[8px] font-black transition-all ${isSelected ? 'bg-indigo-600 text-white' : 'text-zinc-600 hover:text-zinc-400'}`}
-                                        >
-                                          {mLabel}
-                                        </button>
-                                      );
-                                    })}
-                                    <input
-                                      type="number"
-                                      placeholder="Auto"
-                                      value={sRiskVal || ""}
-                                      onChange={(e) => updateStrategyConfig(s.symbol, strat, 'risk_value', parseFloat(e.target.value) || null)}
-                                      className="w-8 bg-transparent text-[10px] font-black text-indigo-400 text-right outline-none placeholder:text-zinc-800"
-                                    />
-                                  </div>
-
-                                  <div className="flex items-center gap-0.5">
-                                    <div className={`flex items-center gap-0.5 rounded-md border transition-all ${stratData?.use_breakeven ? 'bg-amber-500/10 border-amber-500/30' : 'border-zinc-800'}`}>
-                                      <button
-                                        onClick={() => updateStrategyConfig(s.symbol, strat, 'use_breakeven', !(stratData?.use_breakeven))}
-                                        title="Break-Even (BE)"
-                                        className={`px-1 py-0.5 rounded-sm text-[8px] font-black transition-all ${stratData?.use_breakeven ? 'text-amber-400' : 'bg-transparent text-zinc-600 hover:text-amber-500/50'}`}
-                                      >
-                                        BE
-                                      </button>
-                                      {stratData?.use_breakeven ? (
-                                        <input
-                                          type="number"
-                                          step="0.1"
-                                          defaultValue={stratData?.be_mult || ""}
-                                          placeholder="2.0"
-                                          onBlur={(e) => updateStrategyConfig(s.symbol, strat, 'be_mult', parseFloat(e.target.value) || null)}
-                                          onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
-                                          title="BE Multiplier (ATR)"
-                                          className="w-8 bg-black/40 text-[9px] font-black text-amber-300 text-center outline-none px-0.5 border-l border-amber-500/30 rounded-r-sm shadow-inner cursor-text"
-                                        />
-                                      ) : null}
-                                    </div>
-
-                                    <div className={`flex items-center gap-0.5 rounded-md border transition-all ${stratData?.use_trailing ? 'bg-emerald-500/10 border-emerald-500/30' : 'border-zinc-800'}`}>
-                                      <button
-                                        onClick={() => updateStrategyConfig(s.symbol, strat, 'use_trailing', !(stratData?.use_trailing))}
-                                        title="Trailing Stop (TS)"
-                                        className={`px-1 py-0.5 rounded-sm text-[8px] font-black transition-all ${stratData?.use_trailing ? 'text-emerald-400' : 'bg-transparent text-zinc-600 hover:text-emerald-500/50'}`}
-                                      >
-                                        TS
-                                      </button>
-                                      {stratData?.use_trailing ? (
-                                        <input
-                                          type="number"
-                                          step="0.1"
-                                          defaultValue={stratData?.ts_mult || ""}
-                                          placeholder="2.5"
-                                          onBlur={(e) => updateStrategyConfig(s.symbol, strat, 'ts_mult', parseFloat(e.target.value) || null)}
-                                          onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
-                                          title="TS Multiplier (ATR)"
-                                          className="w-8 bg-black/40 text-[9px] font-black text-emerald-300 text-center outline-none px-0.5 border-l border-emerald-500/30 rounded-r-sm shadow-inner cursor-text"
-                                        />
-                                      ) : null}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex items-center gap-0.5 text-[9px] font-black ml-auto">
-                                    <div className="flex items-center gap-0.5 bg-black/20 px-0.5 py-0.5 rounded border border-white/5" title="Score Threshold Filter">
-                                      <span className="text-[6px] text-zinc-500 uppercase font-black">SC</span>
-                                      <input
-                                        type="text"
-                                        value={stratData?.score_threshold || ""}
-                                        placeholder={params.score_threshold}
-                                        onChange={(e) => updateStrategyConfig(s.symbol, strat, 'score_threshold', parseFloat(e.target.value) || null)}
-                                        className="w-3 bg-transparent text-amber-400 outline-none text-center text-[8px] font-black"
-                                      />
-                                    </div>
-                                    <div className="flex items-center gap-0.5 bg-black/20 px-0.5 py-0.5 rounded border border-white/5" title="Min Risk:Reward Filter">
-                                      <span className="text-[6px] text-zinc-500 uppercase font-black">R:R</span>
-                                      <input
-                                        type="text"
-                                        value={stratData?.min_rr || ""}
-                                        placeholder="1.5"
-                                        onChange={(e) => updateStrategyConfig(s.symbol, strat, 'min_rr', parseFloat(e.target.value) || null)}
-                                        className="w-3 bg-transparent text-indigo-400 outline-none text-center text-[8px] font-black"
-                                      />
-                                    </div>
-                                    <input
-                                      type="text"
-                                      value={stratData?.sl_mult || ""}
-                                      placeholder={params.sl_mult}
-                                      onChange={(e) => updateStrategyConfig(s.symbol, strat, 'sl_mult', parseFloat(e.target.value) || null)}
-                                      className="w-3 bg-transparent text-rose-500 outline-none text-center"
-                                    />
-                                    <span className="text-zinc-700">/</span>
-                                    <input
-                                      type="text"
-                                      value={stratData?.tp_mult || ""}
-                                      placeholder={params.tp_mult}
-                                      readOnly={strat === "PST-PrecisionScalping"}
-                                      title={strat === "PST-PrecisionScalping" ? "Usa TP Técnico" : "TP Multiplier"}
-                                      onClick={(e) => {}}
-                                      onChange={(e) => updateStrategyConfig(s.symbol, strat, 'tp_mult', parseFloat(e.target.value) || null)}
-                                      className={`w-3 bg-transparent outline-none text-center ${strat === "PST-PrecisionScalping" ? 'text-zinc-600 cursor-not-allowed' : 'text-emerald-500'}`}
-                                    />
-                                  </div>
-                                </div>
+                      {/* Resumen por estrategia (solo lectura) */}
+                      <div className="flex flex-col gap-2">
+                        {allStratNames.map(strat => {
+                          const stratData = symbolStrats[strat] || {};
+                          const isEnabled = stratData.is_active ? true : ["PST-RangeBreaker"].includes(strat);
+                          const displayName = STRAT_NAME_MAP[strat] || strat.replace("PST-", "").replace(/-/g, " ");
+                          let noiseMode = null;
+                          if (strat === "PST-PrecisionScalping" && stratData.filter_profile) {
+                            try { noiseMode = JSON.parse(stratData.filter_profile).noise_mode; } catch { /* noop */ }
+                          }
+                          const stats = [
+                            { label: 'RISK', val: `${stratData.risk_value ?? '—'}${stratData.risk_mode === 'MONEY' ? '€' : stratData.risk_mode === 'PCT' ? '%' : ''}`, color: 'indigo' },
+                            { label: 'SL', val: stratData.sl_mult ?? '—', color: 'rose' },
+                            { label: 'TP', val: strat === 'PST-PrecisionScalping' ? 'TEC' : (stratData.tp_mult ?? '—'), color: 'emerald' },
+                            { label: 'SCORE', val: stratData.score_threshold ?? '—', color: 'amber' },
+                            ...(noiseMode ? [{ label: 'NOISE', val: String(noiseMode).toUpperCase(), color: 'indigo' }] : []),
+                          ];
+                          return (
+                            <div key={strat} className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${isEnabled ? 'bg-indigo-500/[0.06] border-indigo-500/25' : 'bg-transparent border-zinc-800/40 opacity-50'}`}>
+                              <div className="flex items-center justify-between">
+                                <span className={`text-[10px] font-black uppercase ${isEnabled ? 'text-white' : 'text-zinc-500'}`}>{displayName}</span>
+                                <span className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded-full ${isEnabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-zinc-800 text-zinc-600'}`}>{isEnabled ? 'ON' : 'OFF'}</span>
                               </div>
-                            );
-                          })}
-                        </div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {stats.map(st => (
+                                  <div key={st.label} className="flex items-center gap-1 bg-black/30 px-1.5 py-1 rounded-md border border-white/5">
+                                    <span className="text-[7px] font-black text-zinc-600 uppercase">{st.label}</span>
+                                    <span className={`text-[10px] font-black text-${st.color}-400`}>{st.val}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
 
-                      {/* Nano Sync Button */}
-                      <button
-                        onClick={() => saveSymbolParams(s.symbol)}
-                        disabled={isSaving}
-                        className={`w-full py-2.5 rounded-xl font-black text-[10px] tracking-widest uppercase transition-all flex items-center justify-center gap-2 active:scale-[0.98] ${isSaving
-                          ? 'bg-zinc-950 text-zinc-800 cursor-not-allowed border border-zinc-900'
-                          : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 active:bg-indigo-700'
-                          }`}
-                      >
-                        {isSaving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
-                        {isSaving ? 'Syncing' : 'Sync Símbolo'}
-                      </button>
+                      {/* Pie: abrir configuración */}
+                      <div className="mt-auto flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[0.03] border border-white/5 text-zinc-500 group-hover:text-indigo-400 group-hover:border-indigo-500/20 transition-all">
+                        <Settings size={12} />
+                        <span className="text-[9px] font-black uppercase tracking-widest">Configurar</span>
+                      </div>
                     </div>
                   )
                 })}
@@ -3680,6 +3809,23 @@ function App() {
               </motion.div>
             </motion.div>
           )}
+        </AnimatePresence>
+
+        {/* Config Modal (Fase 3) — configuración por símbolo del Matrix Editor */}
+        <AnimatePresence>
+          {configModal && (() => {
+            const symData = (matrixData.length > 0 ? matrixData : symbols).find(m => m.symbol === configModal)
+            if (!symData) return null
+            return (
+              <ConfigModal
+                symbol={configModal}
+                symData={symData}
+                onClose={() => setConfigModal(null)}
+                onSaved={fetchMatrix}
+                addToast={addToast}
+              />
+            )
+          })()}
         </AnimatePresence>
 
       </main >

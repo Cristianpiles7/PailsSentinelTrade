@@ -101,6 +101,50 @@ class PSTPrecisionScalping:
         return vwap, vwap + std, vwap - std, vwap + 2 * std, vwap - 2 * std
 
     @staticmethod
+    def _is_crypto(symbol: str) -> bool:
+        """True si el símbolo es cripto (filtro de ruido relajado)."""
+        try:
+            from ..utils.tech_utils import get_asset_class
+            return get_asset_class(symbol) == "CRYPTO"
+        except Exception:
+            s = (symbol or "").upper()
+            return any(k in s for k in ("BTC", "ETH", "SOL", "ADA", "XRP", "LTC", "DOT", "AVAX", "DOGE"))
+
+    # Perfil de filtros por defecto. Cada símbolo puede sobreescribir cualquier clave vía la
+    # columna `filter_profile` (JSON) de symbol_strategies, que el orquestador inyecta como
+    # kwarg. Los defaults reproducen el comportamiento calibrado actual (Fase 2).
+    FILTER_DEFAULTS = {
+        "entry_threshold": 70,        # score mínimo (régimen normal)
+        "entry_threshold_volatile": 80,
+        "adx_clean": 25.0, "chop_clean": 38.2,   # tendencia limpia → bonus
+        "adx_ok": 18.0,    "chop_ok": 61.8,      # aceptable → neutro
+        "adx_extreme": 15.0, "chop_extreme": 70.0,  # lateral extrema → veto
+        "noise_mode": "on",           # 'on' = penaliza ruido moderado; 'soft'/'off' = no penaliza
+        "noise_penalty": 8,
+        "rsi_strong": 55.0,           # RSI M5 para momentum fuerte (short usa 100-rsi_strong)
+        "rsi_ok": 50.0,
+    }
+
+    @classmethod
+    def _resolve_profile(cls, kwargs, is_crypto: bool) -> dict:
+        """
+        Construye el perfil de filtros efectivo: defaults → default por clase de activo
+        (cripto relaja el ruido) → override explícito de `filter_profile` (dict o JSON).
+        """
+        prof = dict(cls.FILTER_DEFAULTS)
+        if is_crypto:
+            prof["noise_mode"] = "soft"   # cripto: impulsos válidos con ADX bajo, no penalizar ruido
+        raw = kwargs.get("filter_profile")
+        if raw:
+            try:
+                import json
+                override = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                prof.update({k: v for k, v in override.items() if v is not None})
+            except Exception:
+                pass
+        return prof
+
+    @staticmethod
     def _candle_pattern(df):
         """
         Reconocimiento rápido de acción del precio en la última vela M1 cerrada.
@@ -177,6 +221,14 @@ class PSTPrecisionScalping:
         price = self._last(close_m1, 0.0)
         if atr <= 0 or price <= 0:
             return {**neutral, "metadata": {"status": "ATR/precio inválido", "factors_detailed": []}}
+
+        # Clase de activo (el orquestador pasa symbol=). El filtro de ruido ADX/Chop
+        # está calibrado para instrumentos que respetan la estructura (forex/metal);
+        # la cripto tiende a moverse en impulsos rentables con ADX M5 bajo, así que su
+        # filtro se relaja para no cortar esas rachas (validado en backtest).
+        symbol = kwargs.get("symbol", "") or ""
+        is_crypto = self._is_crypto(symbol)
+        prof = self._resolve_profile(kwargs, is_crypto)
 
         # --- VWAP de sesión + bandas dinámicas ---
         vol_col = "tick_volume" if "tick_volume" in df_m1.columns else ("volume" if "volume" in df_m1.columns else None)
@@ -277,19 +329,22 @@ class PSTPrecisionScalping:
                 factors.append({"k": "VWAP", "v": f"SELL cerca/sobre VWAP ({vwap_val:.5f}) — pullback sano ✅", "score": 20})
 
         # 3. Momentum M5 (RSI nivel + pendiente) — hasta 20 pts
+        rsi_strong = float(prof["rsi_strong"])           # long: > rsi_strong ; short: < (100-rsi_strong)
+        rsi_strong_short = 100.0 - rsi_strong
+        rsi_ok = float(prof["rsi_ok"])
         rsi_slope = rsi5 - rsi5_prev
-        if direction == 1 and rsi5 > 55:
+        if direction == 1 and rsi5 > rsi_strong:
             pts = 20 if rsi_slope > 0 else 14
             score += pts
             factors.append({"k": "RSI M5", "v": f"{rsi5:.1f} (Δ{rsi_slope:+.1f}) momentum alcista ✅", "score": pts})
-        elif direction == -1 and rsi5 < 45:
+        elif direction == -1 and rsi5 < rsi_strong_short:
             pts = 20 if rsi_slope < 0 else 14
             score += pts
             factors.append({"k": "RSI M5", "v": f"{rsi5:.1f} (Δ{rsi_slope:+.1f}) momentum bajista ✅", "score": pts})
-        elif direction == 1 and rsi5 > 50:
+        elif direction == 1 and rsi5 > rsi_ok:
             score += 10
             factors.append({"k": "RSI M5", "v": f"{rsi5:.1f} (OK)", "score": 10})
-        elif direction == -1 and rsi5 < 50:
+        elif direction == -1 and rsi5 < rsi_ok:
             score += 10
             factors.append({"k": "RSI M5", "v": f"{rsi5:.1f} (OK)", "score": 10})
         else:
@@ -306,14 +361,17 @@ class PSTPrecisionScalping:
 
             v_pts = 0
             v_msg = f"{vol_cur:.0f}"
-            if vol_ma > 0 and vol_cur > vol_ma * 1.2:
+            vol_expand = vol_ma > 0 and vol_cur > vol_ma * 1.2
+            if vol_expand:
                 v_pts += 10
                 v_msg += f" > MA20 {vol_ma:.0f} ✅"
+                # El ROC solo puntúa si el flujo YA está expandido (confirmación real,
+                # no puntos gratis por una simple aceleración desde volumen bajo).
+                if vol_roc > 0.25:
+                    v_pts += 5
+                    v_msg += f" | ROC +{vol_roc*100:.0f}% ⚡"
             else:
                 v_msg += " (Normal)"
-            if vol_roc > 0.25:  # aceleración de flujo acompañando el cruce
-                v_pts += 5
-                v_msg += f" | ROC +{vol_roc*100:.0f}% ⚡"
             score += v_pts
             factors.append({"k": "Microestructura", "v": v_msg, "score": v_pts})
         else:
@@ -334,27 +392,36 @@ class PSTPrecisionScalping:
         # 6. Acción del precio en M1 — confirmación/refutación de la vela — ±10 pts
         pat_dir, pat_name = self._candle_pattern(df_m1)
         at_level = near_upper1 or near_lower1 or abs(price - vwap_val) <= atr * 0.35
-        if pat_dir == direction:
-            pts = 10 if at_level else 6
-            score += pts
-            factors.append({"k": "Price Action", "v": f"{pat_name} a favor{' en nivel' if at_level else ''} ✅", "score": pts})
+        # Solo bonifica el patrón a favor SOBRE un nivel clave (confluencia real);
+        # un patrón a favor sin nivel no aporta y uno en contra sí penaliza.
+        if pat_dir == direction and at_level:
+            score += 8
+            factors.append({"k": "Price Action", "v": f"{pat_name} a favor en nivel ✅", "score": 8})
         elif pat_dir == -direction:
             score -= 8
             factors.append({"k": "Price Action", "v": f"{pat_name} EN CONTRA ❌", "score": -8})
 
-        # 7. Filtro de Ruido: calidad de tendencia M5 (ADX + Choppiness) — hasta 10 pts
-        # Un cruce de EMAs en mercado lateral es la trampa más cara del scalping.
-        trend_quality_ok = True
-        if adx5 >= 25 and chop5 <= 38.2:
-            score += 10
-            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — tendencia limpia ✅", "score": 10})
-        elif adx5 >= 20 and chop5 <= 61.8:
-            score += 4
-            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — aceptable", "score": 4})
+        # 7. Filtro de Ruido: calidad de tendencia M5 (ADX + Choppiness) — GRADUADO.
+        # El backtest mostró que vetar todo ADX<20 corta rachas ganadoras en activos
+        # volátiles (XAU/BTC), donde hay impulsos rentables con ADX M5 bajo. Por eso el
+        # filtro premia la tendencia limpia y penaliza el ruido de forma proporcional,
+        # reservando el veto duro solo para lateralidad EXTREMA (chop alto + ADX plano).
+        extreme_chop = adx5 < float(prof["adx_extreme"]) and chop5 > float(prof["chop_extreme"])
+        if adx5 >= float(prof["adx_clean"]) and chop5 <= float(prof["chop_clean"]):
+            score += 6
+            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — tendencia limpia ✅", "score": 6})
+        elif adx5 >= float(prof["adx_ok"]) and chop5 <= float(prof["chop_ok"]):
+            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — aceptable", "score": 0})
+        elif extreme_chop:
+            score -= 18
+            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — LATERAL EXTREMA, cruce anulado ❌", "score": -18})
+        elif prof["noise_mode"] == "on":
+            pen = int(prof["noise_penalty"])
+            score -= pen
+            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — ruido moderado ⚠️", "score": -pen})
         else:
-            trend_quality_ok = False
-            score -= 15
-            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — LATERAL, cruce sospechoso ❌", "score": -15})
+            # noise_mode 'soft'/'off' (p.ej. cripto): el ruido moderado no penaliza.
+            factors.append({"k": "Trend Quality", "v": f"ADX M5 {adx5:.0f} / Chop {chop5:.0f} — ruido tolerado", "score": 0})
 
         # 8. Anti-spike: vela parabólica o impulso agotado
         last_candle_range = self._last(high_m1) - self._last(low_m1)
@@ -381,11 +448,12 @@ class PSTPrecisionScalping:
         # Gate 1: sin cruce fresco no supera el umbral (solo contexto de HUD)
         if not has_fresh_cross:
             score = min(score, 65)
-        # Gate 2: mercado lateral (Filtro de Ruido) — anula la entrada aunque el resto brille
-        if not trend_quality_ok:
+        # Gate 2: solo lateralidad EXTREMA anula la entrada (el ruido moderado ya
+        # penaliza vía score, sin vetar rachas ganadoras en activos volátiles).
+        if extreme_chop:
             score = min(score, 65)
 
-        entry_threshold = 80 if current_regime == "VOLATILE" else 70
+        entry_threshold = int(prof["entry_threshold_volatile"] if current_regime == "VOLATILE" else prof["entry_threshold"])
         entry = direction if score >= entry_threshold else 0
 
         # --- Estructura para SL/TP: fractales Donchian de corto plazo ---

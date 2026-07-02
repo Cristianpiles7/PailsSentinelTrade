@@ -28,6 +28,7 @@ class BacktestTrade:
     pnl_r: float = 0.0     # PnL en múltiplos de R
     score: int = 0
     atr: float = 0.0
+    exit_reason: str = ""  # "TP", "SL", "VWAP_EXIT", "TIMEOUT", "BE", "EOD" (motor fiel)
 
 
 @dataclass
@@ -84,6 +85,29 @@ class BacktestResult:
         return max_dd
 
     @property
+    def sortino_ratio(self) -> float:
+        """Como Sharpe pero penalizando solo la volatilidad a la baja (downside)."""
+        if len(self.closed_trades) < 2:
+            return 0.0
+        pnls = [t.pnl_r for t in self.closed_trades]
+        mean_r = np.mean(pnls)
+        downside = [p for p in pnls if p < 0]
+        if not downside:
+            return float("inf") if mean_r > 0 else 0.0
+        # Desviación a la baja respecto a 0 (MAR = 0)
+        down_std = np.sqrt(np.mean(np.square(downside)))
+        return (mean_r / down_std) * np.sqrt(252) if down_std > 0 else 0.0
+
+    @property
+    def avg_rr_realized(self) -> float:
+        """R:R medio REALIZADO (media de pnl_r ganadores / |media de pnl_r perdedores|)."""
+        wins = [t.pnl_r for t in self.closed_trades if t.pnl_r > 0]
+        losses = [abs(t.pnl_r) for t in self.closed_trades if t.pnl_r < 0]
+        if not wins or not losses:
+            return 0.0
+        return float(np.mean(wins) / np.mean(losses))
+
+    @property
     def total_r(self) -> float:
         return sum(t.pnl_r for t in self.closed_trades)
 
@@ -110,6 +134,8 @@ class BacktestResult:
             "win_rate":         f"{self.win_rate:.1f}%",
             "profit_factor":    f"{self.profit_factor:.2f}",
             "sharpe":           f"{self.sharpe_ratio:.2f}",
+            "sortino":          f"{self.sortino_ratio:.2f}",
+            "avg_rr_realized":  f"{self.avg_rr_realized:.2f}",
             "max_drawdown_r":   f"{self.max_drawdown_r:.2f}R",
             "total_r":          f"{self.total_r:.2f}R",
             "avg_win_r":        f"{self.avg_win_r:.2f}R",

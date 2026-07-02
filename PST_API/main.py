@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.4.0",
+    version="2.5.0",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -1198,7 +1198,8 @@ async def get_matrix_data():
                 "use_breakeven": bool(s_cfg.get("use_breakeven", 1)), # Activado por defecto (1)
                 "be_mult": s_cfg.get("be_mult", 2.0),
                 "ts_mult": s_cfg.get("ts_mult", 2.5),
-                "min_rr": s_cfg.get("min_rr", 1.5)
+                "min_rr": s_cfg.get("min_rr", 1.5),
+                "filter_profile": s_cfg.get("filter_profile")  # Fase 3: perfil de filtros JSON (PrecisionScalping)
             }
             
         # Segundos, actualizar con puntuaciones reales del radar
@@ -1248,12 +1249,20 @@ class StrategyConfigUpdate(_BM):
     be_mult: float = _F(None)
     ts_mult: float = _F(None)
     min_rr: float = _F(None)
+    filter_profile: str = _F(None)   # Fase 3: JSON de perfil de filtros (PrecisionScalping)
 
 @app.post("/api/config/strategy", tags=["Config"])
 async def update_strategy_config(update: StrategyConfigUpdate):
     """Actualiza la configuración detallada de una estrategia para un símbolo."""
+    # Validación defensiva: si llega filter_profile, debe ser JSON válido.
+    if update.filter_profile is not None:
+        try:
+            import json as _json
+            _json.loads(update.filter_profile)
+        except Exception:
+            raise HTTPException(status_code=400, detail="filter_profile no es JSON válido")
     ok = await db.set_symbol_strategy(
-        update.symbol, 
+        update.symbol,
         update.strategy,
         is_active=update.is_active,
         risk_mode=update.risk_mode,
@@ -1265,7 +1274,8 @@ async def update_strategy_config(update: StrategyConfigUpdate):
         use_breakeven=update.use_breakeven,
         be_mult=update.be_mult,
         ts_mult=update.ts_mult,
-        min_rr=update.min_rr
+        min_rr=update.min_rr,
+        filter_profile=update.filter_profile
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Error actualizando estrategia")

@@ -25,6 +25,9 @@ Desktop.ini
 
 # PST Specific
 PailsSentinelTrade/Tools/migrate_to_pst.py
+# Caché de datos del backtest LAB (datos MT5 crudos, no versionar)
+Tools/.bt_cache/
+.bt_cache/
 # PST_MCP/ <- Eliminado para permitir subida del Hub
 
 # Distribution

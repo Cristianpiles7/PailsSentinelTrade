@@ -1,11 +1,23 @@
 import MetaTrader5 as mt5
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import logging
 
 logger = logging.getLogger("PST_Market_Schedule")
 
 # Definir márgenes de seguridad para el cierre automático (en minutos)
 CLOSE_MARGIN_MINUTES = 15
+
+_NY_TZ = ZoneInfo("America/New_York")
+
+def _us_stock_close_utc_minutes(now_utc: datetime) -> int:
+    """
+    Calcula la hora de cierre de NYSE (16:00 hora de Nueva York) en minutos UTC,
+    ajustando automáticamente por horario de verano (EDT/EST).
+    """
+    ny_close = now_utc.astimezone(_NY_TZ).replace(hour=16, minute=0, second=0, microsecond=0)
+    ny_close_utc = ny_close.astimezone(timezone.utc)
+    return ny_close_utc.hour * 60 + ny_close_utc.minute
 
 def is_closing_soon(symbol: str) -> tuple[bool, str]:
     """
@@ -40,7 +52,7 @@ def is_closing_soon(symbol: str) -> tuple[bool, str]:
     if is_stock:
         # Lunes a Viernes
         if day_of_week <= 4:
-            closing_time = (21 * 60) + 0 # 21:00 UTC
+            closing_time = _us_stock_close_utc_minutes(now_utc) # 16:00 NY time, ajustado a EST/EDT
             action_time = closing_time - CLOSE_MARGIN_MINUTES
             
             if current_minutes >= action_time and current_minutes < closing_time:

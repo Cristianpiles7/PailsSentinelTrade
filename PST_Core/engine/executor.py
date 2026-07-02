@@ -563,7 +563,11 @@ class PSTExecutor:
                             "type_time": mt5.ORDER_TIME_GTC,
                             "type_filling": mt5.ORDER_FILLING_IOC,
                         }
-                        await send_order_async(close_req)
+                        res = await send_order_async(close_req)
+                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                            logger.info(f"✅ [TIME-OUT EXIT DONE] {symbol} ticket {ticket} cerrado por estancamiento.")
+                        else:
+                            logger.error(f"❌ [TIME-OUT EXIT FAILED] {symbol} ticket {ticket}: {res.comment if res else 'None'} (retcode={res.retcode if res else 'N/A'})")
                         continue
 
                 # E. MODO CIGARRA REMOVED

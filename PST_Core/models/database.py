@@ -234,6 +234,7 @@ class PSTDatabase:
                 ("be_mult", "REAL DEFAULT 2.0"),
                 ("ts_mult", "REAL DEFAULT 2.5"),
                 ("min_rr", "REAL DEFAULT 1.5"),  # R:R mínimo para ejecutar (Fase 49)
+                ("filter_profile", "TEXT"),      # Fase 2: perfil de filtros JSON por símbolo/grupo
             ]:
                 try:
                     await db.execute(f"ALTER TABLE symbol_strategies ADD COLUMN {col} {col_def}")
@@ -277,15 +278,33 @@ class PSTDatabase:
                 'UK100.cash', 'US30'
             ]
             
+            # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
+            # Fuente única de verdad para la creación desde cero: cada grupo arranca con su set
+            # de parámetros. Hoy comparten los valores validados y solo difiere el filtro de ruido
+            # (cripto relaja el ADX/Chop porque tiene impulsos válidos con ADX bajo). Estructurado
+            # para divergir por grupo cuando se afine con el harness. Editable por símbolo (modal).
+            _SCALP_BASE = dict(risk_mode='MONEY', risk_value=7.0, use_breakeven=1, use_trailing=0,
+                               be_mult=3.5, ts_mult=2.5, min_rr=1.8, sl_mult=1.6, tp_mult=2.5)
+            GROUP_DEFAULTS = {
+                "FOREX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
+                "COMMODITY": {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
+                "METAL":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
+                "INDEX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
+                "STOCK":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'},
+                "CRYPTO":    {**_SCALP_BASE, "filter_profile": '{"noise_mode": "soft"}'},
+            }
+            _SCALP_FALLBACK = {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on"}'}
+
             for sym, stype in master_config:
                 is_active = 0 if sym in disabled_by_default else 1
-                
+                g = GROUP_DEFAULTS.get(stype, _SCALP_FALLBACK)
+
                 # 1. Asegurar símbolo en config global con multiplicadores visuales (Header)
                 await db.execute("""
-                    INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, sl_mult, tp_mult, score_threshold, min_rr) 
+                    INSERT OR IGNORE INTO symbols_config (symbol, type, is_active, sl_mult, tp_mult, score_threshold, min_rr)
                     VALUES (?, ?, ?, 2.5, 3.5, 80.0, 1.6)
                 """, (sym, stype, is_active))
-                
+
                 # 3. PST-RangeBreaker — Rango en M15 (7€ base, cap global MAX_LOSS_EUR)
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies
@@ -293,12 +312,20 @@ class PSTDatabase:
                     VALUES (?, 'PST-RangeBreaker', ?, 'MONEY', 7.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
                 """, (sym, is_active))
 
-                # 4. PST-PrecisionScalping — Scalping en M1 (7€ base, TP técnico)
+                # 4. PST-PrecisionScalping — Scalping en M1 con defaults ÓPTIMOS por grupo
                 await db.execute("""
                     INSERT OR IGNORE INTO symbol_strategies
-                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
-                    VALUES (?, 'PST-PrecisionScalping', ?, 'MONEY', 7.0, 1, 0, 3.5, 2.5, 1.8, 1.6, 2.5)
-                """, (sym, is_active))
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult, filter_profile)
+                    VALUES (?, 'PST-PrecisionScalping', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (sym, is_active, g['risk_mode'], g['risk_value'], g['use_breakeven'], g['use_trailing'],
+                      g['be_mult'], g['ts_mult'], g['min_rr'], g['sl_mult'], g['tp_mult'], g['filter_profile']))
+
+                # Backfill para BBDD ya existentes: fija el perfil de grupo si está vacío (no pisa ediciones).
+                await db.execute("""
+                    UPDATE symbol_strategies SET filter_profile = ?
+                    WHERE symbol = ? AND strategy_name = 'PST-PrecisionScalping'
+                      AND (filter_profile IS NULL OR filter_profile = '')
+                """, (g['filter_profile'], sym))
 
             await db.commit()
             logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v3.0) en {self.db_path}")
@@ -760,27 +787,28 @@ class PSTDatabase:
             logger.error(f"❌ Error getting strategies for {symbol}: {e}")
             return {}
 
-    async def set_symbol_strategy(self, symbol, strategy_name, is_active=None, risk_mode=None, risk_value=None, sl_mult=None, tp_mult=None, score_threshold=None, use_trailing=None, use_breakeven=None, be_mult=None, ts_mult=None, min_rr=None):
+    async def set_symbol_strategy(self, symbol, strategy_name, is_active=None, risk_mode=None, risk_value=None, sl_mult=None, tp_mult=None, score_threshold=None, use_trailing=None, use_breakeven=None, be_mult=None, ts_mult=None, min_rr=None, filter_profile=None):
         """Actualiza la configuración de una estrategia específica para un símbolo."""
         try:
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
                 # Primero verificar si existe
                 async with db.execute("SELECT 1 FROM symbol_strategies WHERE symbol = ? AND strategy_name = ?", (symbol, strategy_name)) as cursor:
                     exists = await cursor.fetchone()
-                
+
                 if not exists:
                     await db.execute("""
-                        INSERT INTO symbol_strategies (symbol, strategy_name, is_active, risk_mode, risk_value, sl_mult, tp_mult, score_threshold, use_trailing, use_breakeven, be_mult, ts_mult, min_rr)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO symbol_strategies (symbol, strategy_name, is_active, risk_mode, risk_value, sl_mult, tp_mult, score_threshold, use_trailing, use_breakeven, be_mult, ts_mult, min_rr, filter_profile)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        symbol, strategy_name, 
+                        symbol, strategy_name,
                         1 if is_active is None or is_active else 0,
                         risk_mode, risk_value, sl_mult, tp_mult, score_threshold,
                         1 if use_trailing else 0 if use_trailing is not None else (0 if strategy_name == 'PST-PrecisionScalping' else 1),
                         1 if use_breakeven else 0 if use_breakeven is not None else 1,
                         be_mult if be_mult is not None else (3.5 if strategy_name == 'PST-PrecisionScalping' else 2.0),
                         ts_mult if ts_mult is not None else 2.5,
-                        min_rr if min_rr is not None else 1.5
+                        min_rr if min_rr is not None else 1.5,
+                        filter_profile
                     ))
                 else:
                     fields, vals = [], []
@@ -795,6 +823,7 @@ class PSTDatabase:
                     if be_mult is not None:        fields.append("be_mult = ?");        vals.append(be_mult)
                     if ts_mult is not None:        fields.append("ts_mult = ?");        vals.append(ts_mult)
                     if min_rr is not None:         fields.append("min_rr = ?");         vals.append(min_rr)
+                    if filter_profile is not None: fields.append("filter_profile = ?"); vals.append(filter_profile)
                     
                     if fields:
                         vals.extend([symbol, strategy_name])
