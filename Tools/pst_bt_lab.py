@@ -144,6 +144,84 @@ def _profile_for(symbol):
     return {"filter_profile": prof} if prof else {}
 
 
+# ─────────────────────────────────────────── C.2: sweep por símbolo
+# Espejo de GROUP_DEFAULTS en PST_Core/models/database.py — la fuente de verdad de lo que
+# REALMENTE corre en producción hoy. Un baseline construido con los defaults del código
+# (sin esto) NO representa lo shippeado (p.ej. entry_threshold real es 72, no 70) y
+# contamina cualquier comparación de una sola palanca. Mantener sincronizado a mano con
+# GROUP_DEFAULTS si se cambia allí.
+SHIPPED_PROFILES = {
+    "FOREX":     {"noise_mode": "on",   "entry_threshold": 72},
+    "COMMODITY": {"noise_mode": "on",   "entry_threshold": 72},
+    "METAL":     {"noise_mode": "on",   "entry_threshold": 72},
+    "STOCK":     {"noise_mode": "on",   "entry_threshold": 72},
+    "INDEX":     {"noise_mode": "on",   "entry_threshold": 72, "vwap_exit": "off"},
+    "CRYPTO":    {"noise_mode": "soft", "entry_threshold": 72, "vwap_exit": "off"},
+}
+SYMBOL_PROFILE_OVERRIDES = {
+    "ETHUSD": {"m1_eff_mode": "on"},
+}
+
+
+# C.4: SL/TP/BE compartidos hoy por TODOS los símbolos (_SCALP_BASE en database.py).
+# Nunca tuneados por símbolo — el sweep los trata como palancas "top" (columnas de
+# symbol_strategies), separadas del "filter" (JSON de filter_profile).
+SHIPPED_RISK = {"sl_mult": 1.6, "min_rr": 1.8, "be_mult": 3.5}
+
+
+def _get_group(symbol):
+    try:
+        from PST_Core.utils.tech_utils import get_asset_class
+        return get_asset_class(symbol)
+    except Exception:
+        return "CRYPTO" if any(k in symbol.upper() for k in ("BTC", "ETH", "SOL")) else "FOREX"
+
+
+def _shipped_profile_for(symbol):
+    """Perfil de FILTROS realmente shippeado para el símbolo (grupo + override)."""
+    group = _get_group(symbol)
+    prof = dict(SHIPPED_PROFILES.get(group, {"noise_mode": "on", "entry_threshold": 72}))
+    prof.update(SYMBOL_PROFILE_OVERRIDES.get(symbol, {}))
+    return prof
+
+
+def _shipped_full_profile_for(symbol):
+    """Perfil COMPLETO shippeado: filtros + SL/R:R/BE (para el sweep C.2+C.4)."""
+    return {"filter": _shipped_profile_for(symbol), "top": dict(SHIPPED_RISK)}
+
+
+# Palancas a barrer, UNA a la vez, sobre el perfil shippeado (nunca combinadas entre sí).
+# Cada entrada: (scope, clave, valor alternativo). scope='filter' → vive dentro de
+# filter_profile (JSON); scope='top' → columna directa de symbol_strategies (sl_mult/min_rr/be_mult).
+def _sweep_candidates(shipped_full: dict):
+    f, t = shipped_full["filter"], shipped_full["top"]
+    et = int(f.get("entry_threshold", 72))
+    noise = f.get("noise_mode", "on")
+    vwap = f.get("vwap_exit", "on")
+    m1eff = f.get("m1_eff_mode", "off")
+    out = []
+    for alt in sorted({max(50, et - 4), min(90, et + 4)} - {et}):
+        out.append(("filter", "entry_threshold", alt))
+    for alt in [v for v in ("on", "soft", "off") if v != noise]:
+        out.append(("filter", "noise_mode", alt))
+    out.append(("filter", "vwap_exit", "off" if str(vwap).lower() == "on" else "on"))
+    out.append(("filter", "m1_eff_mode", "off" if str(m1eff).lower() == "on" else "on"))
+    # C.4: SL/R:R/BE — variaciones acotadas alrededor del valor shippeado.
+    sl = float(t.get("sl_mult", 1.6))
+    for alt in (round(sl - 0.3, 2), round(sl + 0.3, 2)):
+        if alt > 0:
+            out.append(("top", "sl_mult", alt))
+    rr = float(t.get("min_rr", 1.8))
+    for alt in (round(rr - 0.3, 2), round(rr + 0.3, 2)):
+        if alt >= 1.0:
+            out.append(("top", "min_rr", alt))
+    be = float(t.get("be_mult", 3.5))
+    for alt in (round(be - 1.0, 2), round(be + 1.0, 2)):
+        if alt >= 1.5:
+            out.append(("top", "be_mult", alt))
+    return out
+
+
 # ─────────────────────────────────────────── reporte
 def _fmt(v, pct=False, suf=""):
     if isinstance(v, float) and v == float("inf"):
@@ -225,18 +303,96 @@ async def main():
     ap.add_argument("--symbols", default="EURUSD,XAUUSD,BTCUSD,ETHUSD")
     ap.add_argument("--days", type=int, default=10)
     ap.add_argument("--threshold", type=int, default=70)
-    ap.add_argument("--lookback-m1", type=int, default=600)
+    ap.add_argument("--lookback-m1", type=int, default=200,
+                    help="Barras M1 por señal. Default 200 = fiel a producción (el bot descarga 200). "
+                         "OJO: los baselines guardados a 600 quedan obsoletos; regenerar con --save-baseline.")
     ap.add_argument("--baseline", default="v2.3.1", help="Ref git para el baseline en modo comparación")
     ap.add_argument("--refresh", action="store_true", help="Fuerza re-descarga de datos (ignora caché)")
     ap.add_argument("--save-baseline", default=None, help="Guarda métricas del working tree como baseline NOMBRE")
     ap.add_argument("--vs-baseline", default=None, help="Juzga el working tree contra el baseline NOMBRE guardado")
     ap.add_argument("--trace", type=int, default=0, help="Imprime N trades de ejemplo (motivo de salida) por símbolo")
     ap.add_argument("--profiles", default=None, help="JSON grupo→filter_profile aplicado al candidato (A/B de Fase 2)")
+    ap.add_argument("--sweep", action="store_true",
+                    help="C.2: barre 1 palanca a la vez desde el perfil REALMENTE shippeado (SHIPPED_PROFILES) "
+                         "y sugiere overrides ganadores por símbolo (con guardarraíl de muestra mínima)")
+    ap.add_argument("--sweep-min-trades", type=int, default=30,
+                    help="Trades mínimos en la muestra para que un PASS del sweep cuente como fiable (default 30)")
     args = ap.parse_args()
 
     symbols = [s.strip() for s in args.symbols.split(",")]
     _load_profiles(args.profiles)
     WT = load_working_tree()
+
+    # Modo SWEEP (C.2): 1 palanca a la vez desde el perfil REALMENTE shippeado.
+    if args.sweep:
+        for sym in symbols:
+            data = get_data(sym, args.days, args.refresh)
+            if not data:
+                print(f"  ⚠️  sin datos para {sym}, saltando."); continue
+
+            shipped_full = _shipped_full_profile_for(sym)
+            shipped_f, shipped_t = shipped_full["filter"], shipped_full["top"]
+
+            def _make_profile(f, t):
+                return {"filter_profile": f, "sl_mult": t["sl_mult"], "min_rr": t["min_rr"], "be_mult": t["be_mult"]}
+
+            print(f"\n{'='*70}\n  SWEEP {sym}  (grupo {_get_group(sym)})\n"
+                  f"  filtros shippeados: {shipped_f}\n  riesgo shippeado:   {shipped_t}\n{'='*70}")
+            base_res = await run_variant(WT, sym, data, args.threshold, args.lookback_m1, _make_profile(shipped_f, shipped_t))
+            base_m = metrics(base_res)
+            print(f"  BASELINE (shippeado): {base_m['trades']} trades | exp {base_m['expectancy']:+.3f}R | "
+                  f"sharpe {base_m['sharpe']:.2f} | DD {base_m['max_dd']:.1f}R")
+
+            rows = []
+            for scope, key, val in _sweep_candidates(shipped_full):
+                cand_f, cand_t = dict(shipped_f), dict(shipped_t)
+                (cand_f if scope == "filter" else cand_t)[key] = val
+                res = await run_variant(WT, sym, data, args.threshold, args.lookback_m1, _make_profile(cand_f, cand_t))
+                m = metrics(res)
+                ok, _ = verdict(base_m, m)
+                reliable = m["trades"] >= args.sweep_min_trades
+                if not reliable:
+                    tag = "⚪ MUESTRA INSUFICIENTE"
+                elif ok:
+                    tag = "✅ PASS"
+                else:
+                    tag = "❌ FAIL"
+                label = f"{key}" if scope == "filter" else f"{key} (risk)"
+                rows.append([scope, key, val, label, m, m["expectancy"] - base_m["expectancy"],
+                            m["sharpe"] - base_m["sharpe"], tag, reliable, ok])
+
+            # Chequeo de consistencia direccional: para palancas numéricas de 2 lados
+            # (entry_threshold, sl_mult, min_rr, be_mult) probadas en ambas direcciones,
+            # si AMBAS mejoran el expectancy a la vez no es señal real de "hay que mover
+            # el parámetro" — es ruido de muestra (una señal genuina mejora en una
+            # dirección y empeora en la otra, como el entry_threshold de BTCUSD). Se anula
+            # la candidatura de esa palanca aunque ambos lados hayan dado PASS.
+            by_key = {}
+            for r in rows:
+                by_key.setdefault(r[1], []).append(r)
+            for key, group in by_key.items():
+                if len(group) == 2 and all(r[8] and r[5] > 0 for r in group):
+                    for r in group:
+                        r[7] = "🟡 RUIDO (ambas direcciones mejoran, no promover)"
+                        r[9] = False  # ya no cuenta como PASS promovible
+
+            rows.sort(key=lambda r: r[5], reverse=True)
+            print(f"\n  {'palanca':<20}{'valor':>8}{'trades':>8}{'expR':>9}{'Δexp':>9}{'Δsharpe':>10}   veredicto")
+            print(f"  {'-'*70}")
+            for scope, key, val, label, m, dexp, dsharpe, tag, reliable, ok in rows:
+                print(f"  {label:<20}{str(val):>8}{m['trades']:>8}{m['expectancy']:>+9.3f}{dexp:>+9.3f}{dsharpe:>+10.2f}   {tag}")
+
+            winners = [r for r in rows if r[8] and r[9]]  # fiable, PASS y sin ruido direccional
+            if winners:
+                scope, key, val = winners[0][0], winners[0][1], winners[0][2]
+                dest = "SYMBOL_FILTER_OVERRIDES" if scope == "filter" else "override de sl_mult/min_rr/be_mult"
+                suggested = dict(shipped_f) if scope == "filter" else dict(shipped_t)
+                suggested[key] = val
+                print(f"\n  💡 Sugerencia (fiable, Δexp {winners[0][5]:+.3f}, scope={scope}): {json.dumps(suggested)}")
+                print(f"     → revisar y, si se aprueba, añadir a {dest} en database.py")
+            else:
+                print(f"\n  Sin candidatos fiables que batan al perfil shippeado. Mantener como está.")
+        _shutdown_mt5(); print("\nSweep finalizado.\n"); return
 
     # Modo A: guardar baseline
     if args.save_baseline:

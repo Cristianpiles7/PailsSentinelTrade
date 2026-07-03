@@ -44,7 +44,12 @@ class FaithfulScalpingEngine:
     HOLD_SECS = 120          # sostenimiento mínimo antes de salida VWAP
     TIMEOUT_SECS = 30 * 60   # cierre por estancamiento
 
-    def __init__(self, threshold: int = 70, lookback_m1: int = 600, lookback_m5: int = 240,
+    # lookback_m1 = 200 para COINCIDIR con lo que el bot ve en vivo: get_mtf_data_async
+    # descarga exactamente 200 barras M1 (fetch_rates_async(sym, 1, 200)). El VWAP de sesión
+    # se ancla, por tanto, como máximo 200 barras atrás (no desde la apertura real del día).
+    # Usar 600 anclaba el VWAP mucho más atrás → señales distintas y peores que en real
+    # (validado: GBPUSD +0.011R@600 vs +0.314R@200 con el MISMO perfil). 200 = fiel a producción.
+    def __init__(self, threshold: int = 70, lookback_m1: int = 200, lookback_m5: int = 240,
                  warmup: int = 240, model_spread: bool = True):
         self.threshold = threshold
         self.lookback_m1 = lookback_m1

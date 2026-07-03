@@ -46,9 +46,10 @@ class PSTDatabase:
                     # enabled_by_default de la siembra maestra para no dejar símbolos activos de más.
                     default_symbols = [
                         ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'),
+                        ('XAUUSD', 'COMMODITY'),
                         ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
-                        ('US500.cash', 'INDEX'),
-                        ('AAPL', 'STOCK'), ('NVDA', 'STOCK')
+                        ('US500.cash', 'INDEX'), ('EU50.cash', 'INDEX'),
+                        ('AAPL', 'STOCK')
                     ]
                     await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
 
@@ -278,11 +279,16 @@ class PSTDatabase:
             # Universo ACTIVO por defecto (whitelist). Solo estos arrancan operando; el resto
             # queda desactivado hasta activarlo desde el Matrix Editor. Son los símbolos con
             # perfil de scalping tuneado y validado en el harness fiel (entry_threshold 72).
+            # Universo re-validado a lookback 200 (fiel a producción, el bot ve 200 barras M1).
+            # A esa escala real la mayoría rinde MEJOR que en los tests a 600; dos cambios:
+            #   · NVDA fuera: negativo a 200 en 2 ventanas (−0.140 @15d, −0.058 @25d).
+            #   · EU50.cash dentro: positivo en muestra grande (+0.164 @20d, sharpe 2.62).
             enabled_by_default = {
-                'EURUSD', 'GBPUSD',           # FOREX
-                'BTCUSD', 'ETHUSD',           # CRYPTO
-                'US500.cash',                 # INDEX
-                'AAPL', 'NVDA',               # STOCK (AAPL rentable, NVDA breakeven — experimental)
+                'EURUSD', 'GBPUSD',           # FOREX (exp +0.11 / +0.31 @200)
+                'XAUUSD',                     # COMMODITY (+0.28 @200)
+                'BTCUSD', 'ETHUSD',           # CRYPTO (+0.39 / +0.05 @200)
+                'US500.cash', 'EU50.cash',    # INDEX (US500 con override entry 68; EU50 experimental)
+                'AAPL',                       # STOCK (+0.30 @200; NVDA desactivado por negativo)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
@@ -320,6 +326,11 @@ class PSTDatabase:
             # -30.5R→-18.5R en ETHUSD, sin tocar BTCUSD/resto del universo.
             SYMBOL_FILTER_OVERRIDES = {
                 'ETHUSD': {'m1_eff_mode': 'on'},
+                # US500.cash: entry_threshold 68 (más laxo que el 72 del grupo INDEX) — validado a
+                # lookback 200 (fiel a producción) en 2 ventanas: 10d exp +0.048→+0.150, 20d
+                # +0.043→+0.081. El 72 (calibrado a lookback 600, no fiel) era demasiado exigente
+                # para el índice a la escala real de 200 barras.
+                'US500.cash': {'entry_threshold': 68},
             }
 
             for sym, stype in master_config:
@@ -364,7 +375,9 @@ class PSTDatabase:
                            OR filter_profile = '{"noise_mode": "on"}'
                            OR filter_profile = '{"noise_mode": "soft"}'
                            OR filter_profile = '{"noise_mode": "on", "entry_threshold": 72}'
-                           OR filter_profile = '{"noise_mode": "soft", "entry_threshold": 72}')
+                           OR filter_profile = '{"noise_mode": "soft", "entry_threshold": 72}'
+                           OR filter_profile = '{"noise_mode": "on", "entry_threshold": 72, "vwap_exit": "off"}'
+                           OR filter_profile = '{"noise_mode": "soft", "entry_threshold": 72, "vwap_exit": "off"}')
                 """, (filter_profile, sym))
 
             await db.commit()

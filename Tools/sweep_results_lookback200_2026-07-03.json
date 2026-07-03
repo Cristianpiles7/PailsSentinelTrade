@@ -1,0 +1,793 @@
+{
+  "EURUSD": {
+    "group": "FOREX",
+    "base": {
+      "trades": 25,
+      "exp": 0.1093,
+      "sharpe": 4.17,
+      "dd": 1.0
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "on",
+        "entry_threshold": 72
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 36,
+        "exp": 0.0354,
+        "dexp": -0.0739,
+        "dsharpe": -2.87,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 13,
+        "exp": 0.0073,
+        "dexp": -0.102,
+        "dsharpe": -3.87,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "soft",
+        "trades": 36,
+        "exp": 0.0762,
+        "dexp": -0.0331,
+        "dsharpe": -1.145,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 36,
+        "exp": 0.0762,
+        "dexp": -0.0331,
+        "dsharpe": -1.145,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "off",
+        "trades": 25,
+        "exp": 0.0846,
+        "dexp": -0.0247,
+        "dsharpe": -1.384,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "on",
+        "trades": 19,
+        "exp": 0.0864,
+        "dexp": -0.0229,
+        "dsharpe": -0.512,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      }
+    ],
+    "winner": null,
+    "status": "active",
+    "days": 10
+  },
+  "GBPUSD": {
+    "group": "FOREX",
+    "base": {
+      "trades": 29,
+      "exp": 0.3143,
+      "sharpe": 7.62,
+      "dd": 1.1
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "on",
+        "entry_threshold": 72
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 43,
+        "exp": 0.2223,
+        "dexp": -0.092,
+        "dsharpe": -1.641,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 21,
+        "exp": 0.3535,
+        "dexp": 0.0393,
+        "dsharpe": 0.087,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "soft",
+        "trades": 39,
+        "exp": 0.2134,
+        "dexp": -0.1009,
+        "dsharpe": -1.96,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 39,
+        "exp": 0.2134,
+        "dexp": -0.1009,
+        "dsharpe": -1.96,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "off",
+        "trades": 29,
+        "exp": 0.2296,
+        "dexp": -0.0847,
+        "dsharpe": -3.028,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "on",
+        "trades": 24,
+        "exp": 0.2091,
+        "dexp": -0.1052,
+        "dsharpe": -2.311,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      }
+    ],
+    "winner": null,
+    "status": "active",
+    "days": 10
+  },
+  "XAUUSD": {
+    "group": "METAL",
+    "base": {
+      "trades": 33,
+      "exp": 0.2841,
+      "sharpe": 4.9,
+      "dd": 2.2
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "on",
+        "entry_threshold": 72
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 50,
+        "exp": 0.1307,
+        "dexp": -0.1535,
+        "dsharpe": -2.713,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 21,
+        "exp": 0.3554,
+        "dexp": 0.0713,
+        "dsharpe": 2.01,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "soft",
+        "trades": 40,
+        "exp": 0.2961,
+        "dexp": 0.012,
+        "dsharpe": 0.254,
+        "reliable": true,
+        "pass": false,
+        "noise": true
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 40,
+        "exp": 0.2961,
+        "dexp": 0.012,
+        "dsharpe": 0.254,
+        "reliable": true,
+        "pass": false,
+        "noise": true
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "off",
+        "trades": 33,
+        "exp": 0.1863,
+        "dexp": -0.0978,
+        "dsharpe": -1.995,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "on",
+        "trades": 28,
+        "exp": 0.1327,
+        "dexp": -0.1514,
+        "dsharpe": -2.589,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      }
+    ],
+    "winner": null,
+    "status": "active",
+    "days": 10
+  },
+  "BTCUSD": {
+    "group": "CRYPTO",
+    "base": {
+      "trades": 61,
+      "exp": 0.3925,
+      "sharpe": 5.77,
+      "dd": 4.5
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "soft",
+        "entry_threshold": 72,
+        "vwap_exit": "off"
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 94,
+        "exp": 0.2341,
+        "dexp": -0.1584,
+        "dsharpe": -2.406,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 36,
+        "exp": 0.3205,
+        "dexp": -0.072,
+        "dsharpe": -0.851,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "on",
+        "trades": 43,
+        "exp": 0.3431,
+        "dexp": -0.0494,
+        "dsharpe": -0.539,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 61,
+        "exp": 0.3925,
+        "dexp": 0.0,
+        "dsharpe": 0.0,
+        "reliable": true,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "on",
+        "trades": 63,
+        "exp": 0.3827,
+        "dexp": -0.0097,
+        "dsharpe": 0.222,
+        "reliable": true,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "on",
+        "trades": 53,
+        "exp": 0.3231,
+        "dexp": -0.0694,
+        "dsharpe": -1.054,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      }
+    ],
+    "winner": null,
+    "status": "active",
+    "days": 10
+  },
+  "ETHUSD": {
+    "group": "CRYPTO",
+    "base": {
+      "trades": 77,
+      "exp": 0.0544,
+      "sharpe": 0.77,
+      "dd": 9.5
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "soft",
+        "entry_threshold": 72,
+        "vwap_exit": "off",
+        "m1_eff_mode": "on"
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 109,
+        "exp": -0.1091,
+        "dexp": -0.1635,
+        "dsharpe": -2.356,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 45,
+        "exp": -0.0274,
+        "dexp": -0.0817,
+        "dsharpe": -1.147,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "on",
+        "trades": 56,
+        "exp": 0.0646,
+        "dexp": 0.0103,
+        "dsharpe": 0.12,
+        "reliable": true,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 77,
+        "exp": 0.0544,
+        "dexp": 0.0,
+        "dsharpe": 0.0,
+        "reliable": true,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "on",
+        "trades": 78,
+        "exp": 0.0422,
+        "dexp": -0.0122,
+        "dsharpe": -0.154,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "off",
+        "trades": 98,
+        "exp": 0.0106,
+        "dexp": -0.0437,
+        "dsharpe": -0.623,
+        "reliable": true,
+        "pass": false,
+        "noise": false
+      }
+    ],
+    "winner": null,
+    "status": "active",
+    "days": 10
+  },
+  "US500.cash": {
+    "group": "INDEX",
+    "base": {
+      "trades": 24,
+      "exp": 0.0476,
+      "sharpe": 0.89,
+      "dd": 3.4
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "on",
+        "entry_threshold": 72,
+        "vwap_exit": "off"
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 36,
+        "exp": 0.1497,
+        "dexp": 0.1022,
+        "dsharpe": 1.827,
+        "reliable": true,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 14,
+        "exp": 0.127,
+        "dexp": 0.0794,
+        "dsharpe": 1.289,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "soft",
+        "trades": 41,
+        "exp": 0.1125,
+        "dexp": 0.065,
+        "dsharpe": 1.233,
+        "reliable": true,
+        "pass": false,
+        "noise": true
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 41,
+        "exp": 0.1125,
+        "dexp": 0.065,
+        "dsharpe": 1.233,
+        "reliable": true,
+        "pass": false,
+        "noise": true
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "on",
+        "trades": 25,
+        "exp": 0.0557,
+        "dexp": 0.0081,
+        "dsharpe": 0.212,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "on",
+        "trades": 16,
+        "exp": -0.1679,
+        "dexp": -0.2155,
+        "dsharpe": -4.016,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      }
+    ],
+    "winner": {
+      "scope": "filter",
+      "key": "entry_threshold",
+      "val": 68,
+      "trades": 36,
+      "exp": 0.1497,
+      "dexp": 0.1022,
+      "dsharpe": 1.827,
+      "reliable": true,
+      "pass": true,
+      "noise": false
+    },
+    "status": "active",
+    "days": 10
+  },
+  "AAPL": {
+    "group": "EQUITIES",
+    "base": {
+      "trades": 18,
+      "exp": 0.3015,
+      "sharpe": 4.32,
+      "dd": 2.1
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "on",
+        "entry_threshold": 72
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 21,
+        "exp": 0.2219,
+        "dexp": -0.0796,
+        "dsharpe": -1.02,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 13,
+        "exp": 0.3547,
+        "dexp": 0.0532,
+        "dsharpe": 0.527,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "soft",
+        "trades": 22,
+        "exp": 0.3012,
+        "dexp": -0.0003,
+        "dsharpe": 0.185,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 22,
+        "exp": 0.3012,
+        "dexp": -0.0003,
+        "dsharpe": 0.185,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "off",
+        "trades": 17,
+        "exp": 0.3152,
+        "dexp": 0.0137,
+        "dsharpe": 0.011,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "on",
+        "trades": 18,
+        "exp": 0.4984,
+        "dexp": 0.1969,
+        "dsharpe": 2.396,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      }
+    ],
+    "winner": null,
+    "status": "active",
+    "days": 15
+  },
+  "NVDA": {
+    "group": "EQUITIES",
+    "base": {
+      "trades": 14,
+      "exp": -0.1404,
+      "sharpe": -2.49,
+      "dd": 3.4
+    },
+    "shipped": {
+      "filter": {
+        "noise_mode": "on",
+        "entry_threshold": 72
+      },
+      "risk": {
+        "sl_mult": 1.6,
+        "min_rr": 1.8,
+        "be_mult": 3.5
+      }
+    },
+    "rows": [
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 68,
+        "trades": 21,
+        "exp": -0.3799,
+        "dexp": -0.2395,
+        "dsharpe": -4.983,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "entry_threshold",
+        "val": 76,
+        "trades": 7,
+        "exp": 0.0052,
+        "dexp": 0.1456,
+        "dsharpe": 2.575,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "soft",
+        "trades": 28,
+        "exp": -0.1721,
+        "dexp": -0.0317,
+        "dsharpe": -0.867,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "noise_mode",
+        "val": "off",
+        "trades": 28,
+        "exp": -0.1721,
+        "dexp": -0.0317,
+        "dsharpe": -0.867,
+        "reliable": false,
+        "pass": false,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "vwap_exit",
+        "val": "off",
+        "trades": 13,
+        "exp": -0.1269,
+        "dexp": 0.0136,
+        "dsharpe": 0.347,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      },
+      {
+        "scope": "filter",
+        "key": "m1_eff_mode",
+        "val": "on",
+        "trades": 11,
+        "exp": -0.0039,
+        "dexp": 0.1365,
+        "dsharpe": 2.414,
+        "reliable": false,
+        "pass": true,
+        "noise": false
+      }
+    ],
+    "winner": null,
+    "status": "active",
+    "days": 15
+  }
+}
