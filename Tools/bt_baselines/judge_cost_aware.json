@@ -1,0 +1,17 @@
+{
+  "generated": "2026-07-03",
+  "engine": "FaithfulScalpingEngine cost-aware (v2.5.7): comision real + spread salida + SL/TP como el executor (ATR M5) + TP tecnico por grupo (VWAP/Donchian salvo indices)",
+  "window": "10d lookback200 (AAPL 15d)",
+  "risk_value_eur": 7.0,
+  "note": "Expectancy en R CON coste real y con el TP SHIPPEADO (tecnico en forex/metal/cripto/stock, ATR en indices). 1R = risk_value = 7 EUR. Regenerar tras cambios del motor o del universo. EURUSD/ETHUSD inactivos (valores ATR previos, solo para reconciliar su historico).",
+  "expectancy_R": {
+    "XAUUSD": 0.315,
+    "GBPUSD": 0.298,
+    "US500.cash": 0.159,
+    "AAPL": 0.056,
+    "EU50.cash": 0.050,
+    "BTCUSD": 0.008,
+    "EURUSD": -0.060,
+    "ETHUSD": -0.177
+  }
+}

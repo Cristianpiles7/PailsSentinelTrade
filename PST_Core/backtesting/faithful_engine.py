@@ -7,9 +7,9 @@ reproduce el runtime REAL de la estrategia + executor con fidelidad "realista pr
   · SL con la MISMA secuencia que el executor y dimensionado con ATR de M5 (no de M1):
     swing 15 velas M5 (banda 1.5-2.4·ATR_M5) → override target_price_sl estrategia →
     fallback ATR → suelo 0.08% → auto-fix R:R (ciñe SL o estira TP). Fiel a producción.
-  · TP ATR-based, igual que el executor: real_tp_atr = atr_unit·tp_m·ajuste_vol(M5). OJO:
-    el executor IGNORA el tp_price técnico (VWAP/Donchian) de la estrategia — su metadata no
-    expone target_price_tp — así que el backtest tampoco lo usa. Auto-fix de R:R mínimo.
+  · TP por grupo (v2.5.7), espejo del executor: tp_price técnico (VWAP/Donchian) en TODO
+    menos ÍNDICES; en índices, ATR-based (atr_unit·tp_m·ajuste_vol M5). Validado A/B: el
+    técnico mejora forex/metal/cripto (+0.07..+0.10R) pero corta a los índices. Auto-fix R:R.
   · Cierre parcial a 1R (mueve SL a breakeven con padding de comisión).
   · Breakeven a safe_be_mult·ATR antes del parcial.
   · Salida dinámica check_exit_signal (VWAP+momentum) tras 120s de sostenimiento.
@@ -83,12 +83,16 @@ class FaithfulScalpingEngine:
     # Usar 600 anclaba el VWAP mucho más atrás → señales distintas y peores que en real
     # (validado: GBPUSD +0.011R@600 vs +0.314R@200 con el MISMO perfil). 200 = fiel a producción.
     def __init__(self, threshold: int = 70, lookback_m1: int = 200, lookback_m5: int = 240,
-                 warmup: int = 240, model_spread: bool = True):
+                 warmup: int = 240, model_spread: bool = True, use_technical_tp=None):
         self.threshold = threshold
         self.lookback_m1 = lookback_m1
         self.lookback_m5 = lookback_m5
         self.warmup = warmup
         self.model_spread = model_spread
+        # TP: None (default) = AUTO por grupo, espejo del executor tras v2.5.7 — usa el tp_price
+        # técnico (VWAP/Donchian) en TODO menos ÍNDICES (validado A/B: mejora forex/metal/cripto
+        # +0.07..+0.10R, pero empeora índices, que prefieren correr → ATR). True/False fuerzan.
+        self.use_technical_tp = use_technical_tp
         self._eng = PSTBacktestEngine(score_threshold=threshold)
 
     def _asset_class(self, symbol):
@@ -213,18 +217,29 @@ class FaithfulScalpingEngine:
         if abs(fill - sl) < fill * self.MIN_SL_PCT:
             sl = fill - direction * fill * self.MIN_SL_PCT
 
-        # --- TP: réplica de execute_trade — ATR-based. El executor IGNORA el tp_price técnico
-        # de la estrategia (su metadata no expone target_price_tp/tp_target) y usa
-        # real_tp_atr = atr_unit·tp_m con ajuste por volatilidad (M5). tp_m = seed _SCALP_BASE 2.5.
-        tp_m = float(profile.get("tp_mult") or 2.5)
-        vol_ratio = (a5 / ma_atr_m5) if ma_atr_m5 > 0 else 1.0
-        if vol_ratio > 1.2:
-            tp_adj = min(1.5, vol_ratio)
-        elif vol_ratio < 0.8:
-            tp_adj = max(0.7, vol_ratio)
+        # --- TP: por defecto réplica FIEL de execute_trade — ATR-based. El executor IGNORA el
+        # tp_price técnico de la estrategia (su metadata no expone target_price_tp/tp_target) y
+        # usa real_tp_atr = atr_unit·tp_m·ajuste_vol(M5). tp_m = seed _SCALP_BASE 2.5.
+        # use_technical_tp None = AUTO (técnico salvo índices); True/False fuerzan.
+        if self.use_technical_tp is None:
+            use_tech = self._asset_class(symbol) != "INDEX"
         else:
-            tp_adj = 1.0
-        tp = fill + direction * atr_unit * tp_m * tp_adj
+            use_tech = bool(self.use_technical_tp)
+        tp = 0.0
+        if use_tech:
+            tp_sig = sig.get("tp_price", 0) or 0
+            if tp_sig > 0 and ((direction == 1 and tp_sig > fill) or (direction == -1 and tp_sig < fill)):
+                tp = tp_sig
+        if tp == 0:
+            tp_m = float(profile.get("tp_mult") or 2.5)
+            vol_ratio = (a5 / ma_atr_m5) if ma_atr_m5 > 0 else 1.0
+            if vol_ratio > 1.2:
+                tp_adj = min(1.5, vol_ratio)
+            elif vol_ratio < 0.8:
+                tp_adj = max(0.7, vol_ratio)
+            else:
+                tp_adj = 1.0
+            tp = fill + direction * atr_unit * tp_m * tp_adj
 
         # auto-fix R:R (igual que el executor): 1º ceñir el SL hasta suelo 1.0·ATR_M5;
         # si no cabe, estirar el TP. min_rr por símbolo o default (seed 1.8).

@@ -714,7 +714,20 @@ class SymbolTask:
                                                     min_dist = price * 0.0015 # 0.15% del precio como mínimo absoluto
                                                     if sl_dist < min_dist: sl_dist = min_dist
                                                     if tp_dist < min_dist: tp_dist = min_dist
-                                                    
+
+                                                    # v2.5.7: pasar el TP técnico (VWAP/Donchian) al executor para que lo USE.
+                                                    # Antes lo calculaba la estrategia pero el executor lo ignoraba y usaba ATR.
+                                                    # A/B fiel: el técnico mejora forex/metal/cripto (+0.07..+0.10R); en ÍNDICES
+                                                    # el TP-VWAP corta las rachas ganadoras → se deja ATR (no se inyecta).
+                                                    if tp_price_target > 0 and isinstance(best_metadata, dict):
+                                                        try:
+                                                            from ..utils.tech_utils import get_asset_class
+                                                            _tp_grp = get_asset_class(self.symbol)
+                                                        except Exception:
+                                                            _tp_grp = ""
+                                                        if _tp_grp != "INDEX":
+                                                            best_metadata["target_price_tp"] = tp_price_target
+
                                                     await self.executor.execute_trade(
                                                         self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode, best_metadata
                                                     )
