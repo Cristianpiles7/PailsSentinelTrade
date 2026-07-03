@@ -279,16 +279,19 @@ class PSTDatabase:
             # Universo ACTIVO por defecto (whitelist). Solo estos arrancan operando; el resto
             # queda desactivado hasta activarlo desde el Matrix Editor. Son los símbolos con
             # perfil de scalping tuneado y validado en el harness fiel (entry_threshold 72).
-            # Universo re-validado a lookback 200 (fiel a producción, el bot ve 200 barras M1).
-            # A esa escala real la mayoría rinde MEJOR que en los tests a 600; dos cambios:
-            #   · NVDA fuera: negativo a 200 en 2 ventanas (−0.140 @15d, −0.058 @25d).
-            #   · EU50.cash dentro: positivo en muestra grande (+0.164 @20d, sharpe 2.62).
+            # Universo re-validado a lookback 200 con el motor fiel YA consciente de COSTES
+            # reales (comisión del bróker + spread de salida) y con el SL/TP dimensionados
+            # como el executor (ATR de M5, no M1). A esa escala, con costes:
+            #   · EURUSD fuera: negativo tras comisión (−0.06R; forex clavado al suelo, fiable).
+            #   · ETHUSD fuera: negativo tras comisión de cripto ~0.4R (−0.18R). Era el que más
+            #     perdía en vivo. BTCUSD se queda (breakeven +0.00R, a vigilar).
+            #   · NVDA fuera (negativo en 2 ventanas previas).
             enabled_by_default = {
-                'EURUSD', 'GBPUSD',           # FOREX (exp +0.11 / +0.31 @200)
-                'XAUUSD',                     # COMMODITY (+0.28 @200)
-                'BTCUSD', 'ETHUSD',           # CRYPTO (+0.39 / +0.05 @200)
-                'US500.cash', 'EU50.cash',    # INDEX (US500 con override entry 68; EU50 experimental)
-                'AAPL',                       # STOCK (+0.30 @200; NVDA desactivado por negativo)
+                'GBPUSD',                     # FOREX (+0.20R con costes)
+                'XAUUSD',                     # COMMODITY (+0.24R con costes)
+                'BTCUSD',                     # CRYPTO (breakeven ~0.00R; vigilar. ETHUSD fuera)
+                'US500.cash', 'EU50.cash',    # INDEX (+0.16 / +0.05R con costes)
+                'AAPL',                       # STOCK (+0.06R con costes; NVDA fuera)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
@@ -386,7 +389,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-03-a"  # XAUUSD on, EU50 on, NVDA off
+            UNIVERSE_VERSION = "2026-07-03-b"  # EURUSD off, ETHUSD off (negativos tras costes reales)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:

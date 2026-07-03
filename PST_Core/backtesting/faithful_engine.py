@@ -4,13 +4,22 @@ PST · Motor de backtesting FIEL para PSTPrecisionScalping
 A diferencia de PSTBacktestEngine (SL/TP fijos por ATR, sin salidas), este motor
 reproduce el runtime REAL de la estrategia + executor con fidelidad "realista pragmática":
 
-  · SL estructural (metadata.target_price_sl / Donchian) con suelo de seguridad; fallback ATR.
-  · TP técnico (tp_price / banda VWAP) con auto-fix de R:R mínimo; fallback ATR por clase.
+  · SL con la MISMA secuencia que el executor y dimensionado con ATR de M5 (no de M1):
+    swing 15 velas M5 (banda 1.5-2.4·ATR_M5) → override target_price_sl estrategia →
+    fallback ATR → suelo 0.08% → auto-fix R:R (ciñe SL o estira TP). Fiel a producción.
+  · TP ATR-based, igual que el executor: real_tp_atr = atr_unit·tp_m·ajuste_vol(M5). OJO:
+    el executor IGNORA el tp_price técnico (VWAP/Donchian) de la estrategia — su metadata no
+    expone target_price_tp — así que el backtest tampoco lo usa. Auto-fix de R:R mínimo.
   · Cierre parcial a 1R (mueve SL a breakeven con padding de comisión).
   · Breakeven a safe_be_mult·ATR antes del parcial.
   · Salida dinámica check_exit_signal (VWAP+momentum) tras 120s de sostenimiento.
   · Timeout de 30 min por estancamiento.
-  · Coste de spread real embebido en el precio de entrada.
+  · Coste de spread real: medio spread en la ENTRADA + medio en la SALIDA (round-trip
+    completo, sin doble conteo). Antes se cobraba entero en la entrada — mismo neto, pero
+    ahora el coste de salida queda explícito.
+  · Comisión del broker descontada de cada trade en R (config COMMISSION_SPEC, calibrada
+    con datos reales). Dos modelos: per_lot (forex/metal/acción, vía tick_value/tick_size) y
+    pct_notional (cripto, ~0.065% → ~0.39R/trade, DOMINA el edge). Índices: sin comisión.
 
 Usa ventana acotada de lookback (simulación lineal), igual que Tools/pst_backtest_compare.py.
 Resultado en múltiplos de R vía BacktestResult/BacktestTrade (mismas métricas de producción).
@@ -25,12 +34,36 @@ try:
     from ..config import (
         SCALPER_PARTIAL_CLOSE_ENABLED, SCALPER_PARTIAL_CLOSE_PCT,
         SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS, TP_ATR_BY_CLASS,
+        COMMISSION_SPEC,
     )
 except Exception:  # ejecución fuera del paquete (carga suelta)
     SCALPER_PARTIAL_CLOSE_ENABLED = True
     SCALPER_PARTIAL_CLOSE_PCT = 0.50
     SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS = 2.0
     TP_ATR_BY_CLASS = {"CRYPTO": 4.0, "INDEX": 5.5, "METAL": 3.5, "FOREX": 6.0}
+    COMMISSION_SPEC = {
+        "FOREX": {"per_lot": 4.3}, "METAL": {"per_lot": 5.5}, "COMMODITY": {"per_lot": 5.5},
+        "CRYPTO": {"pct_notional": 0.00065}, "INDEX": {"per_lot": 0.0}, "EQUITIES": {"per_lot": 0.011},
+    }
+
+
+def _commission_r(spec, entry_price, sl_dist, value_per_price):
+    """Comisión round-turn del trade expresada en R (múltiplos de riesgo).
+
+    · per_lot (forex/metal/acción): comm_R = per_lot / (R_price · valor_por_precio_por_lote).
+      El riesgo en dinero se cancela (comm_money/M = per_lot/(R·vpp)); necesita tick data.
+    · pct_notional (cripto): comm_R = pct · precio / R_price. El nocional y el lote se
+      cancelan → NO necesita tick data, solo precio y distancia de SL.
+    """
+    if not spec or sl_dist <= 0:
+        return 0.0
+    if "pct_notional" in spec:
+        pct = float(spec["pct_notional"])
+        return pct * entry_price / sl_dist if pct > 0 else 0.0
+    per_lot = float(spec.get("per_lot", 0.0))
+    if per_lot > 0 and value_per_price:
+        return per_lot / (sl_dist * value_per_price)
+    return 0.0
 
 
 class FaithfulScalpingEngine:
@@ -76,9 +109,20 @@ class FaithfulScalpingEngine:
         a_class = self._asset_class(symbol)
         tp_mult = TP_ATR_BY_CLASS.get(a_class, 4.0)
         spread = spread_dist if self.model_spread else 0.0
+        half_spread = spread / 2.0            # medio en entrada, medio en salida
         if point is None:
             point = 10 ** -(self._infer_digits(df_m1))
         be_pad = SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS * point
+
+        # Comisión → R (ver _commission_r). El modelo per_lot necesita tick_value/tick_size;
+        # el pct_notional (cripto) no. Aviso si hace falta tick data y no está (caché viejo).
+        comm_spec = COMMISSION_SPEC.get(a_class, {})
+        tick_value = data.get("tick_value")
+        tick_size = data.get("tick_size")
+        value_per_price = (tick_value / tick_size) if (tick_value and tick_size) else None
+        if comm_spec.get("per_lot", 0.0) > 0 and value_per_price is None:
+            logger.warning("%s: comisión per_lot configurada pero sin tick_value/tick_size "
+                           "(caché viejo) → comisión NO aplicada. Regenerar con --refresh.", symbol)
 
         period_start = df_m1.iloc[self.warmup]["time"]
         period_end = df_m1.iloc[-1]["time"]
@@ -113,7 +157,12 @@ class FaithfulScalpingEngine:
                 i += 1
                 continue
 
-            pos = self._open(sig, bar, symbol, atr, entry, tp_mult, spread, be_pad, profile)
+            # ATR(14) M5 + media 20 + swing 15 velas M5 → el executor dimensiona SL y TP con
+            # ESTO (M5), no con el ATR de M1 de la estrategia. Corrige el bug de fidelidad.
+            atr_m5, ma_atr_m5, m5_low15, m5_high15 = self._m5_sl_inputs(m5_slice)
+
+            pos = self._open(sig, bar, symbol, atr, entry, tp_mult, half_spread, be_pad,
+                             profile, comm_spec, value_per_price, atr_m5, ma_atr_m5, m5_low15, m5_high15)
             i += 1
 
         if pos is not None:  # abierto al final del periodo
@@ -125,37 +174,70 @@ class FaithfulScalpingEngine:
         return res
 
     # ------------------------------------------------------------------ apertura
-    def _open(self, sig, bar, symbol, atr, entry, tp_mult, spread, be_pad, profile):
+    def _open(self, sig, bar, symbol, atr, entry, tp_mult, half_spread, be_pad, profile,
+              comm_spec=None, value_per_price=None, atr_m5=0.0, ma_atr_m5=0.0,
+              m5_low15=None, m5_high15=None):
         direction = int(entry)
         raw = float(bar["close"])
-        fill = raw + direction * spread          # pagar spread en la entrada
+        fill = raw + direction * half_spread     # medio spread en la entrada (mitad round-trip)
         meta = sig.get("metadata", {}) or {}
+        sl_m = float(profile.get("sl_mult") or self.SL_MULT)   # 1.6 (seed)
+        # FIDELIDAD: el executor dimensiona SL y TP con ATR de M5, no con el de M1 de la
+        # estrategia (M5_ATR ≈ 2-3× M1_ATR). Reproducimos su secuencia y su atr_unit.
+        a5 = atr_m5 if (atr_m5 and atr_m5 > 0) else atr
+        # atr_unit del executor = max(ATR_M1·orch_sl_mult, 0.15%·precio)/2.5 (el orquestador
+        # suelo la distancia a 0.15% antes de pasarla). Alimenta el fallback de SL y el TP.
+        orch_sl_mult = 3.5 if (len(symbol) > 3 or "500" in symbol or "30" in symbol) else 2.5
+        atr_unit = max(atr * orch_sl_mult, fill * 0.0015) / 2.5
 
-        # SL: estructural si viene y valida lado; si no, ATR
+        # --- SL: réplica de execute_trade (mismo orden de prioridad) ---
         sl = 0.0
+        # 1) SL estructural: swing de 15 velas M5, banda 1.5 ≤ dist/ATR_M5 ≤ sl_m·1.5
+        if a5 > 0:
+            if direction == 1 and m5_low15 is not None:
+                cand = m5_low15 - 0.2 * a5
+                if 1.5 <= (fill - cand) / a5 <= sl_m * 1.5:
+                    sl = cand
+            elif direction == -1 and m5_high15 is not None:
+                cand = m5_high15 + 0.2 * a5
+                if 1.5 <= (cand - fill) / a5 <= sl_m * 1.5:
+                    sl = cand
+        # 2) Override: SL estructural de la estrategia (M1-Donchian) si viene y valida lado
         struct_sl = meta.get("target_price_sl", 0) or 0
         if struct_sl > 0 and ((direction == 1 and struct_sl < fill) or (direction == -1 and struct_sl > fill)):
             sl = struct_sl
+        # 3) Fallback: real_sl_atr del executor = atr_unit·sl_m
         if sl == 0:
-            sl_mult = float(profile.get("sl_mult") or self.SL_MULT)
-            sl = fill - direction * sl_mult * atr
-        # suelo de seguridad
+            sl = fill - direction * atr_unit * sl_m
+        # 4) Suelo de seguridad 0.08%
         if abs(fill - sl) < fill * self.MIN_SL_PCT:
             sl = fill - direction * fill * self.MIN_SL_PCT
 
-        # TP: técnico si viene y valida lado; si no, ATR por clase
-        tp = 0.0
-        tp_sig = sig.get("tp_price", 0) or 0
-        if tp_sig > 0 and ((direction == 1 and tp_sig > fill) or (direction == -1 and tp_sig < fill)):
-            tp = tp_sig
-        if tp == 0:
-            tp = fill + direction * tp_mult * atr
+        # --- TP: réplica de execute_trade — ATR-based. El executor IGNORA el tp_price técnico
+        # de la estrategia (su metadata no expone target_price_tp/tp_target) y usa
+        # real_tp_atr = atr_unit·tp_m con ajuste por volatilidad (M5). tp_m = seed _SCALP_BASE 2.5.
+        tp_m = float(profile.get("tp_mult") or 2.5)
+        vol_ratio = (a5 / ma_atr_m5) if ma_atr_m5 > 0 else 1.0
+        if vol_ratio > 1.2:
+            tp_adj = min(1.5, vol_ratio)
+        elif vol_ratio < 0.8:
+            tp_adj = max(0.7, vol_ratio)
+        else:
+            tp_adj = 1.0
+        tp = fill + direction * atr_unit * tp_m * tp_adj
 
-        # auto-fix R:R mínimo (estirar TP) — min_rr por símbolo o default (seed 1.8)
+        # auto-fix R:R (igual que el executor): 1º ceñir el SL hasta suelo 1.0·ATR_M5;
+        # si no cabe, estirar el TP. min_rr por símbolo o default (seed 1.8).
         min_rr = float(profile.get("min_rr") or self.MIN_RR)
         sl_dist = abs(fill - sl)
-        if sl_dist > 0 and abs(tp - fill) / sl_dist < min_rr:
-            tp = fill + direction * sl_dist * min_rr
+        tp_dist = abs(tp - fill)
+        if sl_dist > 0 and tp_dist / sl_dist < min_rr:
+            ideal_sl_dist = tp_dist / min_rr
+            if a5 > 0 and ideal_sl_dist >= 1.0 * a5:
+                sl = fill - direction * ideal_sl_dist       # ceñir SL
+            else:
+                tp = fill + direction * sl_dist * min_rr    # estirar TP
+        sl_dist = abs(fill - sl)                            # R final tras el auto-fix
 
         t = BacktestTrade(
             entry_time=bar["time"], exit_time=None, symbol=symbol, strategy="PST-PrecisionScalping",
@@ -169,6 +251,9 @@ class FaithfulScalpingEngine:
         t._partial = False
         t._be = False
         t._be_pad = be_pad
+        t._half_spread = half_spread            # medio spread a cobrar también en la salida
+        # Comisión en R (round-turn completa, cobrada una vez al cierre final).
+        t._commission_r = _commission_r(comm_spec, fill, sl_dist, value_per_price)
         # BE por símbolo: executor usa max(1.5, be_mult) para scalpers
         t._be_mult = max(1.5, float(profile.get("be_mult") or self.SAFE_BE_MULT))
         return t
@@ -197,7 +282,9 @@ class FaithfulScalpingEngine:
             reached_1r = (h >= fill + R) if d == 1 else (l <= fill - R)
             if reached_1r:
                 pct = SCALPER_PARTIAL_CLOSE_PCT
-                t._realized += pct * 1.0            # media parte a +1R
+                # media parte a +1R, menos el medio spread de salida (round-trip)
+                hs = getattr(t, "_half_spread", 0.0)
+                t._realized += pct * ((R - hs) / R)
                 t._rem -= pct
                 t._partial = True
                 t._be = True
@@ -234,10 +321,17 @@ class FaithfulScalpingEngine:
         return False
 
     def _close_remaining(self, t, price, time, reason):
-        """Cierra la fracción remanente a 'price' y finaliza el trade."""
+        """Cierra la fracción remanente a 'price' y finaliza el trade.
+
+        Aplica el medio spread de salida (cruzas el spread al salir) y descuenta la
+        comisión round-turn una sola vez, sobre el total del trade.
+        """
         d, fill, R = t.direction, t.entry_price, t._R
-        r_leg = (d * (price - fill) / R) if R > 0 else 0.0
+        hs = getattr(t, "_half_spread", 0.0)
+        eff = price - d * hs                          # peor precio al cruzar el spread de salida
+        r_leg = (d * (eff - fill) / R) if R > 0 else 0.0
         t._realized += t._rem * r_leg
+        t._realized -= getattr(t, "_commission_r", 0.0)   # comisión round-turn (una vez)
         t._rem = 0.0
         t.exit_price = price
         t.exit_time = time
@@ -245,6 +339,24 @@ class FaithfulScalpingEngine:
         if not t.exit_reason or reason != "EOD":
             t.exit_reason = reason
         t.result = "WIN" if t.pnl_r > 0 else "LOSS"
+
+    @staticmethod
+    def _m5_sl_inputs(m5_slice):
+        """ATR(14) M5, su media móvil de 20 (para el ajuste de volatilidad del TP) y el
+        swing low/high de las últimas 15 velas M5 — lo que el executor usa para SL y TP.
+        Devuelve (atr_m5, ma_atr_m5, low15, high15)."""
+        atr_m5 = ma_atr_m5 = 0.0
+        try:
+            import pandas_ta as pta
+            s = pta.atr(m5_slice["high"], m5_slice["low"], m5_slice["close"], length=14)
+            if s is not None and len(s):
+                v = float(s.iloc[-1]); atr_m5 = v if v == v else 0.0
+                mv = float(s.rolling(20).mean().iloc[-1]); ma_atr_m5 = mv if mv == mv else atr_m5
+        except Exception:
+            pass
+        low15 = float(m5_slice["low"].tail(15).min()) if len(m5_slice) else None
+        high15 = float(m5_slice["high"].tail(15).max()) if len(m5_slice) else None
+        return atr_m5, ma_atr_m5, low15, high15
 
     @staticmethod
     def _infer_digits(df_m1):

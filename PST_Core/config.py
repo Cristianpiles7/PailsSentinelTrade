@@ -121,6 +121,24 @@ SCALPER_PARTIAL_CLOSE_ENABLED = True
 SCALPER_PARTIAL_CLOSE_PCT = 0.50
 SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS = 2.0
 
+# COMISIÓN DEL BROKER — CALIBRADA CON DATOS REALES de la cuenta (2026-07-03), divisa EUR.
+# El motor fiel (FaithfulScalpingEngine) la descuenta de cada trade convertida a R, ADEMÁS
+# del spread. Antes se ignoraba → el juez era optimista justo en la magnitud del edge.
+# Dos modelos, porque el bróker cobra distinto según clase (verificado en el historial):
+#   · "per_lot": comisión FIJA por lote round-turn (forex, metales, acciones).
+#   · "pct_notional": PORCENTAJE del nocional round-turn (cripto). Como en cripto el SL está
+#     cerca en % del precio, esto equivale a ~0.39R por trade → domina cualquier edge.
+# Medidos: BTCUSD 0.08→2.80€ y 0.06→2.11€ (~0.065% nocional) · ETHUSD 0.28→2.72€ (~0.065%)
+#   · EUR/GBPUSD ~4.3€/lote · XAUUSD 0.02→0.11€ (~5.5€/lote) · US500 0€ · AAPL ~0€/acción.
+COMMISSION_SPEC = {
+    "FOREX":     {"per_lot": 4.3},
+    "METAL":     {"per_lot": 5.5},
+    "COMMODITY": {"per_lot": 5.5},
+    "CRYPTO":    {"pct_notional": 0.00065},   # ~0.065% del nocional, round-turn
+    "INDEX":     {"per_lot": 0.0},            # el bróker no cobra comisión en índices
+    "EQUITIES":  {"per_lot": 0.011},          # ~0.011€/acción (volumen = nº de acciones)
+}
+
 # Estrategias activas globalmente
 ENABLED_STRATEGIES = [
     "PST-RangeBreaker",

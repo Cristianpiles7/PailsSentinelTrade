@@ -77,9 +77,13 @@ def get_data(symbol, days, refresh=False):
     info = mt5.symbol_info(symbol)
     point = info.point if info else None
     spread_dist = (info.spread * info.point) if info else 0.0
+    # tick_value/tick_size: para convertir la comisión round-turn a R en el motor fiel.
+    tick_value = getattr(info, "trade_tick_value", None) if info else None
+    tick_size = getattr(info, "trade_tick_size", None) if info else None
 
     end_dt = datetime.now(); start_dt = end_dt - timedelta(days=days)
-    out = {"point": point, "spread_dist": spread_dist}
+    out = {"point": point, "spread_dist": spread_dist,
+           "tick_value": tick_value, "tick_size": tick_size}
     for name, const in {"m1": mt5.TIMEFRAME_M1, "m5": mt5.TIMEFRAME_M5}.items():
         rates = mt5.copy_rates_range(symbol, const, start_dt, end_dt)
         if rates is None or len(rates) == 0:
