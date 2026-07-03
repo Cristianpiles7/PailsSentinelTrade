@@ -380,6 +380,26 @@ class PSTDatabase:
                            OR filter_profile = '{"noise_mode": "soft", "entry_threshold": 72, "vwap_exit": "off"}')
                 """, (filter_profile, sym))
 
+            # --- MIGRACIÓN DE UNIVERSO (one-time, versionada) ---
+            # El seed con INSERT OR IGNORE NO cambia is_active en BBDD existentes (para no pisar
+            # toggles manuales). Pero cuando cambiamos DELIBERADAMENTE el universo (enabled_by_default)
+            # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
+            # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
+            # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
+            UNIVERSE_VERSION = "2026-07-03-a"  # XAUUSD on, EU50 on, NVDA off
+            async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
+                _uni_row = await cur.fetchone()
+            if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:
+                for sym, stype in master_config:
+                    want = 1 if sym in enabled_by_default else 0
+                    await db.execute("UPDATE symbols_config SET is_active = ? WHERE symbol = ?", (want, sym))
+                    await db.execute("UPDATE symbol_strategies SET is_active = ? WHERE symbol = ?", (want, sym))
+                await db.execute(
+                    "INSERT OR REPLACE INTO bot_config (key, value) VALUES ('universe_migration_applied', ?)",
+                    (UNIVERSE_VERSION,))
+                logger.info(f"🔄 [UNIVERSE] Universo sincronizado a enabled_by_default ({UNIVERSE_VERSION}): "
+                            f"{sorted(enabled_by_default)}")
+
             await db.commit()
             logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v3.0) en {self.db_path}")
 
