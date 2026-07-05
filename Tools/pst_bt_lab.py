@@ -155,22 +155,29 @@ def _profile_for(symbol):
 # contamina cualquier comparación de una sola palanca. Mantener sincronizado a mano con
 # GROUP_DEFAULTS si se cambia allí.
 SHIPPED_PROFILES = {
-    "FOREX":     {"noise_mode": "on",   "entry_threshold": 72},
-    "COMMODITY": {"noise_mode": "on",   "entry_threshold": 72},
-    "METAL":     {"noise_mode": "on",   "entry_threshold": 72},
+    # adx_ok 18->21 en FOREX/COMMODITY/METAL/INDEX: group sweep 2026-07-05, confirmado en
+    # 4 grupos (INDEX/FOREX/METAL/pool) — ver GROUP_DEFAULTS en database.py.
+    "FOREX":     {"noise_mode": "on",   "entry_threshold": 72, "adx_ok": 21},
+    "COMMODITY": {"noise_mode": "on",   "entry_threshold": 72, "adx_ok": 21},
+    "METAL":     {"noise_mode": "on",   "entry_threshold": 72, "adx_ok": 21},
     "STOCK":     {"noise_mode": "on",   "entry_threshold": 72},
-    "INDEX":     {"noise_mode": "on",   "entry_threshold": 72, "vwap_exit": "off"},
+    "INDEX":     {"noise_mode": "on",   "entry_threshold": 72, "vwap_exit": "off", "adx_ok": 21},
     "CRYPTO":    {"noise_mode": "soft", "entry_threshold": 72, "vwap_exit": "off"},
 }
 SYMBOL_PROFILE_OVERRIDES = {
     "ETHUSD": {"m1_eff_mode": "on"},
+    "US500.cash": {"entry_threshold": 68},
+    "US30.cash": {"m1_eff_mode": "on"},
+    "UK100.cash": {"adx_ok": 18},  # unica excepcion: adx_ok=21 empeoro en el group sweep
 }
 
 
 # C.4: SL/TP/BE compartidos hoy por TODOS los símbolos (_SCALP_BASE en database.py).
 # Nunca tuneados por símbolo — el sweep los trata como palancas "top" (columnas de
 # symbol_strategies), separadas del "filter" (JSON de filter_profile).
-SHIPPED_RISK = {"sl_mult": 1.6, "min_rr": 1.8, "be_mult": 3.5}
+# tp_mult solo gobierna el TP ATR-based (índices y fallback); en forex/metal/cripto el
+# TP técnico (VWAP/Donchian) tiene prioridad y esta palanca apenas mueve nada.
+SHIPPED_RISK = {"sl_mult": 1.6, "min_rr": 1.8, "be_mult": 3.5, "tp_mult": 2.5}
 
 
 def _get_group(symbol):
@@ -223,6 +230,12 @@ def _sweep_candidates(shipped_full: dict):
     for alt in (round(be - 1.0, 2), round(be + 1.0, 2)):
         if alt >= 1.5:
             out.append(("top", "be_mult", alt))
+    # tp_mult: TP más corto (sube WR, baja avg win) vs más largo (al revés). El juez
+    # decide por expectancy+sharpe, no por WR — el chequeo direccional filtra ruido.
+    tp = float(t.get("tp_mult", 2.5))
+    for alt in (round(tp - 0.5, 2), round(tp + 0.5, 2)):
+        if alt >= 1.0:
+            out.append(("top", "tp_mult", alt))
     return out
 
 
@@ -338,7 +351,8 @@ async def main():
             shipped_f, shipped_t = shipped_full["filter"], shipped_full["top"]
 
             def _make_profile(f, t):
-                return {"filter_profile": f, "sl_mult": t["sl_mult"], "min_rr": t["min_rr"], "be_mult": t["be_mult"]}
+                return {"filter_profile": f, "sl_mult": t["sl_mult"], "min_rr": t["min_rr"],
+                        "be_mult": t["be_mult"], "tp_mult": t.get("tp_mult", 2.5)}
 
             print(f"\n{'='*70}\n  SWEEP {sym}  (grupo {_get_group(sym)})\n"
                   f"  filtros shippeados: {shipped_f}\n  riesgo shippeado:   {shipped_t}\n{'='*70}")

@@ -259,6 +259,13 @@ class PSTDatabase:
             for legacy in legacy_strategies:
                 await db.execute("DELETE FROM symbol_strategies WHERE strategy_name = ?", (legacy,))
 
+            # Migración 2026-07-04: nombres de símbolo que NO existen en FTMO (filas inertes,
+            # jamás pudieron operar). Los reales son US30.cash y US100.cash (Nasdaq) — se
+            # borran los muertos y la siembra maestra re-inserta con el nombre correcto.
+            for dead in ('US30', 'NAS100.cash'):
+                await db.execute("DELETE FROM symbols_config WHERE symbol = ?", (dead,))
+                await db.execute("DELETE FROM symbol_strategies WHERE symbol = ?", (dead,))
+
             # --- NUEVO: SIEMBRA MAESTRA DE 32 SÍMBOLOS Y ESTRATEGIAS (v1.4.2+) ---
             # Configuración Maestra Final (Sincronizada v1.4.4)
             master_config = [
@@ -269,8 +276,8 @@ class PSTDatabase:
                 ('XNGUSD', 'COMMODITY'), ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
                 ('SOLUSD', 'CRYPTO'), ('ADAUSD', 'CRYPTO'), ('DOTUSD', 'CRYPTO'),
                 ('LNKUSD', 'CRYPTO'), ('LTCUSD', 'CRYPTO'), ('UNIUSD', 'CRYPTO'),
-                ('XLMUSD', 'CRYPTO'), ('XRPUSD', 'CRYPTO'), ('NAS100.cash', 'INDEX'),
-                ('US30', 'INDEX'), ('US500.cash', 'INDEX'), ('GER40.cash', 'INDEX'),
+                ('XLMUSD', 'CRYPTO'), ('XRPUSD', 'CRYPTO'), ('US100.cash', 'INDEX'),
+                ('US30.cash', 'INDEX'), ('US500.cash', 'INDEX'), ('GER40.cash', 'INDEX'),
                 ('EU50.cash', 'INDEX'), ('UK100.cash', 'INDEX'), ('TSLA', 'STOCK'),
                 ('NVDA', 'STOCK'), ('AAPL', 'STOCK'), ('AMZN', 'STOCK'),
                 ('GOOG', 'STOCK'), ('META', 'STOCK'), ('MSFT', 'STOCK')
@@ -286,12 +293,24 @@ class PSTDatabase:
             #   · ETHUSD fuera: negativo tras comisión de cripto ~0.4R (−0.18R). Era el que más
             #     perdía en vivo. BTCUSD se queda (breakeven +0.00R, a vigilar).
             #   · NVDA fuera (negativo en 2 ventanas previas).
+            # Expansión 2026-07-04: barrido COMPLETO del universo inactivo (22 símbolos) a
+            # lookback 200 con costes reales, en 2 ventanas independientes (15d y 30d;
+            # baselines en Tools/bt_baselines/scan200_*). Confirmados los 4 índices nuevos
+            # + MSFT (positivos en AMBAS ventanas); UK100 entra como EXPERIMENTAL (PF 1.19,
+            # el más fino). Todo lo demás quedó descartado por costes: cruces forex
+            # (−0.47..−1.04R), XAGUSD, petróleo, altcoins (comisión pct_notional) y el
+            # resto de acciones (GOOG/META/AMZN/TSLA negativas).
             enabled_by_default = {
                 'GBPUSD',                     # FOREX (+0.20R con costes)
                 'XAUUSD',                     # COMMODITY (+0.24R con costes)
                 'BTCUSD',                     # CRYPTO (breakeven ~0.00R; vigilar. ETHUSD fuera)
                 'US500.cash', 'EU50.cash',    # INDEX (+0.16 / +0.05R con costes)
+                'US100.cash',                 # INDEX (+0.29R@30d PF1.86 — el mejor del barrido)
+                'US30.cash',                  # INDEX (+0.20R@30d PF1.73 DD3.6R)
+                'GER40.cash',                 # INDEX (+0.19R@30d PF1.56; +0.46R@15d)
+                'UK100.cash',                 # INDEX EXPERIMENTAL (+0.07R@30d PF1.19 — vigilar)
                 'AAPL',                       # STOCK (+0.06R con costes; NVDA fuera)
+                'MSFT',                       # STOCK (+0.14R@30d PF1.47)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
@@ -304,14 +323,24 @@ class PSTDatabase:
             GROUP_DEFAULTS = {
                 # FOREX: entry_threshold 72 (más selectivo) — validado en harness fiel sobre
                 # EURUSD/GBPUSD/USDJPY: sube WR y baja drawdown en los 3, rescata USDJPY.
-                "FOREX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                # adx_ok 18→21 (group sweep 2026-07-04): GBPUSD confirmado en 2 ventanas
+                # (30d Δexp +0.026R, 15d Δexp +0.057R), mismo hallazgo y misma dirección que
+                # INDEX y METAL — 4 confirmaciones independientes en 3 grupos distintos.
+                "FOREX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72, "adx_ok": 21}'},
                 # COMMODITY/METAL: entry_threshold 72 — validado en XAUUSD: recorta drawdown
                 # ~38% (6.3→3.9R) con expectancy/Sharpe estables.
-                "COMMODITY": {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
-                "METAL":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
+                # adx_ok 18→21: XAUUSD confirmado en 2 ventanas (30d Δexp +0.020R, 15d +0.027R).
+                "COMMODITY": {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72, "adx_ok": 21}'},
+                "METAL":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72, "adx_ok": 21}'},
                 # INDEX: entry_threshold 72 + vwap_exit OFF — validado en US500.cash: la salida
                 # dinámica corta rachas ganadoras antes de tiempo (A/B fiel), mejor dejarlas correr.
-                "INDEX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72, "vwap_exit": "off"}'},
+                # adx_ok 18→21 (más exigente: solo cuenta "tendencia aceptable" con ADX M5 más
+                # fuerte) — group sweep 2026-07-04, muestra agregada de 162 trades (US500/US100/
+                # US30/GER40, 15d): Δexp +0.059R/Δsharpe +1.13, único ganador limpio de 20
+                # palancas barridas. Confirmado en 2ª ventana (30d, los 4 símbolos: todos mejoran,
+                # +0.026 a +0.099R) y en holdout EU50.cash (+0.119R, nunca vio el tuning). Único
+                # fallo: UK100.cash (−0.035R) → override explícito abajo mantiene su 18 original.
+                "INDEX":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72, "vwap_exit": "off", "adx_ok": 21}'},
                 # STOCK: sin A/B propio de vwap_exit (empate en AAPL) → se mantiene "on" por defecto.
                 "STOCK":     {**_SCALP_BASE, "filter_profile": '{"noise_mode": "on", "entry_threshold": 72}'},
                 # CRYPTO: ruido soft + entry_threshold 72 + vwap_exit OFF — validado en BTC/ETH:
@@ -329,6 +358,15 @@ class PSTDatabase:
             # -30.5R→-18.5R en ETHUSD, sin tocar BTCUSD/resto del universo.
             SYMBOL_FILTER_OVERRIDES = {
                 'ETHUSD': {'m1_eff_mode': 'on'},
+                # UK100.cash: mantiene el adx_ok=18 ORIGINAL del grupo INDEX (no el 21 nuevo).
+                # Es el único de los 6 índices donde adx_ok=21 empeoró (−0.035R@15d) en el
+                # group sweep — símbolo ya marcado como el más fino/experimental del universo.
+                'UK100.cash': {'adx_ok': 18},
+                # US30.cash: filtro de eficiencia M1 anti-whipsaw — validado en 2 ventanas
+                # (sweep 15d: exp +0.212→+0.382; confirmación 30d: +0.201→+0.295, WR 58→66%,
+                # PF 1.73→2.21, DD 3.6→2.6R). NO es señal de grupo: falla en US100/UK100
+                # (mismo patrón símbolo-específico que ETHUSD vs BTCUSD).
+                'US30.cash': {'m1_eff_mode': 'on'},
                 # US500.cash: entry_threshold 68 (más laxo que el 72 del grupo INDEX) — validado a
                 # lookback 200 (fiel a producción) en 2 ventanas: 10d exp +0.048→+0.150, 20d
                 # +0.043→+0.081. El 72 (calibrado a lookback 600, no fiel) era demasiado exigente
@@ -389,7 +427,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-03-b"  # EURUSD off, ETHUSD off (negativos tras costes reales)
+            UNIVERSE_VERSION = "2026-07-04-a"  # +US100/US30/GER40/MSFT (sólidos) +UK100 (experimental); US30/NAS100.cash renombrados a nombres reales FTMO
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:
@@ -402,6 +440,30 @@ class PSTDatabase:
                     (UNIVERSE_VERSION,))
                 logger.info(f"🔄 [UNIVERSE] Universo sincronizado a enabled_by_default ({UNIVERSE_VERSION}): "
                             f"{sorted(enabled_by_default)}")
+
+            # --- MIGRACIÓN DE FILTER_PROFILE: adx_ok 18→21 (one-time, versionada) ---
+            # El backfill de más arriba solo dispara si el filter_profile actual coincide
+            # EXACTO con un string "viejo" conocido — no alcanza a símbolos con override propio
+            # (US30.cash/ETHUSD ya tienen su clave extra). Se fija el filter_profile EXACTO
+            # (grupo+override) para TODOS los símbolos de la siembra, una sola vez por versión;
+            # toggles/ediciones manuales POSTERIORES a esta migración persisten.
+            PROFILE_MIGRATION_VERSION = "2026-07-04-c"  # group sweep: adx_ok 21 en INDEX/FOREX/METAL/COMMODITY, salvo UK100.cash (18)
+            async with db.execute("SELECT value FROM bot_config WHERE key='filter_profile_migration_applied'") as cur:
+                _prof_row = await cur.fetchone()
+            if not _prof_row or _prof_row[0] != PROFILE_MIGRATION_VERSION:
+                for sym, stype in master_config:
+                    g = GROUP_DEFAULTS.get(stype, _SCALP_FALLBACK)
+                    merged = json.loads(g["filter_profile"])
+                    sym_override = SYMBOL_FILTER_OVERRIDES.get(sym)
+                    if sym_override:
+                        merged.update(sym_override)
+                    await db.execute(
+                        "UPDATE symbol_strategies SET filter_profile=? WHERE symbol=? AND strategy_name='PST-PrecisionScalping'",
+                        (json.dumps(merged), sym))
+                await db.execute(
+                    "INSERT OR REPLACE INTO bot_config (key, value) VALUES ('filter_profile_migration_applied', ?)",
+                    (PROFILE_MIGRATION_VERSION,))
+                logger.info(f"🔄 [FILTER_PROFILE] Migración {PROFILE_MIGRATION_VERSION} aplicada a todo el universo")
 
             await db.commit()
             logger.info(f"✅ Base de Datos Inicializada y Sembrada (MAESTRA v3.0) en {self.db_path}")

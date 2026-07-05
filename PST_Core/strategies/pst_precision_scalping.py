@@ -134,7 +134,64 @@ class PSTPrecisionScalping:
         # cripto e índices (corta rachas ganadoras antes de tiempo) — se ajusta por grupo
         # en el seed de la BBDD, no aquí (este 'on' es el default genérico).
         "vwap_exit": "on",
+        # Borde de sesión: 'off' por defecto (sin efecto, retrocompatible). 'on' penaliza
+        # entradas muy cerca de la apertura/cierre real del instrumento. Solo tiene
+        # fundamento donde existe un GAP diario de verdad (mercado cerrado de un día para
+        # otro), verificado empíricamente en MT5 (no por suposición de "horario NYSE/Xetra
+        # en CET" — el server del bróker no sigue el DST de EEUU y difiere ~1h):
+        #   · EQUITIES (AAPL/MSFT): cierre real 22:59→16:35 del día siguiente.
+        #   · EU50.cash: cierre real 22:59→09:05 (única entre los índices — el resto,
+        #     US500/US100/US30/GER40/UK100, cotiza casi continuo con solo una pausa de
+        #     mantenimiento de ~76min sobre medianoche, SIN gap real de sesión).
+        # FOREX/METAL/resto de INDEX cotizan sin gap real (el usuario opera 24h ahí) — no
+        # se aplica. CRIPTO 24/7, sin sesión. Ver _SESSION_BOUNDARIES.
+        "session_edge_mode": "off",
+        "session_edge_buffer_min": 15,
+        "session_edge_penalty": 12,
     }
+
+    # Bordes de sesión (minutos desde medianoche, hora bróker/MT5) — horarios REALES
+    # verificados en MT5 (varios días consecutivos, sin excepción), no calculados por
+    # zona horaria teórica. Solo los símbolos con un gap diario genuino tienen entrada aquí.
+    _SESSION_BOUNDARIES = {
+        "EQUITIES": [(16 * 60 + 35, 22 * 60 + 59)],
+    }
+    _SESSION_BOUNDARIES_BY_SYMBOL = {
+        "EU50.cash": [(9 * 60 + 5, 22 * 60 + 59)],
+    }
+
+    _EQUITIES_KEYWORDS = ("NVDA", "TSLA", "AAPL", "MSFT", "GOOG", "AMZN", "META", "NFLX")
+
+    @classmethod
+    def _session_edge_distance(cls, symbol, bar_time):
+        """Minutos hasta el borde de sesión (apertura/cierre) más cercano. None si el
+        símbolo no tiene un gap diario real (forex, metal, cripto, y la mayoría de índices).
+
+        Fallback SIN import relativo (igual que _is_crypto): el harness de backtest carga
+        esta estrategia como módulo suelto (sin paquete padre) para comparar working-tree
+        vs baseline de git, y ahí `from ..utils import ...` lanza ImportError silencioso —
+        sin el fallback, el filtro nunca se evaluaría en el backtest (bug real detectado
+        y corregido: los 30 días de prueba inicial dieron 0 penalizaciones)."""
+        bounds = cls._SESSION_BOUNDARIES_BY_SYMBOL.get(symbol)
+        if bounds is None:
+            try:
+                from ..utils.tech_utils import get_asset_class
+                a_class = get_asset_class(symbol)
+            except Exception:
+                s = (symbol or "").upper()
+                a_class = "EQUITIES" if any(k in s for k in cls._EQUITIES_KEYWORDS) else None
+            bounds = cls._SESSION_BOUNDARIES.get(a_class)
+        if not bounds:
+            return None
+        minute_of_day = bar_time.hour * 60 + bar_time.minute
+        best = None
+        for start, end in bounds:
+            for edge in (start, end):
+                d = abs(minute_of_day - edge)
+                d = min(d, 1440 - d)  # wrap-around medianoche
+                if best is None or d < best:
+                    best = d
+        return best
 
     @classmethod
     def _resolve_profile(cls, kwargs, is_crypto: bool) -> dict:
@@ -473,6 +530,19 @@ class PSTPrecisionScalping:
                 factors.append({"k": "Eficiencia M1", "v": f"{m1_eff:.2f} — whipsaw M1 (ruido bajo la señal) ⚠️", "score": -pen})
             else:
                 factors.append({"k": "Eficiencia M1", "v": f"{m1_eff:.2f} — aceptable", "score": 0})
+
+        # 7c. Borde de sesión — apagado por defecto (ver session_edge_mode). Solo tiene
+        # efecto en grupos con boundaries definidos (hoy: EQUITIES).
+        if prof.get("session_edge_mode", "off") != "off":
+            buf = int(prof.get("session_edge_buffer_min", 15))
+            edge_dist = self._session_edge_distance(symbol, df_m1["time"].iloc[-1])
+            if edge_dist is not None:
+                if edge_dist <= buf:
+                    pen = int(prof.get("session_edge_penalty", 12))
+                    score -= pen
+                    factors.append({"k": "Borde de sesión", "v": f"{edge_dist:.0f} min de apertura/cierre — descontado ⚠️", "score": -pen})
+                else:
+                    factors.append({"k": "Borde de sesión", "v": "Fuera del margen de apertura/cierre", "score": 0})
 
         # 8. Anti-spike: vela parabólica o impulso agotado
         last_candle_range = self._last(high_m1) - self._last(low_m1)

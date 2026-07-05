@@ -253,7 +253,8 @@ def get_asset_class(symbol: str) -> str:
     
     # INDICES (Tratados como activos de alta correlación con el mercado)
     indices_keywords = [
-        "US500", "SPX", "NAS100", "US30", "GER30", "DAX", "EU50", "STOXX50"
+        "US500", "SPX", "NAS100", "US100", "US30", "GER30", "GER40", "DAX", "EU50", "STOXX50",
+        "UK100", "FRA40", "JP225", "AUS200", "HK50"
     ]
     if any(k in s for k in indices_keywords):
         return "INDEX"
