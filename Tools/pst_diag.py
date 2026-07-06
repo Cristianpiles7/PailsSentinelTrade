@@ -13,19 +13,23 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+# La consola por defecto de Windows (cp1252) revienta con los emojis del reporte
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent  # el script vive en Tools/
 
 # ── Configuración de rutas ────────────────────────────────────────────────────
 LOG_FILES = [
-    ROOT / "PST_Startup.log",
-    ROOT / "v2_sentinel_prime.log",
+    REPO_ROOT / "PST_Startup.log",
+    REPO_ROOT / "v2_sentinel_prime.log",
 ]
 
 # La DB se localiza igual que en config.py (Autodiscovery básico)
 def find_db() -> Path | None:
     candidates = [
-        ROOT / "PST_Core" / "data" / "pst_trading.db",
-        ROOT.parent / "PST_Core" / "data" / "pst_trading.db",
+        REPO_ROOT / "PST_Core" / "data" / "pst_trading.db",
+        REPO_ROOT.parent / "PST_Core" / "data" / "pst_trading.db",
     ]
     env_path = os.getenv("DB_PATH")
     if env_path:
@@ -65,17 +69,17 @@ def tail_log_file(path: Path, lines: int, since: datetime | None, level_filter: 
         if level_keywords and not any(kw in line for kw in level_keywords):
             continue
         if since:
-            # Intentar parsear timestamp del inicio de línea (formato: YYYY-MM-DD HH:MM:SS o HH:MM:SS)
+            # Intentar parsear timestamp del inicio de línea, con o sin corchete
+            # (formatos: [YYYY-MM-DD HH:MM:SS] / YYYY-MM-DD HH:MM:SS / [HH:MM:SS])
+            bare = line.lstrip("[")
             try:
-                ts_str = line[:19]
-                ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                ts = datetime.strptime(bare[:19], "%Y-%m-%d %H:%M:%S")
                 if ts < since:
                     continue
             except ValueError:
                 try:
-                    ts_str = line[:8]
                     today = datetime.now().date()
-                    ts = datetime.combine(today, datetime.strptime(ts_str, "%H:%M:%S").time())
+                    ts = datetime.combine(today, datetime.strptime(bare[:8], "%H:%M:%S").time())
                     if ts < since:
                         continue
                 except ValueError:

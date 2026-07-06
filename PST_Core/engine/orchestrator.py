@@ -26,6 +26,17 @@ logging.basicConfig(
     format='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%H:%M:%S'
 )
+# v2.5.9: log persistente a archivo rotativo. El .log llevaba sin escribirse desde
+# abril y sin él no se pueden auditar a posteriori errores de ejecución (la DB
+# system_logs solo retiene las últimas 500 filas ≈ minutos).
+from logging.handlers import RotatingFileHandler
+from pathlib import Path as _Path
+_log_file = _Path(__file__).resolve().parents[2] / "v2_sentinel_prime.log"
+if not any(isinstance(h, RotatingFileHandler) for h in logging.getLogger().handlers):
+    _fh = RotatingFileHandler(_log_file, maxBytes=5_000_000, backupCount=2, encoding="utf-8")
+    _fh.setLevel(logging.INFO)
+    _fh.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s %(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    logging.getLogger().addHandler(_fh)
 # Silenciar spam de la API de Telegram y peticiones HTTP a nivel global
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
@@ -728,14 +739,21 @@ class SymbolTask:
                                                         if _tp_grp != "INDEX":
                                                             best_metadata["target_price_tp"] = tp_price_target
 
-                                                    await self.executor.execute_trade(
+                                                    exec_result = await self.executor.execute_trade(
                                                         self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode, best_metadata
                                                     )
-                                                    await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
-                                                    
-                                                    # Marcar visualmente
-                                                    signal = sig_val
-                                                    strategy_name = s_name
+                                                    if exec_result is not None:
+                                                        await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
+
+                                                        # Marcar visualmente
+                                                        signal = sig_val
+                                                        strategy_name = s_name
+                                                    else:
+                                                        # La orden no llegó al mercado (news guard, margen, retcode
+                                                        # de MT5...); antes se registraba como ejecutada igualmente
+                                                        # y el journal mostraba trades fantasma.
+                                                        logger.warning(f"🚫 [EXEC FAIL] {self.symbol} {sig_type_str}: el executor no abrió la orden (ver error anterior).")
+                                                        await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_EXEC_{sig_type_str}", s_score, price, blocked_reason="EXEC_FAIL")
                                                 except Exception as e:
                                                     logger.error(f"❌ Fallo crítico en ejecución para {self.symbol}: {e}")
                                                 finally:
@@ -866,11 +884,23 @@ async def sync_trades_task(db: PSTDatabase):
                             
                             trade_type_str = "BUY" if d.type == 1 else "SELL"
                             asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
-                            
-                            loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
-                count = await db.sync_mt5_history(deals)
+
+                            # v2.5.9: la config se leía pero register_loss no se llamaba NUNCA
+                            # (CooldownManager sin registros → is_blocked siempre False), y el
+                            # 2026-07-06 el bot reentró corto en US100 5 min después de un SL.
+                            if total_pnl < 0:
+                                loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
+                                cooldown_mgr.register_loss(d.symbol, duration_minutes=loss_cd_mins)
+                count, closed_bot = await db.sync_mt5_history(deals)
                 if count > 0:
                     logger.info(f"🔄 [SYNC SUCCESS] {count} operaciones actualizadas/importadas desde MT5.")
+                # Cierres del bot que detectó sync_mt5_history (en la práctica es la vía
+                # que gana la carrera al PASO 1 de arriba): registrar también el cooldown.
+                loss_closures = [(s, p) for (s, p) in closed_bot if p < 0]
+                if loss_closures:
+                    loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
+                    for c_sym, c_pnl in loss_closures:
+                        cooldown_mgr.register_loss(c_sym, duration_minutes=loss_cd_mins)
             
             # --- NEW: STALE TRADES AUTO-CLEANUP ---
             # Buscamos trades que la DB cree que están abiertos

@@ -272,6 +272,11 @@ class PSTExecutor:
                 rr_actual = min_rr
         # --- NEW: STOP & REVERSE LOGIC (HEDGING PROTECTION) ---
         positions = await get_positions_async(symbol=symbol)
+        if positions is None:
+            # FAIL-SAFE: None = error de terminal MT5, no "sin posiciones". Sin saber
+            # si hay posición contraria no es seguro enviar la orden.
+            logger.error(f"❌ [FAIL-SAFE] {symbol}: positions_get() devolvió None antes de enviar la orden. Abortando trade.")
+            return None
         if positions:
             for opp_p in positions:
                 # Si hay una posición en la dirección contraria, la cerramos

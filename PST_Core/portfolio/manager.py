@@ -109,6 +109,14 @@ class PortfolioManager:
         """
         Lógica de control de riesgo global (FTMO Friendly) y Pyramiding Institucional.
         """
+        # FAIL-SAFE: mt5.positions_get() devuelve None en error de terminal (≠ tupla
+        # vacía = "sin posiciones"). Sin el estado real de posiciones, TODOS los
+        # filtros de abajo (duplicado, piramidación, correlación) se saltarían en
+        # silencio → bloqueamos la entrada de este ciclo.
+        if current_positions is None:
+            logger.warning(f"🚫 [FAIL-SAFE] {symbol}: positions_get() devolvió None (error MT5). Bloqueando entrada de este ciclo.")
+            return False
+
         # --- NUEVO: LÍMITES GLOBALES POR CATEGORÍA (v1.8.7) ---
         from ..config import STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY, MAX_TOTAL_OPEN_POSITIONS
 

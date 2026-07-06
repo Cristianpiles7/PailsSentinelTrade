@@ -472,10 +472,12 @@ class PSTDatabase:
         """Añade un mensaje de log a la base de datos."""
         try:
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                # timestamp explícito con reloj LOCAL: el default CURRENT_TIMESTAMP de
+                # SQLite es UTC y descuadraba system_logs (-2h) vs trades/signal_logs.
                 await db.execute("""
-                    INSERT INTO system_logs (level, message, source)
-                    VALUES (?, ?, ?)
-                """, (level, message, source))
+                    INSERT INTO system_logs (timestamp, level, message, source)
+                    VALUES (?, ?, ?, ?)
+                """, (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), level, message, source))
                 # Auto-purga: Mantener últimos 500 logs para no inflar la DB
                 await db.execute("""
                     DELETE FROM system_logs 
@@ -1225,13 +1227,14 @@ class PSTDatabase:
         Maneja trades del bot (por position_id) y externos/manuales.
         """
         if not deals:
-            return 0
-        
+            return 0, []
+
         count_synced = 0
         count_imported = 0
-        
+        closed_bot_trades = []  # [(symbol, pnl)] para que el caller registre cooldowns
+
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             import MetaTrader5 as mt5
             
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
@@ -1241,7 +1244,10 @@ class PSTDatabase:
                     if d.entry not in [1, 2, 3]: 
                         continue
                     
-                    time_out_dt = datetime.fromtimestamp(d.time)
+                    # d.time codifica la hora de pared del SERVIDOR del bróker como epoch
+                    # "UTC"; fromtimestamp() local le añadía el offset local encima
+                    # (time_out salía ~+3h vs reloj local). Conversión sin doble salto:
+                    time_out_dt = datetime.fromtimestamp(d.time, tz=timezone.utc).replace(tzinfo=None)
                     time_out_str = time_out_dt.strftime('%Y-%m-%d %H:%M:%S')
                     total_pnl = d.profit + d.swap + d.commission
                     
@@ -1254,13 +1260,16 @@ class PSTDatabase:
                         bot_trade = await cur.fetchone()
                     
                     if bot_trade:
-                        # Es un trade del bot → ACTUALIZAR con datos de cierre
+                        # Es un trade del bot → ACTUALIZAR con datos de cierre.
+                        # time_out con reloj LOCAL (el mismo que time_in): el sync corre
+                        # cada 60s, así que en operación normal el error es ≤ ~1 min.
                         await db.execute("""
                             UPDATE trades SET price_out = ?, profit = ?, time_out = ?
                             WHERE id = ?
-                        """, (d.price, float(total_pnl), time_out_str, bot_trade[0]))
+                        """, (d.price, float(total_pnl), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), bot_trade[0]))
                         await db.commit()
                         count_synced += 1
+                        closed_bot_trades.append((d.symbol, float(total_pnl)))
                         logger.info(f"✅ [SYNC-BOT] Cerrado {d.symbol} (Ticket {d.position_id}) | PnL: {total_pnl:.2f}")
                         continue
                     
@@ -1291,7 +1300,8 @@ class PSTDatabase:
                             for pd in pos_deals:
                                 if pd.entry == 0: # ENTRY_IN
                                     price_in = pd.price
-                                    time_in_str = datetime.fromtimestamp(pd.time).strftime('%Y-%m-%d %H:%M:%S')
+                                    # Hora de pared del servidor, sin doble desplazamiento
+                                    time_in_str = datetime.fromtimestamp(pd.time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
                                     break
                     except:
                         pass # Fallback a time_out si falla la búsqueda
@@ -1304,7 +1314,7 @@ class PSTDatabase:
                     count_imported += 1
                     logger.info(f"📥 [SYNC-EXT] Importado manual/externo: {d.symbol} (ID {d.position_id}) | PnL: {total_pnl:.2f}")
             
-            return count_synced + count_imported
+            return count_synced + count_imported, closed_bot_trades
         except Exception as e:
             logger.error(f"❌ Error sync_mt5_history: {e}")
-            return 0
+            return 0, closed_bot_trades
