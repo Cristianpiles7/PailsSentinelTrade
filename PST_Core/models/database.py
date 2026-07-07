@@ -795,6 +795,18 @@ class PSTDatabase:
             logger.error(f"❌ Error check_trade_exists: {e}")
             return False
 
+    async def get_trade_by_ticket(self, ticket: int) -> dict:
+        """Devuelve el trade con este ticket (dict) o None si no existe."""
+        try:
+            async with aiosqlite.connect(self.db_path, timeout=30) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("SELECT * FROM trades WHERE ticket = ?", (ticket,)) as cursor:
+                    row = await cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ Error get_trade_by_ticket: {e}")
+            return None
+
     async def is_trade_open(self, ticket: int) -> bool:
         """Verifica si el trade está abierto (price_out = 0 o NULL)."""
         try:
@@ -1223,8 +1235,12 @@ class PSTDatabase:
 
     async def sync_mt5_history(self, deals, days_back=2):
         """
-        Sincroniza deals de MT5 con la tabla trades. 
+        Sincroniza deals de MT5 con la tabla trades.
         Maneja trades del bot (por position_id) y externos/manuales.
+        Un cierre PARCIAL (deal OUT con la posición aún viva en MT5) acumula su
+        PnL en profit SIN estampar price_out/time_out: el trade solo se marca
+        cerrado cuando no queda volumen. Antes el primer deal OUT (el parcial
+        50% a +1R) cerraba el trade en BBDD y el PnL del runner se descartaba.
         """
         if not deals:
             return 0, []
@@ -1236,84 +1252,141 @@ class PSTDatabase:
         try:
             from datetime import datetime, timezone
             import MetaTrader5 as mt5
-            
+
+            # Deals de SALIDA agrupados por posición: con cierres parciales el PnL
+            # real del trade es la SUMA de todos sus deals OUT, no el del primero.
+            # ENTRY_OUT=1, ENTRY_INOUT=2 (reversión), ENTRY_OUT_BY=3 (cierre por contra)
+            out_by_pos = {}
+            for d in deals:
+                if d.entry in (1, 2, 3):
+                    out_by_pos.setdefault(d.position_id, []).append(d)
+            if not out_by_pos:
+                return 0, []
+
+            # Posiciones aún vivas: si la posición existe en MT5, sus deals OUT son
+            # parciales por definición. positions_get() devuelve None si la llamada
+            # falla (≠ tupla vacía = sin posiciones); en ese caso decidimos por volumen.
+            live_positions = mt5.positions_get()
+            live_pos_ids = {p.ticket for p in live_positions} if live_positions is not None else None
+
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
-                for d in deals:
-                    # 1. Filtrar solo deals de SALIDA (Cierres totales o parciales)
-                    # ENTRY_OUT=1, ENTRY_INOUT=2 (reversión), ENTRY_OUT_BY=3 (cierre por contra)
-                    if d.entry not in [1, 2, 3]: 
-                        continue
-                    
-                    # d.time codifica la hora de pared del SERVIDOR del bróker como epoch
-                    # "UTC"; fromtimestamp() local le añadía el offset local encima
-                    # (time_out salía ~+3h vs reloj local). Conversión sin doble salto:
-                    time_out_dt = datetime.fromtimestamp(d.time, tz=timezone.utc).replace(tzinfo=None)
-                    time_out_str = time_out_dt.strftime('%Y-%m-%d %H:%M:%S')
-                    total_pnl = d.profit + d.swap + d.commission
-                    
-                    # PASO 1: ¿Es un trade del BOT? (Buscamos ticket = position_id)
-                    # El bot guarda apertura con ticket = position_id
+                for pos_id, pos_deals in out_by_pos.items():
+                    pos_deals.sort(key=lambda x: x.time)
+                    last = pos_deals[-1]
+                    total_pnl = float(sum(x.profit + x.swap + x.commission for x in pos_deals))
+                    closed_vol = float(sum(x.volume for x in pos_deals))
+
+                    # PASO 1: ¿Es un trade del BOT aún abierto? (apertura guardada con
+                    # ticket = position_id)
                     async with db.execute(
-                        "SELECT id FROM trades WHERE ticket = ? AND (price_out IS NULL OR price_out = 0)",
-                        (d.position_id,)
+                        "SELECT id, volume, profit FROM trades WHERE ticket = ? AND (price_out IS NULL OR price_out = 0)",
+                        (pos_id,)
                     ) as cur:
                         bot_trade = await cur.fetchone()
-                    
-                    if bot_trade:
-                        # Es un trade del bot → ACTUALIZAR con datos de cierre.
-                        # time_out con reloj LOCAL (el mismo que time_in): el sync corre
-                        # cada 60s, así que en operación normal el error es ≤ ~1 min.
-                        await db.execute("""
-                            UPDATE trades SET price_out = ?, profit = ?, time_out = ?
-                            WHERE id = ?
-                        """, (d.price, float(total_pnl), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), bot_trade[0]))
-                        await db.commit()
-                        count_synced += 1
-                        closed_bot_trades.append((d.symbol, float(total_pnl)))
-                        logger.info(f"✅ [SYNC-BOT] Cerrado {d.symbol} (Ticket {d.position_id}) | PnL: {total_pnl:.2f}")
-                        continue
-                    
-                    # PASO 2: ¿Ya importamos este deal específico anteriormente?
-                    # Buscamos en el ticket si es un trade de AUTO_SYNC ya existente
-                    # O si por casualidad ya se cerró un bot trade con este position_id
-                    async with db.execute("SELECT 1 FROM trades WHERE ticket = ? OR (ticket = ? AND price_out > 0)", (d.ticket, d.position_id)) as cur:
-                        already_exists = await cur.fetchone()
-                    
-                    if already_exists:
-                        continue
-                    
-                    # PASO 3: Trade externo/manual → Importar buscando su apertura para ser PRO
-                    trade_type = "BUY" if d.type == 1 else "SELL" # El deal OUT tiene tipo opuesto a la posición
-                    
-                    # Intentar buscar el deal de apertura (ENTRY_IN) para tener price_in y time_in reales
-                    time_in_str = time_out_str
-                    price_in = 0.0
-                    
-                    try:
-                        import time as _time
-                        # Buscamos deals de entrada para esta posición
-                        # Ampliamos el rango a 30 días para la apertura
-                        h_end = d.time + 10
-                        h_start = d.time - (3600 * 24 * 30)
-                        pos_deals = mt5.history_deals_get(h_start, h_end, position=d.position_id)
-                        if pos_deals:
-                            for pd in pos_deals:
-                                if pd.entry == 0: # ENTRY_IN
-                                    price_in = pd.price
-                                    # Hora de pared del servidor, sin doble desplazamiento
-                                    time_in_str = datetime.fromtimestamp(pd.time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                                    break
-                    except:
-                        pass # Fallback a time_out si falla la búsqueda
 
-                    await db.execute("""
-                        INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_in, time_out, ticket, strategy_name, is_partial_closed)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (d.symbol, trade_type, d.volume, price_in, d.price, float(total_pnl), time_in_str, time_out_str, d.ticket, "AUTO_SYNC", 0))
-                    await db.commit()
-                    count_imported += 1
-                    logger.info(f"📥 [SYNC-EXT] Importado manual/externo: {d.symbol} (ID {d.position_id}) | PnL: {total_pnl:.2f}")
-            
+                    if bot_trade:
+                        row_id, db_vol, db_profit = bot_trade[0], bot_trade[1] or 0.0, bot_trade[2] or 0.0
+                        if live_pos_ids is not None:
+                            fully_closed = pos_id not in live_pos_ids
+                        else:
+                            fully_closed = db_vol <= 0 or closed_vol >= db_vol - 1e-6
+
+                        if fully_closed and closed_vol < db_vol - 1e-6:
+                            # A `deals` le pueden faltar deals OUT de esta posición (la
+                            # ventana del caller parte el grupo): recuperar el conjunto
+                            # completo para no infracontar el PnL total.
+                            try:
+                                full_deals = mt5.history_deals_get(position=pos_id)
+                                full_outs = [x for x in full_deals if x.entry in (1, 2, 3)] if full_deals else []
+                                if full_outs:
+                                    full_outs.sort(key=lambda x: x.time)
+                                    last = full_outs[-1]
+                                    total_pnl = float(sum(x.profit + x.swap + x.commission for x in full_outs))
+                            except Exception:
+                                pass
+
+                        if fully_closed:
+                            # time_out con reloj LOCAL (el mismo que time_in): el sync corre
+                            # cada 60s, así que en operación normal el error es ≤ ~1 min.
+                            await db.execute("""
+                                UPDATE trades SET price_out = ?, profit = ?, time_out = ?
+                                WHERE id = ?
+                            """, (last.price, total_pnl, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), row_id))
+                            await db.commit()
+                            count_synced += 1
+                            closed_bot_trades.append((last.symbol, total_pnl))
+                            logger.info(f"✅ [SYNC-BOT] Cerrado {last.symbol} (Ticket {pos_id}) | PnL: {total_pnl:.2f} ({len(pos_deals)} deal(s) OUT)")
+                        elif abs(db_profit - total_pnl) > 0.005:
+                            # Cierre PARCIAL: profit = suma de deals OUT hasta ahora
+                            # (recalculado desde el historial → idempotente entre pasadas).
+                            await db.execute("UPDATE trades SET profit = ? WHERE id = ?", (total_pnl, row_id))
+                            await db.commit()
+                            logger.info(f"🔶 [SYNC-PARCIAL] {last.symbol} (Ticket {pos_id}) sigue abierto | PnL parcial realizado: {total_pnl:.2f}")
+                        continue
+
+                    # PASO 1b: trade del bot YA cerrado cuyo profit no cuadra con la
+                    # suma de sus deals → reparar (cierres antiguos donde el parcial
+                    # estampó el cierre y el PnL del runner se descartó).
+                    async with db.execute(
+                        "SELECT id, profit, volume FROM trades WHERE ticket = ? AND price_out > 0 AND strategy_name != 'AUTO_SYNC'",
+                        (pos_id,)
+                    ) as cur:
+                        closed_trade = await cur.fetchone()
+                    if closed_trade:
+                        old_profit = closed_trade[1] or 0.0
+                        db_vol = closed_trade[2] or 0.0
+                        # Solo reparar si el grupo cubre TODO el volumen del trade: si la
+                        # ventana de deals del caller partió el grupo (p.ej. el parcial
+                        # quedó fuera de los 30 días), la suma está incompleta y
+                        # "reparar" con ella corrompería un profit correcto.
+                        if closed_vol < db_vol - 1e-6:
+                            continue
+                        if abs(old_profit - total_pnl) > 0.005:
+                            await db.execute("UPDATE trades SET profit = ? WHERE id = ?", (total_pnl, closed_trade[0]))
+                            await db.commit()
+                            logger.info(f"🩹 [SYNC-REPAIR] {last.symbol} (Ticket {pos_id}) profit {old_profit:.2f} → {total_pnl:.2f} (suma de {len(pos_deals)} deals OUT)")
+                        continue
+
+                    # PASO 2/3: externos/manuales → importar cada deal OUT que falte
+                    for d in pos_deals:
+                        # ¿Ya importamos este deal (ticket = d.ticket) o es de un bot
+                        # trade cerrado por vías antiguas (ticket = position_id)?
+                        async with db.execute("SELECT 1 FROM trades WHERE ticket = ? OR (ticket = ? AND price_out > 0)", (d.ticket, pos_id)) as cur:
+                            already_exists = await cur.fetchone()
+                        if already_exists:
+                            continue
+
+                        deal_pnl = d.profit + d.swap + d.commission
+                        deal_out_str = datetime.fromtimestamp(d.time, tz=timezone.utc).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')
+                        trade_type = "BUY" if d.type == 1 else "SELL" # El deal OUT tiene tipo opuesto a la posición
+
+                        # Intentar buscar el deal de apertura (ENTRY_IN) para tener price_in y time_in reales
+                        time_in_str = deal_out_str
+                        price_in = 0.0
+                        try:
+                            # Buscamos deals de entrada para esta posición
+                            # Ampliamos el rango a 30 días para la apertura
+                            h_end = d.time + 10
+                            h_start = d.time - (3600 * 24 * 30)
+                            pd_deals = mt5.history_deals_get(h_start, h_end, position=pos_id)
+                            if pd_deals:
+                                for pd in pd_deals:
+                                    if pd.entry == 0: # ENTRY_IN
+                                        price_in = pd.price
+                                        # Hora de pared del servidor, sin doble desplazamiento
+                                        time_in_str = datetime.fromtimestamp(pd.time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                                        break
+                        except:
+                            pass # Fallback a time_out si falla la búsqueda
+
+                        await db.execute("""
+                            INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_in, time_out, ticket, strategy_name, is_partial_closed)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (d.symbol, trade_type, d.volume, price_in, d.price, float(deal_pnl), time_in_str, deal_out_str, d.ticket, "AUTO_SYNC", 0))
+                        await db.commit()
+                        count_imported += 1
+                        logger.info(f"📥 [SYNC-EXT] Importado manual/externo: {d.symbol} (ID {pos_id}) | PnL: {deal_pnl:.2f}")
+
             return count_synced + count_imported, closed_bot_trades
         except Exception as e:
             logger.error(f"❌ Error sync_mt5_history: {e}")

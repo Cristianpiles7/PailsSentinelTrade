@@ -852,55 +852,56 @@ class SymbolTask:
 async def sync_trades_task(db: PSTDatabase):
     """Sincroniza operaciones cerradas en MT5 con la DB local, IMPORTANDO las que falten."""
     logger.info("🔄 Iniciando Sincronizador ROBUSTO de Historial (Auto-Discovery)...")
+    # Tickets de trades del bot abiertos según la BBDD en la iteración anterior.
+    # Los cierres se detectan por TRANSICIÓN abierto→cerrado en BBDD y no por quién
+    # estampa el cierre: sync_mt5_history también lo llaman PST_API (el dashboard
+    # sondea /api/account y /api/symbols cada pocos segundos) y PST_MCP sobre la
+    # misma SQLite, y ganaban la carrera a este loop de 60s — por eso el Telegram
+    # de cierre y el cooldown casi nunca se disparaban.
+    prev_open_tickets = None
     while True:
         try:
             from datetime import datetime, timedelta
             from .mt5_async import get_history_deals_async
             import MetaTrader5 as mt5 # Necesario para constantes si no están en mt5_async
-            
-            # Sincronizamos los últimos 30 días para reconstruir historial completo si hace falta
-            deals = await get_history_deals_async(days=30)
-            
+
             # Obtener deals cerrados (Últimos 30 días para cubrir todo el mes)
             # Esto permite "descubrir" operaciones antiguas si se borró la DB o se operó desde el móvil
             deals = await get_history_deals_async(days=30)
-            
-            if deals:
-                count_synced = 0
-                count_imported = 0
-                
-                for d in deals:
-                    # Buscamos deals de SALIDA:
-                    # Entry=1 (DEAL_ENTRY_OUT)
-                    # Entry=2 (DEAL_ENTRY_INOUT) - Reversiones
-                    if d.entry in [1, 2]:
-                        total_pnl = d.profit + d.swap + d.commission
-                        
-                        # PASO 1: ¿Existe un trade del BOT con position_id? → ACTUALIZAR
-                        trade_bot_open = await db.is_trade_open(d.position_id)
-                        if trade_bot_open:
-                            await db.update_trade_cierre(d.position_id, d.price, total_pnl)
-                            logger.info(f"[SYNC] Cierre bot: {d.symbol} (PosID {d.position_id}) | PnL: {total_pnl:.2f}")
-                            
-                            trade_type_str = "BUY" if d.type == 1 else "SELL"
-                            asyncio.create_task(telegram_bot.send_trade_notification(d.position_id, trade_type_str, d.symbol, d.price, total_pnl, is_closing=True))
 
-                            # v2.5.9: la config se leía pero register_loss no se llamaba NUNCA
-                            # (CooldownManager sin registros → is_blocked siempre False), y el
-                            # 2026-07-06 el bot reentró corto en US100 5 min después de un SL.
-                            if total_pnl < 0:
-                                loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
-                                cooldown_mgr.register_loss(d.symbol, duration_minutes=loss_cd_mins)
+            if deals:
                 count, closed_bot = await db.sync_mt5_history(deals)
                 if count > 0:
                     logger.info(f"🔄 [SYNC SUCCESS] {count} operaciones actualizadas/importadas desde MT5.")
-                # Cierres del bot que detectó sync_mt5_history (en la práctica es la vía
-                # que gana la carrera al PASO 1 de arriba): registrar también el cooldown.
+                # Cooldown inmediato para cierres que estampó ESTA pasada (cubre trades
+                # que viven menos de 60s y no llegan a verse en la foto de abiertos).
                 loss_closures = [(s, p) for (s, p) in closed_bot if p < 0]
                 if loss_closures:
                     loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
                     for c_sym, c_pnl in loss_closures:
                         cooldown_mgr.register_loss(c_sym, duration_minutes=loss_cd_mins)
+
+            # Cierres por transición: trades que estaban abiertos en la BBDD la pasada
+            # anterior y ya no lo están → notificar Telegram y registrar cooldown,
+            # aunque el cierre lo haya estampado la API/MCP.
+            open_now = {t['ticket'] for t in await db.get_active_trades()}
+            if prev_open_tickets is not None:
+                for closed_ticket in (prev_open_tickets - open_now):
+                    trade = await db.get_trade_by_ticket(closed_ticket)
+                    if not trade or (trade.get('price_out') or 0) <= 0:
+                        continue  # borrado o cerrado "en falso" por el cleanup, no notificar
+                    pnl = trade.get('profit') or 0.0
+                    logger.info(f"[SYNC] Cierre bot: {trade['symbol']} (PosID {closed_ticket}) | PnL: {pnl:.2f}")
+                    asyncio.create_task(telegram_bot.send_trade_notification(
+                        closed_ticket, trade.get('type', ''), trade['symbol'], trade['price_out'], pnl, is_closing=True))
+
+                    # v2.5.9: la config se leía pero register_loss no se llamaba NUNCA
+                    # (CooldownManager sin registros → is_blocked siempre False), y el
+                    # 2026-07-06 el bot reentró corto en US100 5 min después de un SL.
+                    if pnl < 0:
+                        loss_cd_mins = int(await db.get_config('loss_cooldown_minutes', '15'))
+                        cooldown_mgr.register_loss(trade['symbol'], duration_minutes=loss_cd_mins)
+            prev_open_tickets = open_now
             
             # --- NEW: STALE TRADES AUTO-CLEANUP ---
             # Buscamos trades que la DB cree que están abiertos
@@ -923,7 +924,11 @@ async def sync_trades_task(db: PSTDatabase):
                                 time_in = datetime.fromisoformat(time_in_str.split('.')[0])
                                 if (datetime.now() - time_in).total_seconds() > 43200: # 12 horas
                                     logger.warning(f"🧹 [CLEANUP] Cerrando trade huérfano en DB: {t['symbol']} (Ticket {ticket})")
-                                    await db.update_trade_cierre(ticket, 0.0, 0.0)
+                                    # price_out = -1 (sentinela): con 0.0 el trade seguía
+                                    # contando como abierto (price_out = 0) y el cleanup
+                                    # se repetía cada 60s sin efecto; -1 lo saca de
+                                    # get_active_trades y de las métricas (price_out > 0).
+                                    await db.update_trade_cierre(ticket, -1.0, 0.0)
                         except Exception as ex:
                             logger.debug(f"DEBUG: Error en cleanup de trade {ticket}: {ex}")
             
