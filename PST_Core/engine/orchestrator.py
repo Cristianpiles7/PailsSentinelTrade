@@ -1043,8 +1043,11 @@ async def start_v6(symbols: List[str]):
     # Tarea de watchdog de drawdown semanal por estrategia (cada hora)
     async def _strategy_drawdown_watchdog():
         import MetaTrader5 as _mt5
-        from ..config import ENABLED_STRATEGIES, DAILY_LOSS_PCT
+        from ..config import ENABLED_STRATEGIES, DAILY_LOSS_PCT, WEEKLY_STRATEGY_PAUSE_ENABLED
         WEEKLY_DRAWDOWN_LIMIT_PCT = 1.5  # 1.5% del balance → pausa la estrategia
+        if not WEEKLY_STRATEGY_PAUSE_ENABLED:
+            logger.info("⏸️ [Watchdog] Pausa automática por drawdown semanal DESACTIVADA (config). Watchdog inactivo.")
+            return
         while True:
             try:
                 _acc = _mt5.account_info()

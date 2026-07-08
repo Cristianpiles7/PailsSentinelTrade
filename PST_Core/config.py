@@ -54,6 +54,11 @@ MAX_RISK_PCT = 0.25          # Riesgo base por operación (0.25%)
 MAX_DRAWDOWN_PCT = 3.5       # Kill-switch de Drawdown del día (FTMO Safe)
 DAILY_LOSS_PCT = 2.0         # Kill-switch diario: para si el día pierde más de este % del balance
 DAILY_LOSS_EXIT_USD = 999999 # STOP DIARIO DESACTIVADO (Modo Pruebas: $999,999)
+# Watchdog de pausa automática por drawdown SEMANAL de estrategia (orchestrator.py):
+# desactivado a petición del usuario (cuenta FTMO de prueba, sin dinero real en juego) -
+# no queremos que ninguna estrategia se auto-pausee nunca. El kill-switch DIARIO
+# (DAILY_LOSS_PCT) y el de drawdown (MAX_DRAWDOWN_PCT) NO se tocan, son otro mecanismo.
+WEEKLY_STRATEGY_PAUSE_ENABLED = False
 # MAX_POSITION_COST_PCT = 25  # REMOVED: Usaremos Cubetas de Margen Dinámicas
 
 # DINAMIC PROTECTION (ATR MULTIPLIERS)
