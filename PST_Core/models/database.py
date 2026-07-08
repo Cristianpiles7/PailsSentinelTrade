@@ -358,20 +358,38 @@ class PSTDatabase:
             # -30.5R→-18.5R en ETHUSD, sin tocar BTCUSD/resto del universo.
             SYMBOL_FILTER_OVERRIDES = {
                 'ETHUSD': {'m1_eff_mode': 'on'},
-                # UK100.cash: mantiene el adx_ok=18 ORIGINAL del grupo INDEX (no el 21 nuevo).
+                # UK100.cash: mantiene el adx_ok=18 ORIGINAL del grupo INDEX (no el 21 nuevo),
+                # + entry_threshold 76 y m1_eff_mode on (sweep 2026-07-08, ver abajo).
                 # Es el único de los 6 índices donde adx_ok=21 empeoró (−0.035R@15d) en el
                 # group sweep — símbolo ya marcado como el más fino/experimental del universo.
-                'UK100.cash': {'adx_ok': 18},
+                'UK100.cash': {'adx_ok': 18, 'entry_threshold': 76, 'm1_eff_mode': 'on'},
                 # US30.cash: filtro de eficiencia M1 anti-whipsaw — validado en 2 ventanas
                 # (sweep 15d: exp +0.212→+0.382; confirmación 30d: +0.201→+0.295, WR 58→66%,
                 # PF 1.73→2.21, DD 3.6→2.6R). NO es señal de grupo: falla en US100/UK100
                 # (mismo patrón símbolo-específico que ETHUSD vs BTCUSD).
-                'US30.cash': {'m1_eff_mode': 'on'},
+                # + entry_threshold 76 (sweep 2026-07-08, ver abajo).
+                'US30.cash': {'m1_eff_mode': 'on', 'entry_threshold': 76},
                 # US500.cash: entry_threshold 68 (más laxo que el 72 del grupo INDEX) — validado a
                 # lookback 200 (fiel a producción) en 2 ventanas: 10d exp +0.048→+0.150, 20d
                 # +0.043→+0.081. El 72 (calibrado a lookback 600, no fiel) era demasiado exigente
-                # para el índice a la escala real de 200 barras.
+                # para el índice a la escala real de 200 barras. NO tocado por el sweep de
+                # entry_threshold=76 (2026-07-08): ya está en su óptimo (68), 76 empeoró (−0.031R).
                 'US500.cash': {'entry_threshold': 68},
+                # entry_threshold 72→76 (sweep motor fiel, 2026-07-08, 20d/11 símbolos): más
+                # selectivo, sube expectancy limpio y consistente en FOREX/METAL/INDEX/CRYPTO
+                # (GBPUSD +0.095R, XAUUSD +0.077R, EU50 +0.066R, US100 +0.060R, GER40 +0.060R,
+                # UK100 +0.102R con m1_eff_mode, US30 +0.017R, BTCUSD +0.007R con m1_eff_mode).
+                # Agregado: expectancy +0.134R→+0.200R, sharpe 2.30→3.50, WR 57.8%→60.7%,
+                # -35% trades (filtra ruido). AAPL/MSFT/US500 sin señal fiable → sin tocar.
+                'GBPUSD': {'entry_threshold': 76},
+                'XAUUSD': {'entry_threshold': 76},
+                'EU50.cash': {'entry_threshold': 76},
+                'US100.cash': {'entry_threshold': 76},
+                # GER40.cash: entry_threshold 76 + m1_eff_mode on (sweep 2026-07-08, Δexp +0.060R).
+                'GER40.cash': {'entry_threshold': 76, 'm1_eff_mode': 'on'},
+                # BTCUSD: entry_threshold 76 + m1_eff_mode on (sweep 2026-07-08, Δexp +0.007R;
+                # BTC sigue negativo en agregado −0.149R→−0.142R, vigilar).
+                'BTCUSD': {'entry_threshold': 76, 'm1_eff_mode': 'on'},
             }
 
             for sym, stype in master_config:
@@ -447,7 +465,7 @@ class PSTDatabase:
             # (US30.cash/ETHUSD ya tienen su clave extra). Se fija el filter_profile EXACTO
             # (grupo+override) para TODOS los símbolos de la siembra, una sola vez por versión;
             # toggles/ediciones manuales POSTERIORES a esta migración persisten.
-            PROFILE_MIGRATION_VERSION = "2026-07-04-c"  # group sweep: adx_ok 21 en INDEX/FOREX/METAL/COMMODITY, salvo UK100.cash (18)
+            PROFILE_MIGRATION_VERSION = "2026-07-08-a"  # entry_threshold 72->76 + m1_eff_mode (GER40/UK100/BTCUSD) - sweep motor fiel
             async with db.execute("SELECT value FROM bot_config WHERE key='filter_profile_migration_applied'") as cur:
                 _prof_row = await cur.fetchone()
             if not _prof_row or _prof_row[0] != PROFILE_MIGRATION_VERSION:

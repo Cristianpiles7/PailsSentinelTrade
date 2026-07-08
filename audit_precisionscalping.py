@@ -348,7 +348,7 @@ def _simulate_forward(eng, sig, df_m1, df_m5, t_m5, i, strat,
     n = len(df_m1)
     j = i + 1
     while j < n:
-        if eng._manage(t, df_m1.iloc[j], df_m1, df_m5, t_m5, j, strat):
+        if eng._manage(t, df_m1.iloc[j], df_m1, df_m5, t_m5, j, strat, symbol, profile):
             return t
         j += 1
     eng._close_remaining(t, float(df_m1.iloc[-1]["close"]), df_m1.iloc[-1]["time"], "EOD")
