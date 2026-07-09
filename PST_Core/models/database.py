@@ -280,7 +280,11 @@ class PSTDatabase:
                 ('US30.cash', 'INDEX'), ('US500.cash', 'INDEX'), ('GER40.cash', 'INDEX'),
                 ('EU50.cash', 'INDEX'), ('UK100.cash', 'INDEX'), ('TSLA', 'STOCK'),
                 ('NVDA', 'STOCK'), ('AAPL', 'STOCK'), ('AMZN', 'STOCK'),
-                ('GOOG', 'STOCK'), ('META', 'STOCK'), ('MSFT', 'STOCK')
+                ('GOOG', 'STOCK'), ('META', 'STOCK'), ('MSFT', 'STOCK'),
+                # v2.6.4: expansión de universo (juez fiel 20d, ver enabled_by_default abajo).
+                ('AUS200.cash', 'INDEX'), ('FRA40.cash', 'INDEX'), ('HK50.cash', 'INDEX'),
+                ('JP225.cash', 'INDEX'),
+                ('BA', 'STOCK'), ('XOM', 'STOCK'), ('AMD', 'STOCK'), ('KO', 'STOCK'),
             ]
             
             # Universo ACTIVO por defecto (whitelist). Solo estos arrancan operando; el resto
@@ -313,6 +317,18 @@ class PSTDatabase:
                 'UK100.cash',                 # INDEX EXPERIMENTAL (+0.07R@30d PF1.19 — vigilar)
                 'AAPL',                       # STOCK (+0.06R con costes; NVDA fuera)
                 'MSFT',                       # STOCK (+0.14R@30d PF1.47)
+                # v2.6.4: expansión de universo (juez fiel 20d, guard comisión + no-partial
+                # METAL + threshold shippeado ya activos). 4 índices nuevos, TODOS positivos:
+                'AUS200.cash',                # INDEX (+9.3R@20d avg_rr 1.14 wr 58.5%)
+                'FRA40.cash',                 # INDEX (+2.7R@20d avg_rr 1.09 wr 56.5%)
+                'HK50.cash',                  # INDEX (+7.7R@20d avg_rr 1.11 wr 60.0%)
+                'JP225.cash',                 # INDEX (+13.9R@20d avg_rr 0.90 wr 68.8%)
+                # 4 acciones ganadoras de 11 probadas (DIS/WMT/IBM/QCOM/PFE/JPM/CSCO
+                # negativas o casi neutras, quedan fuera):
+                'BA',                         # STOCK (+13.3R@20d avg_rr 1.97 wr 58.8%)
+                'XOM',                        # STOCK (+7.1R@20d avg_rr 1.91 wr 46.7%)
+                'AMD',                        # STOCK (+4.1R@20d avg_rr 1.84 wr 42.9%)
+                'KO',                         # STOCK (+3.0R@20d avg_rr 1.94 wr 40.9%)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
@@ -452,7 +468,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-09-b"  # +ETHUSD reactivado (guard comision + entry_threshold 80)
+            UNIVERSE_VERSION = "2026-07-09-c"  # +AUS200/FRA40/HK50/JP225 (INDEX) +BA/XOM/AMD/KO (STOCK)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:

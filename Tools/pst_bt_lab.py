@@ -73,6 +73,9 @@ def get_data(symbol, days, refresh=False):
     import pandas as pd
     if not mt5.initialize():
         print(f"    ⚠️  MT5 init falló: {mt5.last_error()}"); return None
+    # Símbolos fuera del Market Watch (no "visible") necesitan symbol_select antes de poder
+    # pedirles histórico — sin esto, copy_rates_range se cuelga/devuelve vacío indefinidamente.
+    mt5.symbol_select(symbol, True)
 
     info = mt5.symbol_info(symbol)
     point = info.point if info else None

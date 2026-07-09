@@ -261,7 +261,11 @@ def get_asset_class(symbol: str) -> str:
         
     # ACCIONES INDIVIDUALES (EQUITIES)
     equities_keywords = [
-        "NVDA", "TSLA", "AAPL", "MSFT", "GOOG", "AMZN", "META", "NFLX"
+        "NVDA", "TSLA", "AAPL", "MSFT", "GOOG", "AMZN", "META", "NFLX",
+        # v2.6.4: candidatos de expansión probados con el juez fiel (20d) — añadidos aquí
+        # para que get_asset_class los clasifique bien (comisión per_lot, no FOREX por defecto).
+        # "V" (Visa) excluida a propósito: substring de 1 letra colisionaría con otros símbolos.
+        "JPM", "DIS", "KO", "WMT", "XOM", "AMD", "QCOM", "PFE", "IBM", "CSCO", "BA",
     ]
     if any(k in s for k in equities_keywords):
         return "EQUITIES"
