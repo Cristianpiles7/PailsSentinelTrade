@@ -285,6 +285,9 @@ class PSTDatabase:
                 ('AUS200.cash', 'INDEX'), ('FRA40.cash', 'INDEX'), ('HK50.cash', 'INDEX'),
                 ('JP225.cash', 'INDEX'),
                 ('BA', 'STOCK'), ('XOM', 'STOCK'), ('AMD', 'STOCK'), ('KO', 'STOCK'),
+                # v2.6.5: 2ª tanda de acciones (juez fiel 20d, ver enabled_by_default abajo).
+                ('ZM', 'STOCK'), ('MCD', 'STOCK'), ('CVX', 'STOCK'), ('INTC', 'STOCK'),
+                ('RTX', 'STOCK'), ('PLTR', 'STOCK'),
             ]
             
             # Universo ACTIVO por defecto (whitelist). Solo estos arrancan operando; el resto
@@ -329,6 +332,14 @@ class PSTDatabase:
                 'XOM',                        # STOCK (+7.1R@20d avg_rr 1.91 wr 46.7%)
                 'AMD',                        # STOCK (+4.1R@20d avg_rr 1.84 wr 42.9%)
                 'KO',                         # STOCK (+3.0R@20d avg_rr 1.94 wr 40.9%)
+                # v2.6.5: 2ª tanda de acciones (6 ganadoras de 12 probadas; JNJ/NKE/SBUX/BAC
+                # negativas y SNOW/LMT marginales +1.2R quedan fuera, muestra pequeña):
+                'ZM',                         # STOCK (+7.9R@20d avg_rr 1.48 wr 53.8%)
+                'MCD',                        # STOCK (+6.7R@20d avg_rr 1.52 wr 53.3%)
+                'CVX',                        # STOCK (+6.2R@20d avg_rr 1.76 wr 50.0%)
+                'INTC',                       # STOCK (+4.9R@20d avg_rr 1.59 wr 50.0%)
+                'RTX',                        # STOCK (+4.8R@20d avg_rr 1.13 wr 66.7%, n=18 chico)
+                'PLTR',                       # STOCK (+2.2R@20d avg_rr 1.34 wr 46.7%)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
@@ -468,7 +479,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-09-c"  # +AUS200/FRA40/HK50/JP225 (INDEX) +BA/XOM/AMD/KO (STOCK)
+            UNIVERSE_VERSION = "2026-07-10-a"  # +ZM/MCD/CVX/INTC/RTX/PLTR (2a tanda de acciones)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:

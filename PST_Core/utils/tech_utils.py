@@ -266,6 +266,7 @@ def get_asset_class(symbol: str) -> str:
         # para que get_asset_class los clasifique bien (comisión per_lot, no FOREX por defecto).
         # "V" (Visa) excluida a propósito: substring de 1 letra colisionaría con otros símbolos.
         "JPM", "DIS", "KO", "WMT", "XOM", "AMD", "QCOM", "PFE", "IBM", "CSCO", "BA",
+        "JNJ", "MCD", "NKE", "SBUX", "INTC", "CVX", "BAC", "RTX", "LMT", "PLTR", "SNOW", "ZM",
     ]
     if any(k in s for k in equities_keywords):
         return "EQUITIES"
