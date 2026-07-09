@@ -165,10 +165,17 @@ SHIPPED_PROFILES = {
     "CRYPTO":    {"noise_mode": "soft", "entry_threshold": 72, "vwap_exit": "off"},
 }
 SYMBOL_PROFILE_OVERRIDES = {
-    "ETHUSD": {"m1_eff_mode": "on"},
+    # Sincronizado a mano con SYMBOL_FILTER_OVERRIDES en PST_Core/models/database.py.
+    "ETHUSD": {"m1_eff_mode": "on", "entry_threshold": 80},
+    "UK100.cash": {"adx_ok": 18, "entry_threshold": 76, "m1_eff_mode": "on"},
+    "US30.cash": {"m1_eff_mode": "on", "entry_threshold": 76},
     "US500.cash": {"entry_threshold": 68},
-    "US30.cash": {"m1_eff_mode": "on"},
-    "UK100.cash": {"adx_ok": 18},  # unica excepcion: adx_ok=21 empeoro en el group sweep
+    "GBPUSD": {"entry_threshold": 76},
+    "XAUUSD": {"entry_threshold": 76},
+    "EU50.cash": {"entry_threshold": 76},
+    "US100.cash": {"entry_threshold": 76},
+    "GER40.cash": {"entry_threshold": 76, "m1_eff_mode": "on"},
+    "BTCUSD": {"entry_threshold": 76, "m1_eff_mode": "on"},
 }
 
 

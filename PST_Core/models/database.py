@@ -290,9 +290,10 @@ class PSTDatabase:
             # reales (comisión del bróker + spread de salida) y con el SL/TP dimensionados
             # como el executor (ATR de M5, no M1). A esa escala, con costes:
             #   · EURUSD fuera: negativo tras comisión (−0.06R; forex clavado al suelo, fiable).
-            #   · ETHUSD fuera: negativo tras comisión de cripto ~0.4R (−0.18R). Era el que más
-            #     perdía en vivo. BTCUSD se queda (breakeven +0.00R, a vigilar).
             #   · NVDA fuera (negativo en 2 ventanas previas).
+            # ETHUSD reactivado (v2.6.2): con el guard de comisión cripto + entry_threshold
+            # 72→80 (juez fiel 20d, perfil real shippeado) pasa de −3.51R a +1.57R. Antes
+            # estaba fuera por perder −0.18R con el perfil viejo (threshold 72, sin guard).
             # Expansión 2026-07-04: barrido COMPLETO del universo inactivo (22 símbolos) a
             # lookback 200 con costes reales, en 2 ventanas independientes (15d y 30d;
             # baselines en Tools/bt_baselines/scan200_*). Confirmados los 4 índices nuevos
@@ -303,7 +304,8 @@ class PSTDatabase:
             enabled_by_default = {
                 'GBPUSD',                     # FOREX (+0.20R con costes)
                 'XAUUSD',                     # COMMODITY (+0.24R con costes)
-                'BTCUSD',                     # CRYPTO (breakeven ~0.00R; vigilar. ETHUSD fuera)
+                'BTCUSD',                     # CRYPTO (breakeven ~0.00R; vigilar)
+                'ETHUSD',                     # CRYPTO (v2.6.2: +1.57R@20d con guard+threshold80)
                 'US500.cash', 'EU50.cash',    # INDEX (+0.16 / +0.05R con costes)
                 'US100.cash',                 # INDEX (+0.29R@30d PF1.86 — el mejor del barrido)
                 'US30.cash',                  # INDEX (+0.20R@30d PF1.73 DD3.6R)
@@ -356,8 +358,13 @@ class PSTDatabase:
             # tendencia M1 / whipsaw) ayuda a ETHUSD pero empeoró a BTCUSD en el A/B pese a
             # ser ambos CRYPTO — A/B 10d motor fiel: expectancy -0.169R→-0.132R, total
             # -30.5R→-18.5R en ETHUSD, sin tocar BTCUSD/resto del universo.
+            # entry_threshold 72→80 (v2.6.2, juez fiel 20d): casi toda la pérdida de ETHUSD
+            # venía de señales de score 70-79 (score>=80: -2.55R: score<80: -26.40R). Con
+            # threshold=80 el total pasa de -28.95R a -2.91R (con guard de comisión ya
+            # aplicado) — no llega a positivo pero recorta el 90% del daño. Vigilar antes de
+            # reactivar en enabled_by_default.
             SYMBOL_FILTER_OVERRIDES = {
-                'ETHUSD': {'m1_eff_mode': 'on'},
+                'ETHUSD': {'m1_eff_mode': 'on', 'entry_threshold': 80},
                 # UK100.cash: mantiene el adx_ok=18 ORIGINAL del grupo INDEX (no el 21 nuevo),
                 # + entry_threshold 76 y m1_eff_mode on (sweep 2026-07-08, ver abajo).
                 # Es el único de los 6 índices donde adx_ok=21 empeoró (−0.035R@15d) en el
@@ -445,7 +452,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-04-a"  # +US100/US30/GER40/MSFT (sólidos) +UK100 (experimental); US30/NAS100.cash renombrados a nombres reales FTMO
+            UNIVERSE_VERSION = "2026-07-09-b"  # +ETHUSD reactivado (guard comision + entry_threshold 80)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:
@@ -465,7 +472,7 @@ class PSTDatabase:
             # (US30.cash/ETHUSD ya tienen su clave extra). Se fija el filter_profile EXACTO
             # (grupo+override) para TODOS los símbolos de la siembra, una sola vez por versión;
             # toggles/ediciones manuales POSTERIORES a esta migración persisten.
-            PROFILE_MIGRATION_VERSION = "2026-07-08-a"  # entry_threshold 72->76 + m1_eff_mode (GER40/UK100/BTCUSD) - sweep motor fiel
+            PROFILE_MIGRATION_VERSION = "2026-07-09-a"  # ETHUSD entry_threshold 72->80 (juez fiel 20d: -28.95R->-2.91R)
             async with db.execute("SELECT value FROM bot_config WHERE key='filter_profile_migration_applied'") as cur:
                 _prof_row = await cur.fetchone()
             if not _prof_row or _prof_row[0] != PROFILE_MIGRATION_VERSION:
