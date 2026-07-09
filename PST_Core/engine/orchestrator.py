@@ -729,14 +729,18 @@ class SymbolTask:
                                                     # v2.5.7: pasar el TP técnico (VWAP/Donchian) al executor para que lo USE.
                                                     # Antes lo calculaba la estrategia pero el executor lo ignoraba y usaba ATR.
                                                     # A/B fiel: el técnico mejora forex/metal/cripto (+0.07..+0.10R); en ÍNDICES
-                                                    # el TP-VWAP corta las rachas ganadoras → se deja ATR (no se inyecta).
+                                                    # el TP-VWAP de Scalping corta las rachas ganadoras → se deja ATR (no se
+                                                    # inyecta). RangeBreaker es la excepción: pst_range_lab.py (2026-07-09,
+                                                    # 20d/5 símbolos) confirmó que forzar el TP técnico (media Bollinger)
+                                                    # TAMBIÉN en índices mejora expectancy/Sharpe (+0.023R/+0.30) frente al
+                                                    # ATR fallback — la tesis de reversión-a-la-media no depende del activo.
                                                     if tp_price_target > 0 and isinstance(best_metadata, dict):
                                                         try:
                                                             from ..utils.tech_utils import get_asset_class
                                                             _tp_grp = get_asset_class(self.symbol)
                                                         except Exception:
                                                             _tp_grp = ""
-                                                        if _tp_grp != "INDEX":
+                                                        if _tp_grp != "INDEX" or s_name == "PST-RangeBreaker":
                                                             best_metadata["target_price_tp"] = tp_price_target
 
                                                     exec_result = await self.executor.execute_trade(

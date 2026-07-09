@@ -126,6 +126,14 @@ SCALPER_PARTIAL_CLOSE_ENABLED = True
 SCALPER_PARTIAL_CLOSE_PCT = 0.50
 SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS = 2.0
 
+# PARCIAL POR CLASE DE ACTIVO (v2.6.2): juez fiel 20d confirmó que el cierre parcial a 1R
+# recorta el ganador medio de forma desigual por clase — METAL (XAUUSD) mejora mucho al
+# quitarlo (avg_rr 1.46→2.34, expectancy igual) porque su TP técnico corre más lejos que 1R;
+# FOREX es neutro (EURUSD 1.55→1.59); CRYPTO empeora (BTCUSD 0.70→1.22 en R:R pero el win
+# rate cae de 43%→31%, la expectancy ya negativa se hunde más). Clases listadas aquí
+# desactivan el parcial; el resto sigue con SCALPER_PARTIAL_CLOSE_ENABLED.
+SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES = {"METAL"}
+
 # COMISIÓN DEL BROKER — CALIBRADA CON DATOS REALES de la cuenta (2026-07-03), divisa EUR.
 # El motor fiel (FaithfulScalpingEngine) la descuenta de cada trade convertida a R, ADEMÁS
 # del spread. Antes se ignoraba → el juez era optimista justo en la magnitud del edge.
@@ -143,6 +151,14 @@ COMMISSION_SPEC = {
     "INDEX":     {"per_lot": 0.0},            # el bróker no cobra comisión en índices
     "EQUITIES":  {"per_lot": 0.011},          # ~0.011€/acción (volumen = nº de acciones)
 }
+
+# COMMISSION GUARD (v2.6.2): con SL ceñido, la comisión pct_notional de cripto puede comerse
+# la mayoría del riesgo por trade. Medido con el juez fiel (20d, sl_mult shippeado 1.6):
+# BTCUSD avg 0.43R (edge bruto sano, +36.5R sin comisión → -48.4R con ella) y ETHUSD avg 0.32R
+# (edge bruto YA negativo, -37.3R, sin edge independiente de la comisión). Bloquea la entrada si
+# la comisión proyectada del trade supera este umbral de R. Ensanchar sl_mult NO sirve de
+# palanca aquí: el SL real lo fija casi siempre el swing estructural M5, no el ATR fallback.
+CRYPTO_MAX_COMMISSION_R = 0.25
 
 # Estrategias activas globalmente
 ENABLED_STRATEGIES = [

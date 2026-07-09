@@ -34,7 +34,7 @@ try:
     from ..config import (
         SCALPER_PARTIAL_CLOSE_ENABLED, SCALPER_PARTIAL_CLOSE_PCT,
         SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS, TP_ATR_BY_CLASS,
-        COMMISSION_SPEC,
+        COMMISSION_SPEC, CRYPTO_MAX_COMMISSION_R, SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES,
     )
 except Exception:  # ejecución fuera del paquete (carga suelta)
     SCALPER_PARTIAL_CLOSE_ENABLED = True
@@ -45,6 +45,8 @@ except Exception:  # ejecución fuera del paquete (carga suelta)
         "FOREX": {"per_lot": 4.3}, "METAL": {"per_lot": 5.5}, "COMMODITY": {"per_lot": 5.5},
         "CRYPTO": {"pct_notional": 0.00065}, "INDEX": {"per_lot": 0.0}, "EQUITIES": {"per_lot": 0.011},
     }
+    CRYPTO_MAX_COMMISSION_R = 0.25
+    SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES = {"METAL"}
 
 
 def _commission_r(spec, entry_price, sl_dist, value_per_price):
@@ -254,6 +256,13 @@ class FaithfulScalpingEngine:
                 tp = fill + direction * sl_dist * min_rr    # estirar TP
         sl_dist = abs(fill - sl)                            # R final tras el auto-fix
 
+        # COMMISSION GUARD (v2.6.2): espejo del executor — no abrir si la comisión proyectada
+        # (cripto, pct_notional) supera CRYPTO_MAX_COMMISSION_R del riesgo del trade.
+        if comm_spec and "pct_notional" in comm_spec and sl_dist > 0:
+            proj_commission_r = float(comm_spec["pct_notional"]) * fill / sl_dist
+            if proj_commission_r > CRYPTO_MAX_COMMISSION_R:
+                return None
+
         t = BacktestTrade(
             entry_time=bar["time"], exit_time=None, symbol=symbol, strategy="PST-PrecisionScalping",
             direction=direction, entry_price=fill, sl_price=sl, tp_price=tp,
@@ -293,7 +302,8 @@ class FaithfulScalpingEngine:
                 self._close_remaining(t, t.tp_price, bar["time"], "TP"); return True
 
         # 2) Cierre parcial a 1R (extremo favorable alcanzado) → BE
-        if SCALPER_PARTIAL_CLOSE_ENABLED and not t._partial and R > 0:
+        partial_ok = SCALPER_PARTIAL_CLOSE_ENABLED and self._asset_class(symbol) not in SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES
+        if partial_ok and not t._partial and R > 0:
             reached_1r = (h >= fill + R) if d == 1 else (l <= fill - R)
             if reached_1r:
                 pct = SCALPER_PARTIAL_CLOSE_PCT

@@ -8,7 +8,7 @@ from .mt5_async import send_order_async, sym_info_async, get_positions_async, mo
 from .telegram_manager import telegram_bot
 from ..models.database import PSTDatabase
 from ..portfolio.manager import PortfolioManager
-from ..config import BE_ATR_MULTIPLIER, TRAIL_ATR_MULTIPLIER, TP_ATR_BY_CLASS, STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY, MAX_SYMBOL_EXPOSURE_PCT, SCALPER_PARTIAL_CLOSE_ENABLED, SCALPER_PARTIAL_CLOSE_PCT, SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS
+from ..config import BE_ATR_MULTIPLIER, TRAIL_ATR_MULTIPLIER, TP_ATR_BY_CLASS, STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY, MAX_SYMBOL_EXPOSURE_PCT, SCALPER_PARTIAL_CLOSE_ENABLED, SCALPER_PARTIAL_CLOSE_PCT, SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS, COMMISSION_SPEC, CRYPTO_MAX_COMMISSION_R, SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES
 from ..utils.tech_utils import get_asset_class
 
 logger = logging.getLogger("PST-Executor")
@@ -201,7 +201,21 @@ class PSTExecutor:
             sl_points = min_sl_points
             # Ajustamos sl_price para consistencia
             sl_price = price - min_sl_dist if signal_type == "BUY" else price + min_sl_dist
-            
+
+        # --- COMMISSION GUARD (v2.6.2): en cripto la comisión es % del nocional, no del SL.
+        # Con SL ceñido (scalping) la comisión puede comerse >40% del riesgo por trade
+        # (medido: BTCUSD avg 0.43R, ETHUSD avg 0.32R, juez fiel 20d). Bloquea la entrada si
+        # la comisión proyectada supera CRYPTO_MAX_COMMISSION_R del riesgo (R) de este trade.
+        comm_spec = COMMISSION_SPEC.get(a_class, {})
+        pct_notional = comm_spec.get("pct_notional", 0.0)
+        if pct_notional > 0:
+            sl_dist = abs(price - sl_price)
+            commission_r = (pct_notional * price / sl_dist) if sl_dist > 0 else float("inf")
+            if commission_r > CRYPTO_MAX_COMMISSION_R:
+                logger.warning(f"🛑 [COMMISSION GUARD] {symbol} rechazado. Comisión proyectada "
+                               f"{commission_r:.2f}R > máximo {CRYPTO_MAX_COMMISSION_R}R (SL {sl_dist:.2f} muy ceñido).")
+                return None
+
         lot = self.portfolio.calculate_lot_size(
             effective_balance,
             self.portfolio.max_risk_pct,
@@ -516,7 +530,8 @@ class PSTExecutor:
 
                 # D. LÓGICA DE CIERRES PARCIALES
                 # REACTIVADO: Ahora los scalpers también pueden cerrar parciales si está habilitado en config
-                scalper_partial_ok = is_scalper_pos and SCALPER_PARTIAL_CLOSE_ENABLED
+                partial_class_ok = get_asset_class(symbol) not in SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES
+                scalper_partial_ok = is_scalper_pos and SCALPER_PARTIAL_CLOSE_ENABLED and partial_class_ok
                 if "Scalper" not in p.comment or scalper_partial_ok:
                     active_db_trades = await self.db.get_active_trades()
                     db_trade = next((t for t in active_db_trades if t['ticket'] == ticket), None)
