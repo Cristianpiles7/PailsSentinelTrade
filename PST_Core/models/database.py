@@ -439,8 +439,21 @@ class PSTDatabase:
                 'BTCUSD': {'entry_threshold': 76, 'm1_eff_mode': 'on'},
             }
 
+            # RangeBreaker NO comparte el mismo edge que PrecisionScalping por símbolo — el
+            # juez fiel (pst_range_lab.py, FaithfulRangeEngine) confirmó que en la expansión
+            # v2.6.4-6 (22 símbolos nuevos + ETHUSD) apenas genera señales (0-1 trade/20d en
+            # 16 de 18 acciones — su lógica M15+macro H1/H4 no encaja con esa dinámica) y es
+            # negativo/neutro donde sí opera (AUS200 -4.0R, ETHUSD -1.6R, JP225 +0.2R). Se
+            # desactiva SOLO para RangeBreaker en estos símbolos; PrecisionScalping sigue activo.
+            RANGEBREAKER_DISABLED_SYMBOLS = {
+                'ETHUSD', 'AUS200.cash', 'FRA40.cash', 'HK50.cash', 'JP225.cash',
+                'BA', 'XOM', 'AMD', 'KO', 'ZM', 'MCD', 'CVX', 'INTC', 'RTX', 'PLTR',
+                'AVGO', 'BABA', 'GM', 'BRK.B', 'NFLX', 'FDX', 'ASML', 'ARM',
+            }
+
             for sym, stype in master_config:
                 is_active = 1 if sym in enabled_by_default else 0
+                rb_active = is_active and sym not in RANGEBREAKER_DISABLED_SYMBOLS
                 g = GROUP_DEFAULTS.get(stype, _SCALP_FALLBACK)
                 filter_profile = g['filter_profile']
                 sym_override = SYMBOL_FILTER_OVERRIDES.get(sym)
@@ -460,7 +473,7 @@ class PSTDatabase:
                     INSERT OR IGNORE INTO symbol_strategies
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
                     VALUES (?, 'PST-RangeBreaker', ?, 'MONEY', 7.0, 1, 1, 2.0, 2.5, 1.8, 2.5, 3.5)
-                """, (sym, is_active))
+                """, (sym, rb_active))
 
                 # 4. PST-PrecisionScalping — Scalping en M1 con defaults ÓPTIMOS por grupo
                 await db.execute("""
@@ -492,14 +505,20 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-10-b"  # +AVGO/BABA/GM/BRK.B/NFLX/FDX/ASML/ARM (3a tanda de acciones)
+            UNIVERSE_VERSION = "2026-07-10-c"  # RangeBreaker desactivado en los 22 simbolos nuevos + ETHUSD (sin edge/senal, ver RANGEBREAKER_DISABLED_SYMBOLS)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:
                 for sym, stype in master_config:
                     want = 1 if sym in enabled_by_default else 0
+                    want_rb = want and sym not in RANGEBREAKER_DISABLED_SYMBOLS
                     await db.execute("UPDATE symbols_config SET is_active = ? WHERE symbol = ?", (want, sym))
-                    await db.execute("UPDATE symbol_strategies SET is_active = ? WHERE symbol = ?", (want, sym))
+                    await db.execute(
+                        "UPDATE symbol_strategies SET is_active = ? WHERE symbol = ? AND strategy_name = 'PST-RangeBreaker'",
+                        (want_rb, sym))
+                    await db.execute(
+                        "UPDATE symbol_strategies SET is_active = ? WHERE symbol = ? AND strategy_name = 'PST-PrecisionScalping'",
+                        (want, sym))
                 await db.execute(
                     "INSERT OR REPLACE INTO bot_config (key, value) VALUES ('universe_migration_applied', ?)",
                     (UNIVERSE_VERSION,))

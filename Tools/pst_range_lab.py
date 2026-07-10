@@ -58,6 +58,10 @@ def get_data(symbol, days, refresh=False):
     if not mt5.initialize():
         print(f"    ⚠️  MT5 init falló: {mt5.last_error()}")
         return None
+    # Símbolos fuera del Market Watch necesitan symbol_select antes de pedir histórico —
+    # sin esto, copy_rates_range se cuelga/devuelve vacío indefinidamente (mismo bug que
+    # pst_bt_lab.py, corregido en v2.6.4).
+    mt5.symbol_select(symbol, True)
     info = mt5.symbol_info(symbol)
     if info is None:
         print(f"    ⚠️  {symbol}: symbol_info None")
