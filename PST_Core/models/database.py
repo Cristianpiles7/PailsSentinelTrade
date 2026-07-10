@@ -458,9 +458,25 @@ class PSTDatabase:
                 'UK100.cash', 'US100.cash', 'US30.cash', 'MSFT',
             }
 
+            # v2.6.9: juez fiel (pst_bt_lab.py, 20d, con el fix del suelo de SL ya
+            # incorporado al motor) sobre los 22 símbolos de la expansión v2.6.4-6.
+            # 18/22 salen con expectancy positiva sana (0.05-0.34R) — el día -93.73€ del
+            # 2026-07-10 fue sobre todo ruido de muestra pequeña + los bugs de ejecución
+            # ya corregidos, no falta de edge. Pero 3 salen negativos limpios (sin trades
+            # reales aún que lo desmientan) y ASML es marginal en el juez (+0.023R, dentro
+            # de su propia tolerancia de 0.02R) Y el peor símbolo en vivo (0/4, -37.30€,
+            # un SL a los 9s). Ver Tools/bt_baselines/stocks_expansion_v269_check.json.
+            PRECISIONSCALPING_DISABLED_SYMBOLS = {
+                'RTX',            # -0.057R
+                'FDX',            # -0.048R
+                'FRA40.cash',     # -0.130R
+                'ASML',           # +0.023R (ruido) + live 0/4 -37.30€
+            }
+
             for sym, stype in master_config:
                 is_active = 1 if sym in enabled_by_default else 0
                 rb_active = is_active and sym not in RANGEBREAKER_DISABLED_SYMBOLS
+                ps_active = is_active and sym not in PRECISIONSCALPING_DISABLED_SYMBOLS
                 g = GROUP_DEFAULTS.get(stype, _SCALP_FALLBACK)
                 filter_profile = g['filter_profile']
                 sym_override = SYMBOL_FILTER_OVERRIDES.get(sym)
@@ -487,7 +503,7 @@ class PSTDatabase:
                     INSERT OR IGNORE INTO symbol_strategies
                     (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult, filter_profile)
                     VALUES (?, 'PST-PrecisionScalping', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (sym, is_active, g['risk_mode'], g['risk_value'], g['use_breakeven'], g['use_trailing'],
+                """, (sym, ps_active, g['risk_mode'], g['risk_value'], g['use_breakeven'], g['use_trailing'],
                       g['be_mult'], g['ts_mult'], g['min_rr'], g['sl_mult'], g['tp_mult'], filter_profile))
 
                 # Backfill para BBDD ya existentes: fija el perfil de grupo si está vacío O si tiene
@@ -512,20 +528,21 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-10-d"  # RangeBreaker desactivado tambien en UK100/US100/US30/MSFT (tanda 4-jul sin validar por pst_range_lab)
+            UNIVERSE_VERSION = "2026-07-10-e"  # PrecisionScalping desactivado en RTX/FDX/FRA40.cash (negativos, juez fiel) y ASML (marginal + live muy negativo)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:
                 for sym, stype in master_config:
                     want = 1 if sym in enabled_by_default else 0
                     want_rb = want and sym not in RANGEBREAKER_DISABLED_SYMBOLS
+                    want_ps = want and sym not in PRECISIONSCALPING_DISABLED_SYMBOLS
                     await db.execute("UPDATE symbols_config SET is_active = ? WHERE symbol = ?", (want, sym))
                     await db.execute(
                         "UPDATE symbol_strategies SET is_active = ? WHERE symbol = ? AND strategy_name = 'PST-RangeBreaker'",
                         (want_rb, sym))
                     await db.execute(
                         "UPDATE symbol_strategies SET is_active = ? WHERE symbol = ? AND strategy_name = 'PST-PrecisionScalping'",
-                        (want, sym))
+                        (want_ps, sym))
                 await db.execute(
                     "INSERT OR REPLACE INTO bot_config (key, value) VALUES ('universe_migration_applied', ?)",
                     (UNIVERSE_VERSION,))
