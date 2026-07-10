@@ -10,6 +10,7 @@ from ..models.database import PSTDatabase
 from ..portfolio.manager import PortfolioManager
 from ..config import BE_ATR_MULTIPLIER, TRAIL_ATR_MULTIPLIER, TP_ATR_BY_CLASS, STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY, MAX_SYMBOL_EXPOSURE_PCT, SCALPER_PARTIAL_CLOSE_ENABLED, SCALPER_PARTIAL_CLOSE_PCT, SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS, COMMISSION_SPEC, CRYPTO_MAX_COMMISSION_R, SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES
 from ..utils.tech_utils import get_asset_class
+from ..utils.cooldown_manager import cooldown_mgr
 
 logger = logging.getLogger("PST-Executor")
 
@@ -17,6 +18,9 @@ class PSTExecutor:
     def __init__(self, db: PSTDatabase, portfolio: PortfolioManager):
         self.db = db
         self.portfolio = portfolio
+        # v2.6.9: última foto de posiciones vivas {ticket: (symbol, profit)} para
+        # detectar cierres con pérdida en el ciclo de 10s (cooldown inmediato).
+        self._last_seen_positions = {}
 
     async def execute_trade(self, symbol, signal_type, stop_loss_atr, take_profit_atr, strategy_name, regime, metadata=None):
         """
@@ -103,16 +107,9 @@ class PSTExecutor:
         real_sl_atr = atr_unit * sl_m
         real_tp_atr = atr_unit * tp_m
 
-        # --- PROTECCIÓN DE SPREAD (v2.0.3 - Relajado para Rebotes) ---
-        # Subimos del 35% al 55% para evitar bloqueos en alta volatilidad
-        spread_pts = s_info.spread
-        point = s_info.point
-        spread_dist = spread_pts * point
-        max_spread_allowed = real_sl_atr * 0.55
-        
-        if spread_dist > max_spread_allowed:
-            logger.warning(f"🛑 [SPREAD BLOCK] {symbol} rechazado. Spread {spread_dist:.5f} > Max permitido {max_spread_allowed:.5f} (55% SL)")
-            return
+        # PROTECCIÓN DE SPREAD: movida más abajo (v2.6.9) para evaluarse contra el SL
+        # FINAL tras el auto-fix R:R. Comparar contra el SL ATR preliminar dejaba pasar
+        # trades cuyo SL encogido quedaba a 2x el spread (UK100 2026-07-10, stops en 22s).
 
         # 1.3 Obtener parámetros TS/BE de la base de datos
         use_trailing = strat_cfg.get("use_trailing", 0) == 1
@@ -202,31 +199,9 @@ class PSTExecutor:
             # Ajustamos sl_price para consistencia
             sl_price = price - min_sl_dist if signal_type == "BUY" else price + min_sl_dist
 
-        # --- COMMISSION GUARD (v2.6.2): en cripto la comisión es % del nocional, no del SL.
-        # Con SL ceñido (scalping) la comisión puede comerse >40% del riesgo por trade
-        # (medido: BTCUSD avg 0.43R, ETHUSD avg 0.32R, juez fiel 20d). Bloquea la entrada si
-        # la comisión proyectada supera CRYPTO_MAX_COMMISSION_R del riesgo (R) de este trade.
-        comm_spec = COMMISSION_SPEC.get(a_class, {})
-        pct_notional = comm_spec.get("pct_notional", 0.0)
-        if pct_notional > 0:
-            sl_dist = abs(price - sl_price)
-            commission_r = (pct_notional * price / sl_dist) if sl_dist > 0 else float("inf")
-            if commission_r > CRYPTO_MAX_COMMISSION_R:
-                logger.warning(f"🛑 [COMMISSION GUARD] {symbol} rechazado. Comisión proyectada "
-                               f"{commission_r:.2f}R > máximo {CRYPTO_MAX_COMMISSION_R}R (SL {sl_dist:.2f} muy ceñido).")
-                return None
-
-        lot = self.portfolio.calculate_lot_size(
-            effective_balance,
-            self.portfolio.max_risk_pct,
-            sl_points,
-            s_info,
-            current_atr=current_atr,
-            ma_atr=ma_atr,
-            risk_mode=risk_mode,
-            risk_value=risk_val,
-            regime=regime
-        )
+        # COMMISSION GUARD y CÁLCULO DE LOTE: movidos más abajo (v2.6.9) para usar el SL
+        # FINAL tras el auto-fix R:R. Antes el lote se calculaba con el SL preliminar y,
+        # si el auto-fix lo encogía, el riesgo real quedaba desalineado del risk_value.
 
         # B. CALCULAR TAKE PROFIT DINÁMICO POR VOLATILIDAD (FASE 56)
         volatility_ratio = (current_atr / ma_atr) if ma_atr > 0 else 1.0
@@ -267,8 +242,11 @@ class PSTExecutor:
             # PROACTIVE AUTO-FIX: En lugar de rechazar, adaptamos la orden
             logger.info(f"⚖️ [R:R PROACTIVO] {symbol} {strategy_name}: Ratio inicial {rr_actual:.2f} inferior al mínimo {min_rr}. Ajustando...")
             
-            # 1. Intentar ceñir un poco el SL (hasta un límite seguro de 1.0 ATR)
-            min_sl_allowed = current_atr * 1.0
+            # 1. Intentar ceñir un poco el SL — nunca por debajo de 1.0 ATR M5 NI del
+            # suelo del 0.08% del precio (v2.6.9: antes solo limitaba por ATR M5 y en
+            # baja volatilidad producía SLs del 0.03% del precio, dentro del spread,
+            # que saltaban en 22-33s — UK100 2026-07-10).
+            min_sl_allowed = max(current_atr * 1.0, price * 0.0008)
             ideal_sl_dist = tp_dist / min_rr
             
             if ideal_sl_dist >= min_sl_allowed:
@@ -284,6 +262,46 @@ class PSTExecutor:
                 tp_dist = new_tp_dist
                 tp_price = price + tp_dist if signal_type == "BUY" else price - tp_dist
                 rr_actual = min_rr
+
+        # --- GUARDS FINALES SOBRE EL SL DEFINITIVO (v2.6.9) ---
+        # Corren tras el auto-fix R:R porque este puede encoger el SL: el spread-check,
+        # el guard de comisión y el lote deben ver la distancia REAL de la orden.
+        sl_dist = abs(price - sl_price)
+        sl_points = sl_dist / s_info.point if s_info.point > 0 else 0
+        spread_dist = s_info.spread * s_info.point
+
+        if sl_dist <= 0 or spread_dist > sl_dist * 0.55:
+            logger.warning(f"🛑 [SPREAD BLOCK] {symbol} rechazado. Spread {spread_dist:.5f} > 55% del SL final ({sl_dist:.5f}).")
+            return None
+
+        # COMMISSION GUARD (v2.6.2): en cripto la comisión es % del nocional, no del SL.
+        # Con SL ceñido (scalping) la comisión puede comerse >40% del riesgo por trade
+        # (medido: BTCUSD avg 0.43R, ETHUSD avg 0.32R, juez fiel 20d). Bloquea la entrada si
+        # la comisión proyectada supera CRYPTO_MAX_COMMISSION_R del riesgo (R) de este trade.
+        comm_spec = COMMISSION_SPEC.get(a_class, {})
+        pct_notional = comm_spec.get("pct_notional", 0.0)
+        if pct_notional > 0:
+            commission_r = pct_notional * price / sl_dist
+            if commission_r > CRYPTO_MAX_COMMISSION_R:
+                logger.warning(f"🛑 [COMMISSION GUARD] {symbol} rechazado. Comisión proyectada "
+                               f"{commission_r:.2f}R > máximo {CRYPTO_MAX_COMMISSION_R}R (SL {sl_dist:.2f} muy ceñido).")
+                return None
+
+        lot = self.portfolio.calculate_lot_size(
+            effective_balance,
+            self.portfolio.max_risk_pct,
+            sl_points,
+            s_info,
+            current_atr=current_atr,
+            ma_atr=ma_atr,
+            risk_mode=risk_mode,
+            risk_value=risk_val,
+            regime=regime
+        )
+        if not lot or lot <= 0:
+            logger.warning(f"🛑 [MIN-LOT GUARD] {symbol}: sin lote viable dentro del presupuesto de riesgo. Orden cancelada.")
+            return None
+
         # --- NEW: STOP & REVERSE LOGIC (HEDGING PROTECTION) ---
         positions = await get_positions_async(symbol=symbol)
         if positions is None:
@@ -409,6 +427,30 @@ class PSTExecutor:
         Gestión proactiva de posiciones (Breakeven y Trailing Stop automático).
         """
         positions = await get_positions_async()
+
+        # --- COOLDOWN INMEDIATO TRAS SL (v2.6.9) ---
+        # El registro del cooldown vivía solo en sync_trades_task (cada 60s), dejando
+        # una ventana ciega en la que el bot reentraba 50-96s después de un SL
+        # (ASML/UK100/GBPUSD 2026-07-10). Este ciclo corre cada 10s: si una posición
+        # desaparece y su último PnL conocido era negativo, registramos el cooldown ya.
+        # El sync posterior lo re-registrará (extiende el deadline ≤60s, inocuo).
+        if positions is not None:
+            current_seen = {p.ticket: (p.symbol, p.profit) for p in positions}
+            closed_losing = [
+                (sym, pnl) for tk, (sym, pnl) in self._last_seen_positions.items()
+                if tk not in current_seen and pnl < 0
+            ]
+            if closed_losing:
+                try:
+                    cd_mins = int(await self.db.get_config('loss_cooldown_minutes', '15'))
+                except Exception:
+                    cd_mins = 15
+                for sym, pnl in closed_losing:
+                    cooldown_mgr.register_loss(sym, duration_minutes=cd_mins)
+                    logger.info(f"❄️ [FAST COOLDOWN] {sym} cerró en negativo ({pnl:.2f}€). "
+                                f"Cooldown de {cd_mins}m registrado sin esperar al sync.")
+            self._last_seen_positions = current_seen
+
         if not positions: return
 
         for p in positions:

@@ -354,12 +354,13 @@ class FaithfulRangeEngine:
                 tp_adj = 1.0
             tp = fill + direction * atr_unit * self.tp_mult * tp_adj
 
-        # --- auto-fix R:R del executor ---
+        # --- auto-fix R:R del executor (v2.6.9: el encogimiento del SL respeta el
+        # suelo max(1.0·ATR_M5, 0.08% del precio), como en execute_trade) ---
         sl_dist = abs(fill - sl)
         tp_dist = abs(tp - fill)
         if self.min_rr > 0 and sl_dist > 0 and tp_dist / sl_dist < self.min_rr:
             ideal_sl_dist = tp_dist / self.min_rr
-            if atr_m5 > 0 and ideal_sl_dist >= 1.0 * atr_m5:
+            if ideal_sl_dist >= max(1.0 * atr_m5, fill * self.MIN_SL_PCT):
                 sl = fill - direction * ideal_sl_dist
             else:
                 tp = fill + direction * sl_dist * self.min_rr

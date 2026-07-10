@@ -449,6 +449,13 @@ class PSTDatabase:
                 'ETHUSD', 'AUS200.cash', 'FRA40.cash', 'HK50.cash', 'JP225.cash',
                 'BA', 'XOM', 'AMD', 'KO', 'ZM', 'MCD', 'CVX', 'INTC', 'RTX', 'PLTR',
                 'AVGO', 'BABA', 'GM', 'BRK.B', 'NFLX', 'FDX', 'ASML', 'ARM',
+                # v2.6.9: la tanda de expansión del 4-jul se validó SOLO para
+                # PrecisionScalping (pst_bt_lab); RangeBreaker quedó activo por descuido
+                # en estos 4 y nunca pasó por su juez fiel (pst_range_lab). Live desde
+                # el 6-jul: UK100 0/4 (-13.12€), US100 0/1, US30 0/1 → desactivado hasta
+                # validarlos. GER40.cash se mantiene: mismo origen, pero live positivo
+                # (3/5, +1.17€) — pendiente de pasar por pst_range_lab igualmente.
+                'UK100.cash', 'US100.cash', 'US30.cash', 'MSFT',
             }
 
             for sym, stype in master_config:
@@ -505,7 +512,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-10-c"  # RangeBreaker desactivado en los 22 simbolos nuevos + ETHUSD (sin edge/senal, ver RANGEBREAKER_DISABLED_SYMBOLS)
+            UNIVERSE_VERSION = "2026-07-10-d"  # RangeBreaker desactivado tambien en UK100/US100/US30/MSFT (tanda 4-jul sin validar por pst_range_lab)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:

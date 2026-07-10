@@ -1,4 +1,5 @@
 import logging
+import math
 import MetaTrader5 as mt5
 import aiosqlite
 from typing import Dict, List
@@ -415,9 +416,22 @@ class PortfolioManager:
             raw_lot = (margin_bucket * leverage) / (contract_size * price)
             logger.warning(f"✂️ [MARGIN CAP] {symbol} superó cubeta de {margin_bucket}€. Recortando lotaje.")
 
-        # Ajustes finales del Broker
-        lot = max(symbol_info.volume_min, min(symbol_info.volume_max, raw_lot))
-        lot = round(lot / symbol_info.volume_step) * symbol_info.volume_step
-        
+        # Ajustes finales del Broker (v2.6.9): floor al paso — round() podía redondear
+        # el lote HACIA ARRIBA y con ello el riesgo por encima del presupuesto.
+        step = symbol_info.volume_step if symbol_info.volume_step > 0 else 0.01
+        lot = min(symbol_info.volume_max, raw_lot)
+        lot = math.floor((lot + 1e-9) / step) * step
+
+        if lot < symbol_info.volume_min:
+            # El mínimo del bróker excede el lote que cabe en el presupuesto de riesgo.
+            # Solo lo aceptamos si el exceso es ≤25% (ASML 2026-07-10: 1 acción mínima
+            # con SL de 15 pts → pérdidas de -11€ contra un tope de 7€).
+            risk_at_min = symbol_info.volume_min * stop_loss_points * tick_value
+            if risk_money > 0 and risk_at_min > risk_money * 1.25:
+                logger.warning(f"🛑 [MIN-LOT GUARD] {symbol}: riesgo con volumen mínimo "
+                               f"({risk_at_min:.2f}€) supera el presupuesto ({risk_money:.2f}€) en >25%. Trade omitido.")
+                return 0.0
+            lot = symbol_info.volume_min
+
         logger.info(f"✅ Lot Final para {symbol}: {round(lot, 2)} (Basado en {risk_mode} {risk_value}€, SL {stop_loss_points} pts)")
         return round(lot, 2)

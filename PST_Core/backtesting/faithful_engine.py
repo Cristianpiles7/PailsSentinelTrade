@@ -243,14 +243,16 @@ class FaithfulScalpingEngine:
                 tp_adj = 1.0
             tp = fill + direction * atr_unit * tp_m * tp_adj
 
-        # auto-fix R:R (igual que el executor): 1º ceñir el SL hasta suelo 1.0·ATR_M5;
-        # si no cabe, estirar el TP. min_rr por símbolo o default (seed 1.8).
+        # auto-fix R:R (igual que el executor): 1º ceñir el SL hasta el suelo
+        # max(1.0·ATR_M5, 0.08% del precio) — v2.6.9: el executor añadió el suelo de
+        # precio al encogimiento (antes solo ATR M5, y en baja volatilidad generaba
+        # SLs dentro del spread); si no cabe, estirar el TP. min_rr por símbolo o seed 1.8.
         min_rr = float(profile.get("min_rr") or self.MIN_RR)
         sl_dist = abs(fill - sl)
         tp_dist = abs(tp - fill)
         if sl_dist > 0 and tp_dist / sl_dist < min_rr:
             ideal_sl_dist = tp_dist / min_rr
-            if a5 > 0 and ideal_sl_dist >= 1.0 * a5:
+            if ideal_sl_dist >= max(1.0 * a5, fill * self.MIN_SL_PCT):
                 sl = fill - direction * ideal_sl_dist       # ceñir SL
             else:
                 tp = fill + direction * sl_dist * min_rr    # estirar TP
