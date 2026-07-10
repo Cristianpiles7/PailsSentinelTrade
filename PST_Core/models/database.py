@@ -288,6 +288,9 @@ class PSTDatabase:
                 # v2.6.5: 2ª tanda de acciones (juez fiel 20d, ver enabled_by_default abajo).
                 ('ZM', 'STOCK'), ('MCD', 'STOCK'), ('CVX', 'STOCK'), ('INTC', 'STOCK'),
                 ('RTX', 'STOCK'), ('PLTR', 'STOCK'),
+                # v2.6.6: 3ª tanda de acciones (juez fiel 20d, ver enabled_by_default abajo).
+                ('AVGO', 'STOCK'), ('BABA', 'STOCK'), ('GM', 'STOCK'), ('BRK.B', 'STOCK'),
+                ('NFLX', 'STOCK'), ('FDX', 'STOCK'), ('ASML', 'STOCK'), ('ARM', 'STOCK'),
             ]
             
             # Universo ACTIVO por defecto (whitelist). Solo estos arrancan operando; el resto
@@ -340,6 +343,16 @@ class PSTDatabase:
                 'INTC',                       # STOCK (+4.9R@20d avg_rr 1.59 wr 50.0%)
                 'RTX',                        # STOCK (+4.8R@20d avg_rr 1.13 wr 66.7%, n=18 chico)
                 'PLTR',                       # STOCK (+2.2R@20d avg_rr 1.34 wr 46.7%)
+                # v2.6.6: 3ª tanda de acciones (8 ganadoras de 10 probadas; GME/AZN negativas
+                # quedan fuera):
+                'AVGO',                       # STOCK (+15.8R@20d avg_rr 1.83 wr 64.5%)
+                'BABA',                       # STOCK (+8.1R@20d avg_rr 2.20 wr 45.0%)
+                'GM',                         # STOCK (+5.1R@20d avg_rr 1.24 wr 52.5%)
+                'BRK.B',                      # STOCK (+4.5R@20d avg_rr 1.41 wr 55.0%)
+                'NFLX',                       # STOCK (+2.8R@20d avg_rr 2.16 wr 36.4%)
+                'FDX',                        # STOCK (+2.4R@20d avg_rr 1.22 wr 50.0%)
+                'ASML',                       # STOCK (+2.1R@20d avg_rr 1.66 wr 41.7%)
+                'ARM',                        # STOCK (+1.8R@20d avg_rr 1.37 wr 44.7%)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
@@ -479,7 +492,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-10-a"  # +ZM/MCD/CVX/INTC/RTX/PLTR (2a tanda de acciones)
+            UNIVERSE_VERSION = "2026-07-10-b"  # +AVGO/BABA/GM/BRK.B/NFLX/FDX/ASML/ARM (3a tanda de acciones)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:

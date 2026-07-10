@@ -267,6 +267,8 @@ def get_asset_class(symbol: str) -> str:
         # "V" (Visa) excluida a propósito: substring de 1 letra colisionaría con otros símbolos.
         "JPM", "DIS", "KO", "WMT", "XOM", "AMD", "QCOM", "PFE", "IBM", "CSCO", "BA",
         "JNJ", "MCD", "NKE", "SBUX", "INTC", "CVX", "BAC", "RTX", "LMT", "PLTR", "SNOW", "ZM",
+        "AVGO", "ARM", "ASML", "AZN", "BABA", "BRK.B", "FDX", "GM", "GME",
+        # "GE" excluida a propósito: substring colisionaría con GER40.cash.
     ]
     if any(k in s for k in equities_keywords):
         return "EQUITIES"
