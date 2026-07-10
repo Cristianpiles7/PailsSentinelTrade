@@ -3625,7 +3625,10 @@ function App() {
                       <div className="flex flex-col gap-2">
                         {allStratNames.map(strat => {
                           const stratData = symbolStrats[strat] || {};
-                          const isEnabled = stratData.is_active ? true : ["PST-RangeBreaker"].includes(strat);
+                          // v2.6.7: antes, si is_active era 0 (deshabilitado a propósito, p.ej.
+                          // RangeBreaker en los símbolos nuevos sin edge) el fallback lo mostraba
+                          // "ON" igualmente para RangeBreaker. Ahora refleja el valor real de BBDD.
+                          const isEnabled = !!stratData.is_active;
                           const displayName = STRAT_NAME_MAP[strat] || strat.replace("PST-", "").replace(/-/g, " ");
                           let noiseMode = null;
                           let vwapExitOff = false;
