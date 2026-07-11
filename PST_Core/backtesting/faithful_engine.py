@@ -25,6 +25,7 @@ Usa ventana acotada de lookback (simulación lineal), igual que Tools/pst_backte
 Resultado en múltiplos de R vía BacktestResult/BacktestTrade (mismas métricas de producción).
 """
 import logging
+import pandas as pd
 
 from .engine import BacktestTrade, BacktestResult, PSTBacktestEngine
 
@@ -85,12 +86,20 @@ class FaithfulScalpingEngine:
     # Usar 600 anclaba el VWAP mucho más atrás → señales distintas y peores que en real
     # (validado: GBPUSD +0.011R@600 vs +0.314R@200 con el MISMO perfil). 200 = fiel a producción.
     def __init__(self, threshold: int = 70, lookback_m1: int = 200, lookback_m5: int = 240,
-                 warmup: int = 240, model_spread: bool = True, use_technical_tp=None):
+                 warmup: int = 240, model_spread: bool = True, use_technical_tp=None,
+                 cooldown_mins: int = 15):
         self.threshold = threshold
         self.lookback_m1 = lookback_m1
         self.lookback_m5 = lookback_m5
         self.warmup = warmup
         self.model_spread = model_spread
+        # Cooldown tras pérdida (v2.6.9): el motor NO modelaba el bloqueo de
+        # loss_cooldown_minutes (cooldown_manager.py, default 15) que el bot real aplica
+        # por símbolo tras cada SL — reevaluaba entrada en la siguiente barra M1 sin
+        # esperar. Con WR~45% (más de la mitad de los trades disparan cooldown), esto
+        # infla el ritmo de trades/día del juez muy por encima de lo real: medido en vivo
+        # vs backtest, XAUUSD 4.4x, GBPUSD 8x, GER40 1.75x, US500 2.7x más rápido el juez.
+        self.cooldown_secs = cooldown_mins * 60
         # TP: None (default) = AUTO por grupo, espejo del executor tras v2.5.7 — usa el tp_price
         # técnico (VWAP/Donchian) en TODO menos ÍNDICES (validado A/B: mejora forex/metal/cripto
         # +0.07..+0.10R, pero empeora índices, que prefieren correr → ATR). True/False fuerzan.
@@ -112,6 +121,15 @@ class FaithfulScalpingEngine:
         profile = profile or {}
         df_m1, df_m5 = data["m1"], data["m5"]
         t_m5 = df_m5["time"].values
+        # ATR(14) M5 vectorizado para toda la serie — v2.6.9: el breakeven standalone
+        # (_manage paso 3) usaba t.atr, el ATR M1 CONGELADO al abrir el trade. En vivo,
+        # manage_active_trades recalcula el ATR M5 en CADA ciclo de 10s (fetch_rates_async
+        # M5 fresco) — con ATR_M5 ≈ 2-3× ATR_M1 (ver sl_backtest_vs_live_m1_m5), el juez
+        # disparaba el BE con un movimiento 2-3x menor del necesario en la realidad,
+        # "protegiendo" trades mucho antes de lo que ocurre en vivo. Espejo de
+        # FaithfulRangeEngine, que ya recalculaba esto correctamente por barra.
+        import pandas_ta as _pta
+        atr_m5_mgmt_series = _pta.atr(df_m5["high"], df_m5["low"], df_m5["close"], length=14)
         a_class = self._asset_class(symbol)
         tp_mult = TP_ATR_BY_CLASS.get(a_class, 4.0)
         spread = spread_dist if self.model_spread else 0.0
@@ -135,21 +153,28 @@ class FaithfulScalpingEngine:
         res = BacktestResult("PST-PrecisionScalping", symbol, period_start, period_end)
 
         pos = None          # posición abierta
+        cooldown_until = None
         n = len(df_m1)
         i = self.warmup
         while i < n:
             bar = df_m1.iloc[i]
             if pos is not None:
-                closed = self._manage(pos, bar, df_m1, df_m5, t_m5, i, strategy, symbol, profile)
+                closed = self._manage(pos, bar, df_m1, df_m5, t_m5, i, strategy, symbol, profile,
+                                       atr_m5_mgmt_series)
                 if closed:
+                    if pos.pnl_r < 0 and self.cooldown_secs > 0:
+                        cooldown_until = bar["time"] + pd.Timedelta(seconds=self.cooldown_secs)
                     res.trades.append(pos)
                     pos = None
                 i += 1
                 continue
 
             # --- flat: evaluar entrada ---
-            m1_slice = df_m1.iloc[max(0, i + 1 - self.lookback_m1): i + 1]
             cur_time = bar["time"]
+            if cooldown_until is not None and cur_time < cooldown_until:
+                i += 1
+                continue
+            m1_slice = df_m1.iloc[max(0, i + 1 - self.lookback_m1): i + 1]
             end5 = int((t_m5 <= cur_time.to_datetime64()).sum())
             if end5 < 30:
                 i += 1
@@ -285,7 +310,8 @@ class FaithfulScalpingEngine:
         return t
 
     # ------------------------------------------------------------------ gestión
-    def _manage(self, t, bar, df_m1, df_m5, t_m5, j, strategy, symbol, profile) -> bool:
+    def _manage(self, t, bar, df_m1, df_m5, t_m5, j, strategy, symbol, profile,
+                atr_m5_mgmt_series=None) -> bool:
         """Gestiona la posición en la barra j. Devuelve True si se cerró del todo."""
         h, l, c = float(bar["high"]), float(bar["low"]), float(bar["close"])
         d, fill, R = t.direction, t.entry_price, t._R
@@ -318,10 +344,19 @@ class FaithfulScalpingEngine:
                 t.sl_price = fill + d * t._be_pad   # SL a breakeven con padding
                 t.exit_reason = "PARTIAL_1R"
 
-        # 3) Breakeven a be_mult·ATR (si aún no hubo parcial/BE)
-        if not t._be and t.atr > 0:
+        # 3) Breakeven a be_mult·ATR (si aún no hubo parcial/BE) — ATR M5 FRESCO (última
+        # vela M5 completada a esta altura), no el ATR M1 congelado de la entrada. Espejo
+        # de manage_active_trades, que recalcula el ATR M5 en cada ciclo de 10s.
+        atr_fresh = t.atr
+        if atr_m5_mgmt_series is not None:
+            end5_be = int((t_m5 <= bar["time"].to_datetime64()).sum())
+            if end5_be >= 15:
+                v = float(atr_m5_mgmt_series.iloc[end5_be - 1])
+                if v == v:  # no NaN
+                    atr_fresh = v
+        if not t._be and atr_fresh > 0:
             be_atr = getattr(t, "_be_mult", self.SAFE_BE_MULT)
-            reached_be = (h >= fill + be_atr * t.atr) if d == 1 else (l <= fill - be_atr * t.atr)
+            reached_be = (h >= fill + be_atr * atr_fresh) if d == 1 else (l <= fill - be_atr * atr_fresh)
             if reached_be:
                 t.sl_price = fill + d * t._be_pad
                 t._be = True

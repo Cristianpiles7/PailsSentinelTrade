@@ -459,8 +459,12 @@ class PSTExecutor:
                 ticket = p.ticket
                 p_type = "BUY" if p.type == 0 else "SELL"
                 
-                # 1. Obtener ATR actual (M5)
-                df = await fetch_rates_async(symbol, 5, 50)
+                # 1. Obtener ATR actual (M5) — 200 barras (v2.6.9, antes 50): esta misma
+                # serie se reutiliza en check_exit_signal para el VWAP "de sesión". Con
+                # solo 50 barras (~4h10 de M5), _session_df ya no recortaba nada (todas
+                # caían "hoy") y el VWAP quedaba como ventana RODANTE, no de sesión —
+                # divergía tanto de la señal de entrada (200 barras) como del juez fiel.
+                df = await fetch_rates_async(symbol, 5, 200)
                 if df is None: continue
                 
                 atr_series = ta.atr(df['high'], df['low'], df['close'], length=14)
@@ -547,7 +551,10 @@ class PSTExecutor:
                 if "PrecisionScalping" in p.comment and pos_age_secs >= 120:
                     from ..strategies.pst_precision_scalping import PSTPrecisionScalping
                     ps_strat = PSTPrecisionScalping()
-                    mtf_exit = {"m1": await fetch_rates_async(symbol, 1, 50), "m5": df}
+                    # 200 barras M1 (v2.6.9, antes 50) — mismo tamaño que ve la señal de
+                    # entrada (get_mtf_data_async) para que el VWAP de sesión del exit
+                    # coincida con el que evaluó la entrada, no una ventana rodante corta.
+                    mtf_exit = {"m1": await fetch_rates_async(symbol, 1, 200), "m5": df}
                     if ps_strat.check_exit_signal(mtf_exit, p_type, symbol=symbol, filter_profile=strat_cfg.get("filter_profile")):
                         logger.info(f"🛑 [SCALPING EXIT] {symbol} (Ticket: {ticket}) — Precio cruzó VWAP en contra.")
                         req = {
@@ -710,8 +717,13 @@ class PSTExecutor:
             should_close = False
             reason = ""
             
-            # A. Protección Acciones (EOD Diario)
-            if a_class == "INDEX" and any(k in symbol.upper() for k in ["NVDA", "TSLA", "AAPL", "MSFT", "GOOG"]):
+            # A. Protección Acciones (EOD Diario) — v2.6.9: exigía a_class=="INDEX" pero
+            # get_asset_class clasifica NVDA/TSLA/AAPL/MSFT/GOOG (y toda la expansión de
+            # acciones) como "EQUITIES" — la condición nunca era verdadera, este cierre de
+            # seguridad NUNCA se disparó para ninguna acción, dejándolas expuestas a gaps
+            # overnight. get_asset_class ya mantiene la lista completa de tickers de acción
+            # (incl. la expansión v2.6.4-6); no hace falta duplicarla aquí.
+            if a_class == "EQUITIES":
                 if current_time_str >= SESSION_PROTECTION["STOCK_CLOSE_TIME"]:
                     should_close = True
                     reason = "EOD Stock Protection"

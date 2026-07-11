@@ -105,6 +105,19 @@ MAX_TOTAL_OPEN_POSITIONS = 999  # Sin límite global (filtrado por estrategia/ca
 MAX_POSITIONS_PER_CATEGORY = {"TREND": 999, "RANGE": 999, "SCALPING": 999, "ALL": 999}
 MAX_SYMBOL_EXPOSURE_PCT = 2.5
 
+# CORRELATION BLOCK (v2.6.9): desactivado 2026-07-11 a propósito para un test de fidelidad
+# juez-vs-vivo de una semana. Los jueces fieles (faithful_engine.py/faithful_range_engine.py)
+# solo simulan UN símbolo aislado — nunca podrán ver que hay una posición correlacionada
+# abierta en OTRO símbolo de la cartera. Medido en vivo el 2026-07-10: el juez predecía
+# 4.4x-8x más trades/día que los reales para XAUUSD/GBPUSD, y el bloqueo por correlación
+# (PortfolioManager.can_open_trade, corr_cache.is_correlated umbral 0.82) es la causa más
+# plausible — con 30+ símbolos activos casi siempre hay algo correlacionado ya abierto.
+# Con esto en False, el bot solo aplica "una operación por símbolo" (lo que el juez SÍ
+# modela), para poder comparar frecuencia/WR real vs backtest sobre una base comparable.
+# Ver memoria del proyecto (executor_vs_judge_audit_2026_07_10). Revertir a True cuando
+# termine el test o si la exposición correlacionada resulta ser un problema real.
+CORRELATION_BLOCK_ENABLED = False
+
 # SCALPER DEFAULTS
 SCALPER_TARGETS = ["BTCUSD", "ETHUSD", "US500.cash", "XAUUSD", "EURUSD", "NAS100"]
 SCALPER_RISK_DEFAULT = 0.08

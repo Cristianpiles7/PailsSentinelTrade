@@ -4,7 +4,7 @@ import MetaTrader5 as mt5
 import aiosqlite
 from typing import Dict, List
 from ..utils.tech_utils import get_asset_class
-from ..config import SCALPER_MAX_LOSS_EUR, STRATEGY_CATEGORIES
+from ..config import SCALPER_MAX_LOSS_EUR, STRATEGY_CATEGORIES, CORRELATION_BLOCK_ENABLED
 
 logger = logging.getLogger("PST-Portfolio")
 
@@ -244,7 +244,10 @@ class PortfolioManager:
                         return False
 
         # --- CORRELACIÓN DINÁMICA: no abrir si hay una posición altamente correlacionada ---
-        if current_positions:
+        # Desactivable vía CORRELATION_BLOCK_ENABLED (config.py) — ver comentario allí:
+        # test de fidelidad juez-vs-vivo de una semana (2026-07-11), los jueces solo
+        # modelan "una operación por símbolo", nunca correlación cross-símbolo.
+        if CORRELATION_BLOCK_ENABLED and current_positions:
             try:
                 from ..utils.correlation_cache import corr_cache
                 for pos in current_positions:
