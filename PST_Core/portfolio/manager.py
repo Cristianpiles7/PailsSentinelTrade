@@ -4,7 +4,7 @@ import MetaTrader5 as mt5
 import aiosqlite
 from typing import Dict, List
 from ..utils.tech_utils import get_asset_class
-from ..config import SCALPER_MAX_LOSS_EUR, STRATEGY_CATEGORIES, CORRELATION_BLOCK_ENABLED
+from ..config import SCALPER_MAX_LOSS_EUR, STRATEGY_CATEGORIES, CORRELATION_BLOCK_ENABLED, INDEX_SAME_DIRECTION_CAP
 
 logger = logging.getLogger("PST-Portfolio")
 
@@ -266,6 +266,30 @@ class PortfolioManager:
                             return False
             except Exception as _ce:
                 logger.debug(f"[CorrCache] Error en verificación de correlación: {_ce}")
+
+        # --- CAP DE ÍNDICES EN MISMA DIRECCIÓN (v2.6.10) ---
+        # Ver comentario en config.py (INDEX_SAME_DIRECTION_CAP): máx N posiciones de índice
+        # abiertas por dirección. 0 = desactivado. Como los jueces fieles solo simulan un
+        # símbolo aislado, este cap (igual que el corr block) NUNCA estará modelado en
+        # backtest — mantener apagado mientras dure el test de fidelidad juez-vs-vivo.
+        if INDEX_SAME_DIRECTION_CAP > 0 and current_positions:
+            try:
+                from ..utils.tech_utils import get_asset_class
+                if get_asset_class(symbol) == "INDEX":
+                    same_dir_idx = [
+                        p for p in current_positions
+                        if get_asset_class(p.symbol) == "INDEX"
+                        and ("BUY" if getattr(p, "type", -1) == 0 else "SELL") == signal_type
+                    ]
+                    if len(same_dir_idx) >= INDEX_SAME_DIRECTION_CAP:
+                        logger.warning(
+                            f"🔗 [INDEX CAP] {symbol} {signal_type} bloqueado: ya hay "
+                            f"{len(same_dir_idx)} índice(s) en la misma dirección "
+                            f"({', '.join(p.symbol for p in same_dir_idx)}), cap={INDEX_SAME_DIRECTION_CAP}."
+                        )
+                        return False
+            except Exception as _ie:
+                logger.debug(f"[IndexCap] Error en verificación del cap de índices: {_ie}")
 
         acc = await self.get_account_status()
         if not acc: return False

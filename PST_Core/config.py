@@ -118,6 +118,17 @@ MAX_SYMBOL_EXPOSURE_PCT = 2.5
 # termine el test o si la exposición correlacionada resulta ser un problema real.
 CORRELATION_BLOCK_ENABLED = False
 
+# CAP DE ÍNDICES EN MISMA DIRECCIÓN (v2.6.10): sustituto ESTRECHO del correlation block
+# genérico. Auditoría BBDD 13-14 jul (2 primeros días del test de fidelidad): las posiciones
+# de índices solapadas en la misma dirección hicieron WR 13.3% (2/15, -73.03€ — más de la
+# mitad de la pérdida total) vs 31.2% en índices sin solape; clusters GER40+US500, HK50+EU50,
+# GER40+EU50, US30+JP225 cobraron el SL casi a la vez los dos días. A diferencia del CORR
+# BLOCK (umbral 0.82 sobre TODO el universo, causaba el gap de frecuencia 2-8x vs juez),
+# esto solo limita índices contra índices y solo en la misma dirección — acciones, forex,
+# metales y cripto no se tocan. 0 = DESACTIVADO (default mientras dure el test de fidelidad);
+# poner 1 (recomendado) para permitir como máximo 1 posición de índice por dirección.
+INDEX_SAME_DIRECTION_CAP = 0
+
 # SCALPER DEFAULTS
 SCALPER_TARGETS = ["BTCUSD", "ETHUSD", "US500.cash", "XAUUSD", "EURUSD", "NAS100"]
 SCALPER_RISK_DEFAULT = 0.08

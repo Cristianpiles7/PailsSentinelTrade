@@ -471,6 +471,18 @@ class PSTDatabase:
                 'FDX',            # -0.048R
                 'FRA40.cash',     # -0.130R
                 'ASML',           # +0.023R (ruido) + live 0/4 -37.30€
+                # v2.6.10: auditoría BBDD completa 13-14 jul (61 trades del test de
+                # fidelidad, WR 34.4% vs 48.2% esperado por el juez):
+                'ETHUSD',         # el propio baseline (universe_full_v269_20d.json) lo da
+                                  # NEGATIVO: exp -0.220R en 108 trades. Nunca debió estar
+                                  # activo con el criterio aplicado a RTX/FDX/FRA40. Live 0/1.
+                'JP225.cash',     # PAUSA hasta reconciliar: juez WR 55.8% (86 tr) vs live
+                                  # 1/8 (-27.75€) — la mayor brecha juez-vivo del universo.
+                                  # Juez fuerte + vivo desastroso = coste no modelado
+                                  # (spread asiático de madrugada), correr pst_reconcile.py
+                                  # sobre los trades reales antes de decidir si vuelve.
+                'HK50.cash',      # PAUSA hasta reconciliar: juez WR 46.3% (54 tr) vs live
+                                  # 0/4 (-23.48€). Mismo patrón asiático que JP225.
             }
 
             for sym, stype in master_config:
@@ -528,7 +540,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-10-e"  # PrecisionScalping desactivado en RTX/FDX/FRA40.cash (negativos, juez fiel) y ASML (marginal + live muy negativo)
+            UNIVERSE_VERSION = "2026-07-14-a"  # PrecisionScalping desactivado en ETHUSD (baseline negativo -0.220R) y JP225.cash/HK50.cash (pausa: brecha juez-vivo 1/12, -51€, pendiente pst_reconcile)
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:

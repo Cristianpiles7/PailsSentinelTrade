@@ -148,6 +148,18 @@ class PSTPrecisionScalping:
         "session_edge_mode": "off",
         "session_edge_buffer_min": 15,
         "session_edge_penalty": 12,
+        # Reapertura semanal: 'off' por defecto (sin efecto, retrocompatible). A diferencia
+        # del borde de sesión diario (que solo aplica donde hay gap diario real), el gap del
+        # FIN DE SEMANA existe en todo el universo salvo cripto: los primeros minutos del
+        # lunes (hora bróker) reabren con liquidez fina, spread ancho y el precio digiriendo
+        # el gap. Auditoría BBDD 13-14 jul: las 3 entradas del lunes 00:38-00:49 (JP225,
+        # GER40, US500) fueron 0/3 (-20.16€), las tres vendiendo el extremo inferior del
+        # rango post-gap. Modos: 'penalty' descuenta weekend_reopen_penalty del score;
+        # 'block' resta 100 (veto efectivo). El juez fiel lo modela automáticamente al
+        # activarlo (el filtro vive en la estrategia, que pst_bt_lab carga tal cual).
+        "weekend_reopen_mode": "off",
+        "weekend_reopen_buffer_min": 60,
+        "weekend_reopen_penalty": 15,
     }
 
     # Bordes de sesión (minutos desde medianoche, hora bróker/MT5) — horarios REALES
@@ -543,6 +555,21 @@ class PSTPrecisionScalping:
                     factors.append({"k": "Borde de sesión", "v": f"{edge_dist:.0f} min de apertura/cierre — descontado ⚠️", "score": -pen})
                 else:
                     factors.append({"k": "Borde de sesión", "v": "Fuera del margen de apertura/cierre", "score": 0})
+
+        # 7d. Reapertura semanal — apagado por defecto (ver weekend_reopen_mode en
+        # FILTER_DEFAULTS). Primeros minutos del lunes (hora bróker) tras el gap del
+        # finde. No aplica a cripto (24/7, sin gap).
+        if prof.get("weekend_reopen_mode", "off") != "off" and not is_crypto:
+            bar_t = df_m1["time"].iloc[-1]
+            wbuf = int(prof.get("weekend_reopen_buffer_min", 60))
+            if bar_t.weekday() == 0 and (bar_t.hour * 60 + bar_t.minute) < wbuf:
+                if prof.get("weekend_reopen_mode") == "block":
+                    score -= 100
+                    factors.append({"k": "Reapertura semanal", "v": f"Lunes {bar_t.hour:02d}:{bar_t.minute:02d}, dentro de los {wbuf} min post-gap del finde — VETADO ❌", "score": -100})
+                else:
+                    pen = int(prof.get("weekend_reopen_penalty", 15))
+                    score -= pen
+                    factors.append({"k": "Reapertura semanal", "v": f"Lunes {bar_t.hour:02d}:{bar_t.minute:02d}, dentro de los {wbuf} min post-gap del finde — descontado ⚠️", "score": -pen})
 
         # 8. Anti-spike: vela parabólica o impulso agotado
         last_candle_range = self._last(high_m1) - self._last(low_m1)
