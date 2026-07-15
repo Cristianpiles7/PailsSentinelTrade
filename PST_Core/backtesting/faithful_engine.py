@@ -87,12 +87,25 @@ class FaithfulScalpingEngine:
     # (validado: GBPUSD +0.011R@600 vs +0.314R@200 con el MISMO perfil). 200 = fiel a producción.
     def __init__(self, threshold: int = 70, lookback_m1: int = 200, lookback_m5: int = 240,
                  warmup: int = 240, model_spread: bool = True, use_technical_tp=None,
-                 cooldown_mins: int = 15):
+                 cooldown_mins: int = 15, use_trailing: bool = False, ts_mult: float = 2.5,
+                 partial_r: float = 1.0, partial_pct=None):
         self.threshold = threshold
         self.lookback_m1 = lookback_m1
         self.lookback_m5 = lookback_m5
         self.warmup = warmup
         self.model_spread = model_spread
+        # Gestión parametrizable (v2.6.10) — defaults = producción actual, para que los
+        # baselines existentes sigan siendo reproducibles bit a bit:
+        #  · use_trailing/ts_mult: espejo del bloque B de manage_active_trades (executor):
+        #    se arma con beneficio > max(2.0, ts_mult)·ATR_M5 fresco, correa ts_mult·ATR
+        #    (1.5 si ADX_M5(14) > 40), solo mueve el SL a mejor. En producción el seed de
+        #    PrecisionScalping lleva use_trailing=0 → default False.
+        #  · partial_r/partial_pct: umbral en R y fracción del cierre parcial (producción:
+        #    1.0R / SCALPER_PARTIAL_CLOSE_PCT). partial_pct None → config.
+        self.use_trailing = bool(use_trailing)
+        self.ts_mult = float(ts_mult)
+        self.partial_r = float(partial_r)
+        self.partial_pct = partial_pct
         # Cooldown tras pérdida (v2.6.9): el motor NO modelaba el bloqueo de
         # loss_cooldown_minutes (cooldown_manager.py, default 15) que el bot real aplica
         # por símbolo tras cada SL — reevaluaba entrada en la siguiente barra M1 sin
@@ -130,6 +143,16 @@ class FaithfulScalpingEngine:
         # FaithfulRangeEngine, que ya recalculaba esto correctamente por barra.
         import pandas_ta as _pta
         atr_m5_mgmt_series = _pta.atr(df_m5["high"], df_m5["low"], df_m5["close"], length=14)
+        # ADX(14) M5 vectorizado para el trailing agresivo (executor: ADX > 40 → correa 1.5).
+        # Solo se calcula si el trailing está activo — con él apagado el motor es idéntico.
+        adx_m5_series = None
+        if self.use_trailing:
+            try:
+                _adx_df = _pta.adx(df_m5["high"], df_m5["low"], df_m5["close"], length=14)
+                if _adx_df is not None and "ADX_14" in _adx_df:
+                    adx_m5_series = _adx_df["ADX_14"]
+            except Exception:
+                adx_m5_series = None
         a_class = self._asset_class(symbol)
         tp_mult = TP_ATR_BY_CLASS.get(a_class, 4.0)
         spread = spread_dist if self.model_spread else 0.0
@@ -160,7 +183,7 @@ class FaithfulScalpingEngine:
             bar = df_m1.iloc[i]
             if pos is not None:
                 closed = self._manage(pos, bar, df_m1, df_m5, t_m5, i, strategy, symbol, profile,
-                                       atr_m5_mgmt_series)
+                                       atr_m5_mgmt_series, adx_m5_series)
                 if closed:
                     if pos.pnl_r < 0 and self.cooldown_secs > 0:
                         cooldown_until = bar["time"] + pd.Timedelta(seconds=self.cooldown_secs)
@@ -311,7 +334,7 @@ class FaithfulScalpingEngine:
 
     # ------------------------------------------------------------------ gestión
     def _manage(self, t, bar, df_m1, df_m5, t_m5, j, strategy, symbol, profile,
-                atr_m5_mgmt_series=None) -> bool:
+                atr_m5_mgmt_series=None, adx_m5_series=None) -> bool:
         """Gestiona la posición en la barra j. Devuelve True si se cerró del todo."""
         h, l, c = float(bar["high"]), float(bar["low"]), float(bar["close"])
         d, fill, R = t.direction, t.entry_price, t._R
@@ -329,15 +352,17 @@ class FaithfulScalpingEngine:
             if l <= t.tp_price:
                 self._close_remaining(t, t.tp_price, bar["time"], "TP"); return True
 
-        # 2) Cierre parcial a 1R (extremo favorable alcanzado) → BE
+        # 2) Cierre parcial a partial_r·R (extremo favorable alcanzado) → BE
+        # (producción: partial_r=1.0 y pct=SCALPER_PARTIAL_CLOSE_PCT — los defaults)
         partial_ok = SCALPER_PARTIAL_CLOSE_ENABLED and self._asset_class(symbol) not in SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES
         if partial_ok and not t._partial and R > 0:
-            reached_1r = (h >= fill + R) if d == 1 else (l <= fill - R)
+            p_r = self.partial_r
+            reached_1r = (h >= fill + p_r * R) if d == 1 else (l <= fill - p_r * R)
             if reached_1r:
-                pct = SCALPER_PARTIAL_CLOSE_PCT
-                # media parte a +1R, menos el medio spread de salida (round-trip)
+                pct = self.partial_pct if self.partial_pct is not None else SCALPER_PARTIAL_CLOSE_PCT
+                # parte a +partial_r·R, menos el medio spread de salida (round-trip)
                 hs = getattr(t, "_half_spread", 0.0)
-                t._realized += pct * ((R - hs) / R)
+                t._realized += pct * ((p_r * R - hs) / R)
                 t._rem -= pct
                 t._partial = True
                 t._be = True
@@ -348,10 +373,11 @@ class FaithfulScalpingEngine:
         # vela M5 completada a esta altura), no el ATR M1 congelado de la entrada. Espejo
         # de manage_active_trades, que recalcula el ATR M5 en cada ciclo de 10s.
         atr_fresh = t.atr
+        end5_mgmt = 0
         if atr_m5_mgmt_series is not None:
-            end5_be = int((t_m5 <= bar["time"].to_datetime64()).sum())
-            if end5_be >= 15:
-                v = float(atr_m5_mgmt_series.iloc[end5_be - 1])
+            end5_mgmt = int((t_m5 <= bar["time"].to_datetime64()).sum())
+            if end5_mgmt >= 15:
+                v = float(atr_m5_mgmt_series.iloc[end5_mgmt - 1])
                 if v == v:  # no NaN
                     atr_fresh = v
         if not t._be and atr_fresh > 0:
@@ -360,6 +386,27 @@ class FaithfulScalpingEngine:
             if reached_be:
                 t.sl_price = fill + d * t._be_pad
                 t._be = True
+
+        # 3b) Trailing stop (v2.6.10, opt-in) — espejo del bloque B de manage_active_trades:
+        # se arma cuando el beneficio flotante supera max(2.0, ts_mult)·ATR_M5 fresco; la
+        # correa es ts_mult·ATR (o 1.5·ATR si ADX_M5(14) > 40, "trailing agresivo"); solo
+        # actualiza si MEJORA el SL actual (nunca lo aleja). El executor evalúa cada ~10s
+        # con el precio corriente; aquí, al cierre de cada M1 (misma granularidad que el
+        # resto de la gestión del motor).
+        if self.use_trailing and atr_fresh > 0:
+            safe_ts_mult = max(2.0, self.ts_mult)
+            profit_dist = d * (c - fill)
+            if profit_dist > atr_fresh * safe_ts_mult:
+                adx_val = 0.0
+                if adx_m5_series is not None and end5_mgmt >= 15:
+                    av = float(adx_m5_series.iloc[end5_mgmt - 1])
+                    if av == av:
+                        adx_val = av
+                mult = 1.5 if adx_val > 40 else self.ts_mult
+                trail_sl = c - d * mult * atr_fresh
+                if (d == 1 and trail_sl > t.sl_price) or (d == -1 and trail_sl < t.sl_price):
+                    t.sl_price = trail_sl
+                    t._be = True   # el SL ya protege ≥ entrada; el BE estándar no debe pisarlo
 
         # 4) Salida dinámica VWAP+momentum tras sostenimiento mínimo
         if age >= self.HOLD_SECS:
