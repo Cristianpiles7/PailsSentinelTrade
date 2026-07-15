@@ -274,7 +274,6 @@ class PortfolioManager:
         # backtest — mantener apagado mientras dure el test de fidelidad juez-vs-vivo.
         if INDEX_SAME_DIRECTION_CAP > 0 and current_positions:
             try:
-                from ..utils.tech_utils import get_asset_class
                 if get_asset_class(symbol) == "INDEX":
                     same_dir_idx = [
                         p for p in current_positions
