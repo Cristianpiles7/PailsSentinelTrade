@@ -23,6 +23,7 @@ async def fetch_rates_async(symbol: str, timeframe: int, count: int) -> Optional
     # Mapeo de entero a constante de MT5
     tf_map = {
         1: mt5.TIMEFRAME_M1,
+        2: mt5.TIMEFRAME_M2,
         3: mt5.TIMEFRAME_M3,
         5: mt5.TIMEFRAME_M5,
         15: mt5.TIMEFRAME_M15,
@@ -119,6 +120,7 @@ async def get_mtf_data_async(symbol: str, include_m1: bool = False):
         tasks.append(asyncio.sleep(0, result=None))
     
     tasks += [
+        fetch_rates_async(symbol, 2, 200),   # M2 (entry_tf configurable)
         fetch_rates_async(symbol, 3, 100),   # M3 (NEW)
         fetch_rates_async(symbol, 5, 200),   # M5
         fetch_rates_async(symbol, 15, 200),  # M15
@@ -139,11 +141,12 @@ async def get_mtf_data_async(symbol: str, include_m1: bool = False):
             
     return {
         "m1": clean_results[0],
-        "m3": clean_results[1],
-        "m5": clean_results[2],
-        "m15": clean_results[3],
-        "m30": clean_results[4],
-        "h1": clean_results[5],
-        "h4": clean_results[6]
+        "m2": clean_results[1],
+        "m3": clean_results[2],
+        "m5": clean_results[3],
+        "m15": clean_results[4],
+        "m30": clean_results[5],
+        "h1": clean_results[6],
+        "h4": clean_results[7]
     }
 

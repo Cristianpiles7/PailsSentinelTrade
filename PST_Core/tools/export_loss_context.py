@@ -1,16 +1,20 @@
 import sqlite3
 import json
 import os
+import sys
 import argparse
 from datetime import datetime
 
 # Definir rutas base asumiendo estructura de PST
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(BASE_DIR, "PST_Core", "data", "pst_trading.db")
-# Fallback si el entorno está duplicado de carpeta
-if not os.path.exists(DB_PATH):
-    PARENT_BASE = os.path.dirname(BASE_DIR)
-    DB_PATH = os.path.join(PARENT_BASE, "PST_Core", "data", "pst_trading.db")
+
+# Reutilizamos la autodiscovery de PST_Core/config.py (compara tamaño, no solo
+# existencia) en vez de recalcular la ruta a mano: el repo trackea un
+# pst_trading.db vacío como stub, así que un simple os.path.exists() se queda
+# pegado a ese stub y nunca llega a la BBDD real (que puede vivir uno o dos
+# niveles por encima del repo, según el layout de despliegue).
+sys.path.insert(0, BASE_DIR)
+from PST_Core.config import DB_PATH  # noqa: E402
 
 OUTPUT_DIR = os.path.join(BASE_DIR, ".agents", "data")
 

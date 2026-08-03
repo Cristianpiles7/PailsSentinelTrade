@@ -90,11 +90,19 @@ class PSTDatabase:
                     signal_type TEXT, -- BUY/SELL/NONE
                     score REAL,
                     price REAL,
-                    blocked_reason TEXT -- NUEVO: Motivo del bloqueo si aplica
+                    blocked_reason TEXT, -- NUEVO: Motivo del bloqueo si aplica
+                    bar_time TEXT,       -- Timestamp de la vela M1 (entry_tf) usada en la decisión
+                    fresh_cross INTEGER, -- 1 si hubo cruce EMA9/21 fresco en esa vela, 0 si no
+                    threshold_used REAL  -- Umbral de score exigido (varía por régimen/símbolo)
                 )
             ''')
             try:
                 await db.execute("ALTER TABLE signal_logs ADD COLUMN blocked_reason TEXT")
+            except: pass
+            try:
+                await db.execute("ALTER TABLE signal_logs ADD COLUMN bar_time TEXT")
+                await db.execute("ALTER TABLE signal_logs ADD COLUMN fresh_cross INTEGER")
+                await db.execute("ALTER TABLE signal_logs ADD COLUMN threshold_used REAL")
             except: pass
             
             # Tabla de Regímenes (Historial de mercado)
@@ -697,15 +705,22 @@ class PSTDatabase:
                     await asyncio.sleep(0.1 * (attempt + 1))
                 else: raise
 
-    async def log_signal(self, symbol, regime, strategy, sig_type, score, price, blocked_reason=None):
-        """Registra una señal para análisis de métricas con reintentos."""
+    async def log_signal(self, symbol, regime, strategy, sig_type, score, price, blocked_reason=None,
+                          bar_time=None, fresh_cross=None, threshold_used=None):
+        """Registra una señal para análisis de métricas con reintentos.
+
+        bar_time/fresh_cross/threshold_used vienen de metadata de generate_signal (si el
+        caller no los pasa, quedan NULL) y permiten reproducir offline la decisión exacta
+        contra la vela real que vio el vivo, en vez de aproximar por reloj de pared.
+        """
         for attempt in range(5):
             try:
                 async with aiosqlite.connect(self.db_path, timeout=30) as db:
                     await db.execute('''
-                        INSERT INTO signal_logs (timestamp, symbol, regime, strategy, signal_type, score, price, blocked_reason)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (datetime.now(), symbol, regime, strategy, sig_type, score, price, blocked_reason))
+                        INSERT INTO signal_logs (timestamp, symbol, regime, strategy, signal_type, score, price, blocked_reason, bar_time, fresh_cross, threshold_used)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (datetime.now(), symbol, regime, strategy, sig_type, score, price, blocked_reason,
+                          bar_time, (None if fresh_cross is None else int(bool(fresh_cross))), threshold_used))
                     await db.commit()
                 break
             except sqlite3.OperationalError as e:

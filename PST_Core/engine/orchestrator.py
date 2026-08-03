@@ -511,6 +511,15 @@ class SymbolTask:
                             s_meta = s_result.get("metadata", {})
                             s_name_raw = strat_id
 
+                            # Contexto de la vela real detrás de esta decisión, para poder
+                            # reproducirla offline sin depender de aproximar por reloj de pared
+                            # (ver signal_logs.bar_time/fresh_cross/threshold_used).
+                            _log_extra = dict(
+                                bar_time=s_meta.get("bar_time"),
+                                fresh_cross=s_meta.get("fresh_cross"),
+                                threshold_used=s_meta.get("threshold_used"),
+                            )
+
                             # --- MACRO TREND FILTER (H1/H4) ---
                             # Aplica antes de evaluar ejecución para reducir entradas contra tendencia macro
                             if s_score > 0 and s_result.get("entry", 0) != 0:
@@ -609,7 +618,7 @@ class SymbolTask:
                             # Si la estrategia tiene un score alto pero el régimen no es compatible
                             if not is_strat_in_regime and s_score >= 70:
                                 if s_result.get("entry", 0) != 0:
-                                    await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_REGIME", s_score, price, blocked_reason="REGIMEN")
+                                    await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_REGIME", s_score, price, blocked_reason="REGIMEN", **_log_extra)
                                 
                                 s_score = 65 # Visual Cap: régimen incompatible, no ejecutará
                                 
@@ -632,7 +641,7 @@ class SymbolTask:
                                 if is_blocked:
                                     logger.info(f"🧊 [{self.symbol}] BLOQUEO DE SEGURIDAD (Cooldown/Histerésis). {msg}. Evitando operativa circular.")
                                     if s_score >= 70:
-                                        await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_COOLDOWN", s_score, price, blocked_reason="COOLDOWN")
+                                        await self.db.log_signal(self.symbol, mode, s_name, "BLOCKED_COOLDOWN", s_score, price, blocked_reason="COOLDOWN", **_log_extra)
                                         best_metadata["blocked_reason"] = "COOLDOWN"
                                         current_score = 60 # Visual Cap
                                 else:
@@ -647,7 +656,7 @@ class SymbolTask:
                                          best_metadata["news_blocked"] = True
                                          best_metadata["blocked_reason"] = "NOTICIAS"
                                          if s_score >= 70:
-                                              await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_NEWS_{sig_type_str}", s_score, price, blocked_reason="NOTICIAS")
+                                              await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_NEWS_{sig_type_str}", s_score, price, blocked_reason="NOTICIAS", **_log_extra)
                                               current_score = 60 # Visual Cap
                                     else:
                                         # Check Portfolio Limits & Pyramiding
@@ -701,7 +710,7 @@ class SymbolTask:
                                                     tp_mult = TP_ATR_MULTIPLIER
                                                     
                                                     # Si es simbolo largo (Acciones) o Indices, damos mas aire (Exceptuando Scalping)
-                                                    if (len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol) and "Scalper" not in s_name:
+                                                    if (len(self.symbol) > 3 or "500" in self.symbol or "30" in self.symbol) and "Scalping" not in s_name:
                                                         sl_mult = 3.5  # Antes 2.0
                                                         tp_mult = 5.0  # Antes 3.0
 
@@ -747,7 +756,7 @@ class SymbolTask:
                                                         self.symbol, sig_type_str, sl_dist, tp_dist, s_name, mode, best_metadata
                                                     )
                                                     if exec_result is not None:
-                                                        await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price)
+                                                        await self.db.log_signal(self.symbol, mode, s_name, sig_type_str, s_score, price, **_log_extra)
 
                                                         # Marcar visualmente
                                                         signal = sig_val
@@ -757,7 +766,7 @@ class SymbolTask:
                                                         # de MT5...); antes se registraba como ejecutada igualmente
                                                         # y el journal mostraba trades fantasma.
                                                         logger.warning(f"🚫 [EXEC FAIL] {self.symbol} {sig_type_str}: el executor no abrió la orden (ver error anterior).")
-                                                        await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_EXEC_{sig_type_str}", s_score, price, blocked_reason="EXEC_FAIL")
+                                                        await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_EXEC_{sig_type_str}", s_score, price, blocked_reason="EXEC_FAIL", **_log_extra)
                                                 except Exception as e:
                                                     logger.error(f"❌ Fallo crítico en ejecución para {self.symbol}: {e}")
                                                 finally:
@@ -771,12 +780,12 @@ class SymbolTask:
                                             else:
                                                 logger.info(f"🧱 [SCORE BLOCK] {self.symbol} {sig_type_str} por {s_name} bloqueado. Score {s_score} < mínimo {min_score}.")
                                                 if s_score >= 50:
-                                                    await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_SCORE_{sig_type_str}", s_score, price, blocked_reason="SCORE")
+                                                    await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_SCORE_{sig_type_str}", s_score, price, blocked_reason="SCORE", **_log_extra)
                                                     best_metadata["blocked_reason"] = "SCORE"
                                         else:
                                             # Bloc por Riesgo/Portafolio
                                             if s_score >= 70:
-                                                 await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_{sig_type_str}", s_score, price)
+                                                 await self.db.log_signal(self.symbol, mode, s_name, f"BLOCKED_{sig_type_str}", s_score, price, **_log_extra)
                                                  best_metadata["blocked_reason"] = "RIESGO/PORTFOLIO"
                                                  current_score = 60 # Visual Cap
                         

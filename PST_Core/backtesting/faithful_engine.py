@@ -24,6 +24,7 @@ reproduce el runtime REAL de la estrategia + executor con fidelidad "realista pr
 Usa ventana acotada de lookback (simulación lineal), igual que Tools/pst_backtest_compare.py.
 Resultado en múltiplos de R vía BacktestResult/BacktestTrade (mismas métricas de producción).
 """
+import json
 import logging
 import pandas as pd
 
@@ -122,6 +123,26 @@ class FaithfulScalpingEngine:
     def _asset_class(self, symbol):
         return self._eng._get_asset_class(symbol)
 
+    @staticmethod
+    def _entry_tf_of(profile) -> str:
+        """entry_tf configurado dentro de filter_profile (default 'm1')."""
+        fp = (profile or {}).get("filter_profile")
+        try:
+            fp = json.loads(fp) if isinstance(fp, str) else (fp or {})
+        except Exception:
+            fp = {}
+        return str(fp.get("entry_tf") or "m1")
+
+    @staticmethod
+    def _validation_tf_of(profile) -> str:
+        """validation_tf configurado dentro de filter_profile (default 'm5')."""
+        fp = (profile or {}).get("filter_profile")
+        try:
+            fp = json.loads(fp) if isinstance(fp, str) else (fp or {})
+        except Exception:
+            fp = {}
+        return str(fp.get("validation_tf") or "m5")
+
     async def run(self, strategy, symbol, data, profile=None, point=None,
                   spread_dist=0.0) -> BacktestResult:
         """
@@ -132,8 +153,18 @@ class FaithfulScalpingEngine:
         spread_dist  : coste de spread en precio (round-trip embebido en la entrada)
         """
         profile = profile or {}
-        df_m1, df_m5 = data["m1"], data["m5"]
+        # entry_tf/validation_tf viven DENTRO de filter_profile (igual que en producción:
+        # el orquestador solo pasa filter_profile como kwarg, la estrategia resuelve el
+        # resto vía _resolve_profile). El dimensionado de SL/TP del motor sigue SIEMPRE
+        # en M5 (self._m5_sl_inputs / atr_m5_mgmt_series más abajo) — eso mirror-ea al
+        # executor real, que dimensiona con M5 sin importar en qué timeframe entra la estrategia.
+        entry_tf = self._entry_tf_of(profile)
+        validation_tf = self._validation_tf_of(profile)
+        df_m1 = data.get(entry_tf, data.get("m1"))
+        df_val = data.get(validation_tf, data.get("m5"))
+        df_m5 = data["m5"]
         t_m5 = df_m5["time"].values
+        t_val = df_val["time"].values
         # ATR(14) M5 vectorizado para toda la serie — v2.6.9: el breakeven standalone
         # (_manage paso 3) usaba t.atr, el ATR M1 CONGELADO al abrir el trade. En vivo,
         # manage_active_trades recalcula el ATR M5 en CADA ciclo de 10s (fetch_rates_async
@@ -198,14 +229,21 @@ class FaithfulScalpingEngine:
                 i += 1
                 continue
             m1_slice = df_m1.iloc[max(0, i + 1 - self.lookback_m1): i + 1]
+            end_val = int((t_val <= cur_time.to_datetime64()).sum())
+            if end_val < 30:
+                i += 1
+                continue
+            val_slice = df_val.iloc[max(0, end_val - self.lookback_m5): end_val]
+            # m5_slice para el dimensionado de riesgo del motor: SIEMPRE M5 real, aunque
+            # validation_tf apunte a otro timeframe para el score de la estrategia.
             end5 = int((t_m5 <= cur_time.to_datetime64()).sum())
             if end5 < 30:
                 i += 1
                 continue
             m5_slice = df_m5.iloc[max(0, end5 - self.lookback_m5): end5]
 
-            sig = await strategy.calculate_signal({"m1": m1_slice, "m5": m5_slice},
-                                                  symbol=symbol, **profile)
+            mtf_slice = {"m5": m5_slice, validation_tf: val_slice, entry_tf: m1_slice}
+            sig = await strategy.calculate_signal(mtf_slice, symbol=symbol, **profile)
             score, entry, atr = sig.get("score", 0), sig.get("entry", 0), sig.get("atr", 0.0)
             if score < self.threshold or entry == 0 or atr <= 0:
                 i += 1
@@ -410,14 +448,16 @@ class FaithfulScalpingEngine:
 
         # 4) Salida dinámica VWAP+momentum tras sostenimiento mínimo
         if age >= self.HOLD_SECS:
+            entry_tf = self._entry_tf_of(profile)
             m1s = df_m1.iloc[max(0, j + 1 - self.lookback_m1): j + 1]
             end5 = int((t_m5 <= bar["time"].to_datetime64()).sum())
             m5s = df_m5.iloc[max(0, end5 - self.lookback_m5): end5]
             pos_type = "BUY" if d == 1 else "SELL"
             try:
                 # symbol + filter_profile: igual que el executor real, para que vwap_exit
-                # on/off por símbolo/grupo se respete también en el backtest.
-                if strategy.check_exit_signal({"m1": m1s, "m5": m5s}, pos_type,
+                # on/off por símbolo/grupo (y el entry_tf usado en la salida) se respete
+                # también en el backtest.
+                if strategy.check_exit_signal({entry_tf: m1s, "m5": m5s}, pos_type,
                                               symbol=symbol, filter_profile=profile.get("filter_profile")):
                     self._close_remaining(t, c, bar["time"], "VWAP_EXIT"); return True
             except Exception:

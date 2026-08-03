@@ -87,7 +87,11 @@ def get_data(symbol, days, refresh=False):
     end_dt = datetime.now(); start_dt = end_dt - timedelta(days=days)
     out = {"point": point, "spread_dist": spread_dist,
            "tick_value": tick_value, "tick_size": tick_size}
-    for name, const in {"m1": mt5.TIMEFRAME_M1, "m5": mt5.TIMEFRAME_M5}.items():
+    # m2/m3 se descargan siempre (barato) para poder barrear entry_tf por símbolo sin
+    # tener que re-cachear; m5 sigue siendo obligatorio (el motor dimensiona SL/TP con
+    # él SIEMPRE, igual que el executor real, independientemente del entry_tf probado).
+    for name, const in {"m1": mt5.TIMEFRAME_M1, "m2": mt5.TIMEFRAME_M2, "m3": mt5.TIMEFRAME_M3,
+                        "m5": mt5.TIMEFRAME_M5}.items():
         rates = mt5.copy_rates_range(symbol, const, start_dt, end_dt)
         if rates is None or len(rates) == 0:
             print(f"    {symbol} {name}: sin datos"); return None

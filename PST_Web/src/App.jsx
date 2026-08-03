@@ -91,7 +91,8 @@ const FILTER_KNOBS = [
   { k: "rsi_strong", label: "RSI fuerte", hint: "RSI M5 momentum fuerte (short usa 100-x)" },
   { k: "rsi_ok", label: "RSI ok", hint: "RSI M5 momentum aceptable" },
 ];
-const FILTER_KNOB_KEYS = FILTER_KNOBS.map(f => f.k).concat(["noise_mode", "vwap_exit"]);
+const FILTER_KNOB_KEYS = FILTER_KNOBS.map(f => f.k).concat(["noise_mode", "vwap_exit", "entry_tf", "validation_tf"]);
+const TF_OPTIONS = [{ value: 'm1', label: 'M1' }, { value: 'm2', label: 'M2' }, { value: 'm3', label: 'M3' }, { value: 'm5', label: 'M5' }];
 
 function _parseFilter(raw) {
   let knobs = {}, advanced = {};
@@ -125,6 +126,8 @@ function _buildDraft(fm) {
       const f = _parseFilter(s.filter_profile);
       d[strat].__noise = f.knobs.noise_mode || "on";
       d[strat].__vwapExit = f.knobs.vwap_exit || "on";
+      d[strat].__entryTf = f.knobs.entry_tf || "m1";
+      d[strat].__validationTf = f.knobs.validation_tf || "m5";
       d[strat].__knobs = {};
       for (const kk of FILTER_KNOBS) d[strat].__knobs[kk.k] = f.knobs[kk.k] ?? "";
       d[strat].__advanced = f.advancedStr;
@@ -177,6 +180,8 @@ function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
     }
     obj.noise_mode = sd.__noise;
     obj.vwap_exit = sd.__vwapExit;
+    obj.entry_tf = sd.__entryTf;
+    obj.validation_tf = sd.__validationTf;
     for (const [k, v] of Object.entries(sd.__knobs || {})) {
       if (v !== "" && v !== null && v !== undefined) obj[k] = Number(v);
     }
@@ -321,6 +326,16 @@ function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
                 <Seg options={[{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }]}
                   value={sd.__vwapExit} onChange={v => setField(tab, '__vwapExit', v)} />
                 <span className="text-[8px] text-zinc-600 italic">on=cierra si el precio cruza VWAP en contra · off=deja correr el trade (mejor en cripto/índices, validado)</span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Timeframe de entrada</span>
+                <Seg options={TF_OPTIONS} value={sd.__entryTf} onChange={v => setField(tab, '__entryTf', v)} />
+                <span className="text-[8px] text-zinc-600 italic">vela de gate EMA9/21 y estructura SL/TP · default M1</span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Timeframe de validación</span>
+                <Seg options={TF_OPTIONS} value={sd.__validationTf} onChange={v => setField(tab, '__validationTf', v)} />
+                <span className="text-[8px] text-zinc-600 italic">contexto RSI/ADX/Chop · default M5</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {FILTER_KNOBS.map(kk => (
@@ -1517,7 +1532,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.6.11 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.6.12 SMC</span>
 
 
 

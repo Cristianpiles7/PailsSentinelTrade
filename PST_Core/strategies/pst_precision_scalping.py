@@ -114,6 +114,13 @@ class PSTPrecisionScalping:
     # columna `filter_profile` (JSON) de symbol_strategies, que el orquestador inyecta como
     # kwarg. Los defaults reproducen el comportamiento calibrado actual (Fase 2).
     FILTER_DEFAULTS = {
+        # Timeframe de entrada (gate EMA9/21 + estructura SL/TP) y de validación
+        # (RSI/ADX/Chop de contexto). Configurable por símbolo/grupo vía filter_profile:
+        # algunos símbolos pueden tener menos whipsaw en M2/M3 que en M1 (ver
+        # entry_tf sweep). Valores válidos: "m1", "m2", "m3", "m5" (los que expone
+        # get_mtf_data_async). Por defecto reproduce el comportamiento calibrado (M1/M5).
+        "entry_tf": "m1",
+        "validation_tf": "m5",
         "entry_threshold": 70,        # score mínimo (régimen normal)
         "entry_threshold_volatile": 80,
         "adx_clean": 25.0, "chop_clean": 38.2,   # tendencia limpia → bonus
@@ -298,13 +305,21 @@ class PSTPrecisionScalping:
             "metadata": {"status": "Sin datos suficientes", "factors_detailed": []},
         }
 
-        df_m1 = mtf_data.get("m1")
-        df_m5 = mtf_data.get("m5")
+        # Clase de activo + perfil de filtros ANTES de resolver timeframes: entry_tf/
+        # validation_tf viven en el mismo filter_profile (configurable por símbolo).
+        symbol = kwargs.get("symbol", "") or ""
+        is_crypto = self._is_crypto(symbol)
+        prof = self._resolve_profile(kwargs, is_crypto)
+        entry_tf = str(prof.get("entry_tf", "m1"))
+        validation_tf = str(prof.get("validation_tf", "m5"))
+
+        df_m1 = mtf_data.get(entry_tf)
+        df_m5 = mtf_data.get(validation_tf)
 
         if df_m1 is None or len(df_m1) < 30:
-            return {**neutral, "metadata": {"status": "M1 insuficiente (min 30 velas)", "factors_detailed": []}}
+            return {**neutral, "metadata": {"status": f"{entry_tf.upper()} insuficiente (min 30 velas)", "factors_detailed": []}}
         if df_m5 is None or len(df_m5) < 30:
-            return {**neutral, "metadata": {"status": "M5 insuficiente (min 30 velas)", "factors_detailed": []}}
+            return {**neutral, "metadata": {"status": f"{validation_tf.upper()} insuficiente (min 30 velas)", "factors_detailed": []}}
 
         close_m1 = df_m1["close"]
         high_m1 = df_m1["high"]
@@ -322,14 +337,6 @@ class PSTPrecisionScalping:
         price = self._last(close_m1, 0.0)
         if atr <= 0 or price <= 0:
             return {**neutral, "metadata": {"status": "ATR/precio inválido", "factors_detailed": []}}
-
-        # Clase de activo (el orquestador pasa symbol=). El filtro de ruido ADX/Chop
-        # está calibrado para instrumentos que respetan la estructura (forex/metal);
-        # la cripto tiende a moverse en impulsos rentables con ADX M5 bajo, así que su
-        # filtro se relaja para no cortar esas rachas (validado en backtest).
-        symbol = kwargs.get("symbol", "") or ""
-        is_crypto = self._is_crypto(symbol)
-        prof = self._resolve_profile(kwargs, is_crypto)
 
         # --- VWAP de sesión + bandas dinámicas ---
         vol_col = "tick_volume" if "tick_volume" in df_m1.columns else ("volume" if "volume" in df_m1.columns else None)
@@ -652,6 +659,12 @@ class PSTPrecisionScalping:
             # Umbral REAL de entrada (viene de filter_profile.entry_threshold). El orquestador
             # prioriza este valor sobre score_threshold → fuente única de verdad del gate.
             "threshold_used": entry_threshold,
+            # Vela M1 (entry_tf) realmente usada en esta decisión + si hubo cruce fresco.
+            # Persistidos en signal_logs para poder reproducir offline la decisión exacta:
+            # sin esto, un replay histórico solo puede acercarse por reloj de pared y no
+            # sabe si el bróker le sirvió al vivo la misma vela que ve el histórico.
+            "bar_time": str(df_m1["time"].iloc[-1]),
+            "fresh_cross": bool(has_fresh_cross),
         }
         # Exponer SL estructural al executor (valida el lado antes de aplicarlo)
         if target_price_sl > 0:
@@ -681,7 +694,8 @@ class PSTPrecisionScalping:
             if str(prof.get("vwap_exit", "on")).lower() == "off":
                 return False
 
-            df_m1 = mtf_data.get("m1")
+            entry_tf = str(prof.get("entry_tf", "m1"))
+            df_m1 = mtf_data.get(entry_tf)
             if df_m1 is None or len(df_m1) < 21:
                 return False
 
