@@ -554,7 +554,7 @@ class PSTPrecisionScalping:
         # efecto en grupos con boundaries definidos (hoy: EQUITIES).
         if prof.get("session_edge_mode", "off") != "off":
             buf = int(prof.get("session_edge_buffer_min", 15))
-            edge_dist = self._session_edge_distance(symbol, df_m1["time"].iloc[-1])
+            edge_dist = self._session_edge_distance(symbol, df_m1.index[-1])
             if edge_dist is not None:
                 if edge_dist <= buf:
                     pen = int(prof.get("session_edge_penalty", 12))
@@ -567,7 +567,7 @@ class PSTPrecisionScalping:
         # FILTER_DEFAULTS). Primeros minutos del lunes (hora bróker) tras el gap del
         # finde. No aplica a cripto (24/7, sin gap).
         if prof.get("weekend_reopen_mode", "off") != "off" and not is_crypto:
-            bar_t = df_m1["time"].iloc[-1]
+            bar_t = df_m1.index[-1]
             wbuf = int(prof.get("weekend_reopen_buffer_min", 60))
             if bar_t.weekday() == 0 and (bar_t.hour * 60 + bar_t.minute) < wbuf:
                 if prof.get("weekend_reopen_mode") == "block":
@@ -663,7 +663,7 @@ class PSTPrecisionScalping:
             # Persistidos en signal_logs para poder reproducir offline la decisión exacta:
             # sin esto, un replay histórico solo puede acercarse por reloj de pared y no
             # sabe si el bróker le sirvió al vivo la misma vela que ve el histórico.
-            "bar_time": str(df_m1["time"].iloc[-1]),
+            "bar_time": str(df_m1.index[-1]),
             "fresh_cross": bool(has_fresh_cross),
         }
         # Exponer SL estructural al executor (valida el lado antes de aplicarlo)
