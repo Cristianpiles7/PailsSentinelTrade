@@ -16,3 +16,6 @@ python-telegram-bot
 pywebview
 pythonnet
 aiohttp
+scikit-learn
+lightgbm
+joblib

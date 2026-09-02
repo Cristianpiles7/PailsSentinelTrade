@@ -1,0 +1,79 @@
+{
+  "strategy": "PST-DivergenceReversion",
+  "days": 20,
+  "entry_threshold": 50,
+  "engine_kwargs": {
+    "index_technical_tp": false,
+    "macro_mode": "on",
+    "regime_gate": "on",
+    "timeout_mins": 30
+  },
+  "created": "2026-08-13 17:50:07.146564",
+  "symbols": {
+    "US100.cash": {
+      "trades": 1,
+      "win_rate": 100.0,
+      "profit_factor": Infinity,
+      "sharpe": 0.0,
+      "sortino": 0.0,
+      "avg_rr": 0.0,
+      "avg_win": 1.105931844956808,
+      "avg_loss": 0.0,
+      "max_dd": 0.0,
+      "total_r": 1.105931844956808,
+      "expectancy": 1.105931844956808
+    },
+    "US30.cash": {
+      "trades": 4,
+      "win_rate": 25.0,
+      "profit_factor": 0.16476693664100875,
+      "sharpe": -8.241225633051368,
+      "sortino": -7.21855660743324,
+      "avg_rr": 0.4943008099230263,
+      "avg_win": 0.21792905728754786,
+      "avg_loss": -0.440883471992458,
+      "max_dd": 1.322650415977374,
+      "total_r": -1.1047213586898261,
+      "expectancy": -0.27618033967245653
+    },
+    "XAUUSD": {
+      "trades": 2,
+      "win_rate": 50.0,
+      "profit_factor": 72.10326564739782,
+      "sharpe": 10.917873098168739,
+      "sortino": 564.3646749227299,
+      "avg_rr": 72.10326564739782,
+      "avg_win": 1.3279658312556222,
+      "avg_loss": -0.018417554591073478,
+      "max_dd": 0.018417554591073478,
+      "total_r": 1.3095482766645488,
+      "expectancy": 0.6547741383322744
+    },
+    "EURUSD": {
+      "trades": 8,
+      "win_rate": 50.0,
+      "profit_factor": 2.0099789879484717,
+      "sharpe": 4.000346457863966,
+      "sortino": 6.426260807152685,
+      "avg_rr": 2.0099789879484713,
+      "avg_win": 0.1771831390846818,
+      "avg_loss": -0.08815173698185155,
+      "max_dd": 0.29174531074425203,
+      "total_r": 0.35612560841132107,
+      "expectancy": 0.044515701051415134
+    }
+  },
+  "pooled": {
+    "trades": 15,
+    "win_rate": 46.666666666666664,
+    "profit_factor": 1.9841820015987515,
+    "sharpe": 3.2245254161257626,
+    "sortino": 4.641975692734737,
+    "avg_rr": 2.2676365732557158,
+    "avg_win": 0.48007989854838645,
+    "avg_loss": -0.21170936481198172,
+    "max_dd": 1.3410679705684474,
+    "total_r": 1.6668843713428518,
+    "expectancy": 0.1111256247561901
+  }
+}

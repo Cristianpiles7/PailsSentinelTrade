@@ -623,7 +623,13 @@ class PSTExecutor:
                     time_open = datetime.now() - datetime.fromtimestamp(p.time_setup if hasattr(p, 'time_setup') else p.time)
                     # --- FIX: Solo cerrar por timeout si el mercado está abierto ---
                     is_full_tradable = s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL if s_info else False
-                    if time_open.total_seconds() > (30 * 60) and is_full_tradable: # 30 Minutos
+                    # Excepción TREND (Fase 6, PST-MomentumPulse): este timeout está pensado
+                    # para cortar estancamiento de scalping/rango, no para forzar el cierre de
+                    # una posición de tendencia que puede legítimamente tardar horas en resolver
+                    # su TP. Sin esto, ninguna estrategia TREND podría cumplir su propósito de
+                    # "dejar correr ganadoras" (ver PST_Core/strategies/pst_momentum_pulse.py).
+                    is_trend_pos = STRATEGY_CATEGORIES.get(strat_name_from_comment) == "TREND"
+                    if time_open.total_seconds() > (30 * 60) and is_full_tradable and not is_trend_pos: # 30 Minutos
                         logger.warning(f"⏳ [TIME-OUT] Scalp {symbol} (Ticket: {ticket}) excedió 30 min. Cerrando por estancamiento.")
                         close_req = {
                             "action": mt5.TRADE_ACTION_DEAL,

@@ -9,6 +9,16 @@ def setup_emergency_logging():
         exe_dir = os.path.dirname(sys.executable)
         log_path = os.path.join(exe_dir, "PST_Startup.log")
 
+    # La consola de Windows usa cp1252 por defecto: los emojis del logging (🚀,✅,🔍...)
+    # revientan StreamHandler.emit con UnicodeEncodeError (no fatal, pero ensucia cada
+    # línea con "--- Logging error ---"). Forzar UTF-8 en stdout/stderr antes de crear
+    # el handler, igual que ya hacen los scripts de Tools/.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(message)s',

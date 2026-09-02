@@ -409,7 +409,7 @@ async def get_symbols():
         import time as _time
         _end_ts = int(_time.time()) + 86400
         _start_ts = _end_ts - (3600 * 24 * 30) # Últimos 30 días
-        deals = mt5.history_deals_get(_start_ts, _end_ts)
+        deals = await asyncio.to_thread(mt5.history_deals_get, _start_ts, _end_ts)
         if deals:
             await db.sync_mt5_history(deals)
     except Exception as e:
@@ -429,7 +429,7 @@ async def get_symbols():
         return m.get(s, m.get(s_up, m.get(s_base, 0.0)))
 
     # Mapeo de P&L flotante (sólo posiciones ABIERTAS)
-    positions = mt5.positions_get()
+    positions = await asyncio.to_thread(mt5.positions_get)
     pnl_map = {}
     if positions:
         for p in positions:
@@ -442,7 +442,7 @@ async def get_symbols():
         radar = radar_data.get(sym, {})
         
         # Obtener precio actual y rendimiento diario
-        tick = mt5.symbol_info_tick(sym)
+        tick = await asyncio.to_thread(mt5.symbol_info_tick, sym)
         price = tick.bid if tick else 0.0
         
         import time
@@ -458,14 +458,14 @@ async def get_symbols():
         daily_change = 0.0
         spark_data = []
         try:
-            d1_data = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_D1, 0, 1)
+            d1_data = await asyncio.to_thread(mt5.copy_rates_from_pos, sym, mt5.TIMEFRAME_D1, 0, 1)
             if d1_data is not None and len(d1_data) > 0:
                 open_price = d1_data[0]['open']
                 if open_price > 0:
                     daily_change = ((price - open_price) / open_price) * 100
-            
+
             # Sparkline: últimos 20 cierres M5
-            m5_data = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 20)
+            m5_data = await asyncio.to_thread(mt5.copy_rates_from_pos, sym, mt5.TIMEFRAME_M5, 0, 20)
             if m5_data is not None:
                 spark_data = [float(x['close']) for x in m5_data]
         except:
@@ -1400,47 +1400,35 @@ async def run_backtest(req: BacktestRequest):
     if not ensure_mt5_connected():
         raise HTTPException(status_code=503, detail="MetaTrader 5 not connected")
 
-    STRATEGY_MAP = {
-        "PST-AlphaTrend":        ("PST_Core.strategies.pst_alpha_trend",        "PSTAlphaTrend"),
-        "PST-RangeBreaker":      ("PST_Core.strategies.pst_range_breaker",       "PSTRangeBreaker"),
-        "PST-PrecisionScalping": ("PST_Core.strategies.pst_precision_scalping",  "PSTPrecisionScalping"),
-    }
-
-    if req.strategy not in STRATEGY_MAP:
+    # PST-AlphaTrend queda fuera del registro (retirada) pero el lab de backtest
+    # sigue permitiendo probarla manualmente — entrada a mano, igual que antes.
+    from PST_Core.strategies.registry import STRATEGY_REGISTRY, get_class as _get_strategy_class
+    _ALPHA_TREND_TFS = ["h1", "m15"]
+    if req.strategy != "PST-AlphaTrend" and req.strategy not in STRATEGY_REGISTRY:
         raise HTTPException(status_code=400, detail=f"Estrategia desconocida: {req.strategy}")
-
-    TF_MAP_FETCH = {
-        "M1":  mt5.TIMEFRAME_M1,
-        "M5":  mt5.TIMEFRAME_M5,
-        "M15": mt5.TIMEFRAME_M15,
-        "H1":  mt5.TIMEFRAME_H1,
-        "H4":  mt5.TIMEFRAME_H4,
-    }
-
-    # Timeframes requeridos por estrategia
-    STRATEGY_TFS = {
-        "PST-AlphaTrend":        ["h1", "m15"],
-        "PST-RangeBreaker":      ["m15", "h1"],
-        "PST-PrecisionScalping": ["m1", "m5"],
-    }
 
     TF_MT5_MAP = {
         "m1":  mt5.TIMEFRAME_M1,
+        "m2":  mt5.TIMEFRAME_M2,
+        "m3":  mt5.TIMEFRAME_M3,
         "m5":  mt5.TIMEFRAME_M5,
         "m15": mt5.TIMEFRAME_M15,
+        "m30": mt5.TIMEFRAME_M30,
         "h1":  mt5.TIMEFRAME_H1,
         "h4":  mt5.TIMEFRAME_H4,
     }
 
     try:
-        import importlib
         import pandas as pd
         from datetime import datetime, timedelta
         from PST_Core.backtesting.engine import PSTBacktestEngine
 
         # Calcular número de barras a pedir según timeframe primario y días
-        bars_per_day = {"m1": 1440, "m5": 288, "m15": 96, "h1": 24, "h4": 6}
-        tfs_needed = STRATEGY_TFS[req.strategy]
+        bars_per_day = {"m1": 1440, "m2": 720, "m3": 480, "m5": 288, "m15": 96, "m30": 48, "h1": 24, "h4": 6}
+        if req.strategy == "PST-AlphaTrend":
+            tfs_needed = _ALPHA_TREND_TFS
+        else:
+            tfs_needed = STRATEGY_REGISTRY[req.strategy]["backtest_timeframes"]
         primary_tf = tfs_needed[0]
         num_bars = bars_per_day.get(primary_tf, 24) * req.days + 250  # +250 warmup
 
@@ -1470,9 +1458,10 @@ async def run_backtest(req: BacktestRequest):
             all_data[tf_key] = df
 
         # Instanciar estrategia
-        mod_path, cls_name = STRATEGY_MAP[req.strategy]
-        mod = importlib.import_module(mod_path)
-        strategy_cls = getattr(mod, cls_name)
+        if req.strategy == "PST-AlphaTrend":
+            from PST_Core.strategies.pst_alpha_trend import PSTAlphaTrend as strategy_cls
+        else:
+            strategy_cls = _get_strategy_class(req.strategy)
         strategy_instance = strategy_cls()
 
         # Ejecutar backtest
@@ -1552,12 +1541,18 @@ def start_app():
     webview.create_window(
         f'Pails Sentinel Trade Bot - v{app.version}',
         f'http://{host}:{port}',
-        width=1280, 
+        width=1280,
         height=850,
         resizable=True,
         min_size=(1000, 700)
     )
-    webview.start()
+    # private_mode=True es el default de pywebview: borra localStorage/cookies al
+    # cerrar la ventana, así que el token de sesión (pst_token) nunca sobrevive a un
+    # reinicio y el login se pide siempre. storage_path fija dónde vive ese perfil
+    # persistente (junto a la DB, para que sobreviva entre arranques).
+    storage_path = os.path.join(os.path.dirname(DB_PATH), "webview_storage")
+    os.makedirs(storage_path, exist_ok=True)
+    webview.start(private_mode=False, storage_path=storage_path)
 
 if __name__ == "__main__":
     start_app()

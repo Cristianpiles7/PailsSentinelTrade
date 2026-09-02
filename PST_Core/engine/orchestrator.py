@@ -5,8 +5,7 @@ from .mt5_async import init_mt5_async, shutdown_mt5_async, fetch_rates_async, sy
 from ..models.classifier import RegimeClassifier, RegimeMode
 from ..models.database import PSTDatabase
 from .executor import PSTExecutor
-from ..strategies.pst_range_breaker import PSTRangeBreaker
-from ..strategies.pst_precision_scalping import PSTPrecisionScalping
+from ..strategies.registry import instantiate_all as _instantiate_all_strategies
 from ..portfolio.manager import PortfolioManager
 from ..utils.news_manager import news_mgr # NEW V3.0
 from ..config import SL_ATR_MULTIPLIER, TP_ATR_MULTIPLIER, CRYPTO_KEYWORDS, ENABLED_STRATEGIES, DB_PATH, DAILY_LOSS_PCT
@@ -57,15 +56,13 @@ class SymbolTask:
         self.active_stalking = {} # FASE 56: {strategy_id: {'direction': 1/-1, 'target_price': float, 'best_score': int}}
         self.classifier = RegimeClassifier()
         self.macro_filter = MacroTrendFilter()
-        # Instancias de estrategias
-        self.range_breaker = PSTRangeBreaker()
-        self.precision_scalping = PSTPrecisionScalping()
+        # Instancias de estrategias — una por símbolo, construidas desde el registro
+        # (PST_Core/strategies/registry.py, fuente única de verdad). Añadir una
+        # estrategia nueva ya no requiere tocar este archivo.
+        self._strategy_instances = _instantiate_all_strategies()
 
         # Lista maestra para filtrado dinámico en update_active_strategies()
-        self._all_strategies = [
-            self.range_breaker,
-            self.precision_scalping,
-        ]
+        self._all_strategies = list(self._strategy_instances.values())
 
         # self.strategies se poblará en cada ciclo de run()
         self.strategies = []
@@ -604,12 +601,47 @@ class SymbolTask:
                                 is_strat_in_regime = True
                             
                             # Reglas de compatibilidad de régimen por STRATEGY_TYPE
-                            # AlphaTrend: solo en tendencia
-                            if strat_type == "TREND" and mode != RegimeMode.TREND:
-                                is_strat_in_regime = False
-                            # RangeBreaker: rango Y volátil (reversiones de picos)
-                            if strat_type == "RANGE" and mode not in [RegimeMode.RANGE, RegimeMode.VOLATILE]:
-                                is_strat_in_regime = False
+                            #
+                            # BUG CORREGIDO (2026-08-13): las dos líneas de abajo llevaban
+                            # desde su introducción con la forma "if ... and mode not in
+                            # [...]: is_strat_in_regime = False" — una condición que SOLO
+                            # puede APAGAR la bandera, nunca encenderla. Como la asignación
+                            # a True de arriba exige coincidencia EXACTA (strat_type==mode),
+                            # el resultado real en producción era que TREND y RANGE NUNCA
+                            # operaban en régimen VOLATILE, pese a que este mismo comentario
+                            # decía que debían — confirmado línea a línea y medido con el
+                            # motor fiel (FaithfulMLEngine, Tools/pst_ml_regime_ab.py).
+                            #
+                            # TREND (MomentumPulse): tendencia Y volátil. El clasificador
+                            # etiqueta como VOLATILE cualquier tendencia fuerte (ADX alto)
+                            # que además tenga volatilidad elevada (vol_factor>=2.0) — es
+                            # decir, exactamente el momento en que suele haber un
+                            # movimiento de momentum real, no ruido. Medido (20d, 4 símbolos
+                            # piloto, motor fiel): incluir VOLATILE sube la frecuencia +76%
+                            # con MEJOR expectancy que el régimen TREND puro (+0.408R/trade
+                            # extra vs +0.288R/trade actual), consistente en los 4 símbolos
+                            # sin excepción. Aquí SÍ se enciende la bandera (antes solo se
+                            # apagaba, sin efecto real).
+                            if strat_type == "TREND" and mode in [RegimeMode.TREND, RegimeMode.VOLATILE]:
+                                is_strat_in_regime = True
+                            # RANGE (DivergenceReversion): SOLO régimen RANGE puro — a
+                            # propósito, a diferencia de TREND arriba. Mismo experimento el
+                            # mismo día: incluir VOLATILE sube la frecuencia +287% pero con
+                            # expectancy NEGATIVA (-0.107R/trade), arrastrando la estrategia
+                            # de +1.67R a -2.92R en el pool de 4 símbolos, consistente sin
+                            # excepción. Tiene sentido — es una estrategia de reversión a la
+                            # media, y VOLATILE es justo el régimen donde el precio no
+                            # revierte (sigue de largo). El comportamiento "nunca en
+                            # VOLATILE" que producía el bug de arriba resulta ser el
+                            # CORRECTO para esta estrategia, así que se deja explícito en
+                            # vez de arreglarlo a ciegas igual que TREND. OJO si se
+                            # reactiva PST-RangeBreaker (categoría RANGE también, hoy
+                            # pausada): su propio motor fiel (faithful_range_engine.py) SÍ
+                            # valida rango+volátil para ELLA — este gate es por
+                            # STRATEGY_TYPE, no por nombre, así que revisar este bloque
+                            # antes de reactivarla.
+                            if strat_type == "RANGE" and mode == RegimeMode.RANGE:
+                                is_strat_in_regime = True
                             # PrecisionScalping: opera en cualquier régimen (ALL implícito por liquidez)
                             if strat_type == "SCALPING":
                                 is_strat_in_regime = True

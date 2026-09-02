@@ -493,10 +493,25 @@ class PSTDatabase:
                                   # 0/4 (-23.48€). Mismo patrón asiático que JP225.
             }
 
+            # Fase 6 (2026-08-11): siembra de PST-MomentumPulse / PST-DivergenceReversion.
+            # Universo piloto — símbolos líquidos validados offline (Fases 0-5) antes de
+            # expandir al resto del universo (~58 filas de master_config, todas con
+            # is_active=0 para estas 2 estrategias hasta que se validen en real).
+            # Ampliado 2026-08-11: +GBPUSD (FOREX, reutiliza el modelo ya entrenado de ese
+            # grupo vía EURUSD), +US500.cash (INDEX, reutiliza el de US100/US30.cash),
+            # +BTCUSD (CRYPTO, grupo nuevo — sin modelo todavía, opera solo-reglas hasta
+            # reentrenar incluyéndolo).
+            # Ampliado 2026-08-12: +USDJPY (FOREX, 2ª pareja), +GER40.cash (INDEX, 4º
+            # índice), +ETHUSD (CRYPTO, 2º cripto) — más cobertura por grupo de activo.
+            NEW_STRATEGY_PILOT_SYMBOLS = {'US100.cash', 'US30.cash', 'XAUUSD', 'EURUSD',
+                                           'GBPUSD', 'US500.cash', 'BTCUSD',
+                                           'USDJPY', 'GER40.cash', 'ETHUSD'}
+
             for sym, stype in master_config:
                 is_active = 1 if sym in enabled_by_default else 0
                 rb_active = is_active and sym not in RANGEBREAKER_DISABLED_SYMBOLS
                 ps_active = is_active and sym not in PRECISIONSCALPING_DISABLED_SYMBOLS
+                new_strat_active = 1 if sym in NEW_STRATEGY_PILOT_SYMBOLS else 0
                 g = GROUP_DEFAULTS.get(stype, _SCALP_FALLBACK)
                 filter_profile = g['filter_profile']
                 sym_override = SYMBOL_FILTER_OVERRIDES.get(sym)
@@ -525,6 +540,26 @@ class PSTDatabase:
                     VALUES (?, 'PST-PrecisionScalping', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (sym, ps_active, g['risk_mode'], g['risk_value'], g['use_breakeven'], g['use_trailing'],
                       g['be_mult'], g['ts_mult'], g['min_rr'], g['sl_mult'], g['tp_mult'], filter_profile))
+
+                # 5. PST-MomentumPulse — dirección/momentum, TF adaptativo. use_trailing=1
+                # a propósito: la estrategia está pensada para dejar correr ganadoras, la
+                # gestión genérica del executor (BE/trailing) hace ese trabajo. sl_mult/
+                # tp_mult son solo el FALLBACK ATR si el SL/TP estructural no valida — la
+                # estrategia normalmente manda su propio target_price_sl/tp_price.
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-MomentumPulse', ?, 'MONEY', 7.0, 1, 1, 2.0, 2.5, 1.8, 1.8, 3.5)
+                """, (sym, new_strat_active))
+
+                # 6. PST-DivergenceReversion — suelos/techos por divergencia RSI, TF
+                # adaptativo. use_trailing=0: el TP es un objetivo estructural (borde de
+                # canal), no tiene sentido dejarlo correr más allá de eso.
+                await db.execute("""
+                    INSERT OR IGNORE INTO symbol_strategies
+                    (symbol, strategy_name, is_active, risk_mode, risk_value, use_breakeven, use_trailing, be_mult, ts_mult, min_rr, sl_mult, tp_mult)
+                    VALUES (?, 'PST-DivergenceReversion', ?, 'MONEY', 7.0, 1, 0, 2.0, 2.5, 1.5, 2.0, 3.0)
+                """, (sym, new_strat_active))
 
                 # Backfill para BBDD ya existentes: fija el perfil de grupo si está vacío O si tiene
                 # un perfil AUTO-sembrado de una fase anterior (solo noise_mode, o noise+entry_threshold

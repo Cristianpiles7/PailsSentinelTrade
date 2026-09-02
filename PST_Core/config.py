@@ -93,12 +93,12 @@ TIMEFRAME_DEFAULT = 5        # M5 base
 
 # ACTIVOS 24/7 (CRIPTO)
 CRYPTO_KEYWORDS = ["BTC", "ETH", "ADA", "SOL", "DOT", "LNK", "LTC", "UNI", "XLM", "XRP", "MATIC", "AVAX"]
-# STRATEGY MANAGEMENT
-STRATEGY_CATEGORIES = {
-    "PST-AlphaTrend":        "TREND",
-    "PST-RangeBreaker":      "RANGE",
-    "PST-PrecisionScalping": "SCALPING",
-}
+# STRATEGY MANAGEMENT — categorías generadas desde STRATEGY_REGISTRY (fuente única de
+# verdad, ver PST_Core/strategies/registry.py), + PST-AlphaTrend a mano: retirada y
+# fuera del registro, pero varias tablas/vistas históricas todavía la referencian por
+# nombre y MAX_POSITIONS_PER_CATEGORY sigue necesitando su categoría "TREND".
+from .strategies.registry import category_map as _strategy_category_map
+STRATEGY_CATEGORIES = {"PST-AlphaTrend": "TREND", **_strategy_category_map()}
 
 # PARALLEL OPERATIVE LIMITS
 MAX_TOTAL_OPEN_POSITIONS = 999  # Sin límite global (filtrado por estrategia/categoría)
@@ -185,9 +185,16 @@ COMMISSION_SPEC = {
 CRYPTO_MAX_COMMISSION_R = 0.25
 
 # Estrategias activas globalmente
+# PAUSADAS (2026-08-11): RangeBreaker y PrecisionScalping no lograron rentabilidad
+# sostenida en demo pese a meses de auditorías. Se dejan el código y el histórico
+# intactos por si se retoman. En su lugar operan las estrategias nuevas
+# (PST-MomentumPulse / PST-DivergenceReversion, ver PST_Core/ml/), validadas offline
+# (Fases 0-5) y activadas en real sobre el universo piloto (Fase 6-8).
 ENABLED_STRATEGIES = [
-    "PST-RangeBreaker",
-    "PST-PrecisionScalping",
+    # "PST-RangeBreaker",
+    # "PST-PrecisionScalping",
+    "PST-MomentumPulse",
+    "PST-DivergenceReversion",
 ]
 
 # CUBETAS DE CAPITAL POR TIPO DE ESTRATEGIA
@@ -195,10 +202,14 @@ ENABLED_STRATEGIES = [
 # La suma debe ser <= 100. El resto queda como reserva.
 # NOTA: PST-AlphaTrend (categoría TREND, H1, horizonte multi-hora) fue retirada:
 # FTMO no permite posiciones abiertas con el mercado cerrado, y su horizonte
-# no encajaba con el cierre forzado de fin de día. Capital reasignado a RANGE/SCALPING.
+# no encajaba con el cierre forzado de fin de día. Con RangeBreaker/PrecisionScalping
+# pausadas (ver ENABLED_STRATEGIES), el 100% se reparte entre RANGE
+# (PST-DivergenceReversion) y TREND (PST-MomentumPulse); SCALPING queda en 0
+# mientras PrecisionScalping esté pausada.
 CAPITAL_BUCKETS = {
-    "RANGE":   50.0,   # RangeBreaker — operativa en rango
-    "SCALPING": 50.0,  # PrecisionScalping — alta frecuencia, menor riesgo unitario
+    "RANGE":    50.0,  # DivergenceReversion — suelos/techos por divergencia RSI
+    "TREND":    50.0,  # MomentumPulse — dirección/momentum
+    "SCALPING": 0.0,
 }
 # Rebalanceo automático: si el rendimiento de una cubeta supera este umbral
 # respecto a las demás, se redistribuyen los pesos (revisión mensual)

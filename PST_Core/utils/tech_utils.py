@@ -116,7 +116,7 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
     Motor de puntuacion ULTRA-LÓGICO y ESTRICTO.
     Retorna: (total_score, action_name, factor_details_list, recommendations)
     """
-    if price <= 0: return 0, "NEUTRAL", []
+    if price <= 0: return 0, "NEUTRAL", [], {"sl_dist": 0, "tp_dist": 0}
     
     dist_p = price - lvl_price
     dist_pct = (dist_p / price * 100)
@@ -141,8 +141,8 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         action = "VIGILAR"
         
         # --- FILTRO MOMENTUM: Si nos acercamos a resistencia pero la vela es roja, NO es relevante ---
-        if is_res and is_red: return 0, "CAÍDA", [{"k": "Momentum", "v": "🛑 Opuesto (Vela Roja)", "score": 0}]
-        if is_sup and is_green: return 0, "REBOTE", [{"k": "Momentum", "v": "🛑 Opuesto (Vela Verde)", "score": 0}]
+        if is_res and is_red: return 0, "CAÍDA", [{"k": "Momentum", "v": "🛑 Opuesto (Vela Roja)", "score": 0}], {"sl_dist": 0, "tp_dist": 0}
+        if is_sup and is_green: return 0, "REBOTE", [{"k": "Momentum", "v": "🛑 Opuesto (Vela Verde)", "score": 0}], {"sl_dist": 0, "tp_dist": 0}
 
         progress = (THR_NEUTRAL - abs_dist_pct) / THR_NEUTRAL
         base_score = 10 + (progress * 50)
@@ -182,8 +182,8 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
         action = "ROTURA"
         
         # --- MOMENTUM KILL ABSOLUTO: Si la vela es del color contrario, el score es 0 ---
-        if (is_res and is_red): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Roja (Bajista)", "score": 0}]
-        if (is_sup and is_green): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Verde (Alcista)", "score": 0}]
+        if (is_res and is_red): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Roja (Bajista)", "score": 0}], {"sl_dist": 0, "tp_dist": 0}
+        if (is_sup and is_green): return 0, "FALSO-BREAK", [{"k": "Cierre", "v": "🛑 Vela Verde (Alcista)", "score": 0}], {"sl_dist": 0, "tp_dist": 0}
 
         score += 25 # Base
         factors.append({"k": "Base Ruptura", "v": f"Confirmada ({abs_dist_pct:.2f}%)", "score": 25})
@@ -238,8 +238,6 @@ def calculate_manual_score(price, lvl_price, l_type, rsi, vol_val, vol_ma, is_gr
 
     return round(min(100, max(0, score))), action, factors, reco
 
-    return round(min(100, score)), action, factors
-
 def get_asset_class(symbol: str) -> str:
     """
     Identifica la clase de activo basada en el símbolo.
@@ -284,18 +282,22 @@ def get_asset_class(symbol: str) -> str:
     # Default fallback
     return "FOREX"
 
-def detect_divergence(df, window=5, order=2):
+def detect_divergence(df, window=5, order=2, return_pivots=False):
     """
     Detecta divergencias entre Precio y RSI.
-    Retorna: 'BULLISH', 'BEARISH' o None
+    Retorna: 'BULLISH', 'BEARISH' o None (comportamiento original, retrocompatible).
+    Si return_pivots=True, retorna (tipo, pivot_info) donde pivot_info es un dict con
+    el pivote MÁS RECIENTE que originó la divergencia (idx/price/rsi) — usado para
+    anclar un SL estructural justo detrás de ese pivote. (idx, None) si no hay señal.
     """
-    if len(df) < 50: return None
-    
+    none_result = (None, None) if return_pivots else None
+    if len(df) < 50: return none_result
+
     # 1. Asegurar RSI
     import pandas_ta as ta
     if 'rsi' not in df.columns:
         df['rsi'] = ta.rsi(df['close'], length=14)
-    
+
     # Identificar picos y valles (Pivots)
     def is_pivot(series, idx, w, is_high=True):
         if idx < w or idx >= len(series) - w: return False
@@ -306,7 +308,7 @@ def detect_divergence(df, window=5, order=2):
     # Buscamos los 2 últimos pivotes
     pivots_price = [] # (index, type, value)
     pivots_rsi = []
-    
+
     # Escaneamos las últimas 40 velas buscando pivotes
     for i in range(len(df)-window-1, len(df)-40, -1):
         if i < window: break
@@ -318,10 +320,17 @@ def detect_divergence(df, window=5, order=2):
         if is_pivot(df['low'], i, window, False):
             pivots_price.append(('L', i, df['low'].iloc[i]))
             pivots_rsi.append(('L', i, df['rsi'].iloc[i]))
-        
-        if len(pivots_price) >= order: break
 
-    if len(pivots_price) < 2: return None
+        # BUG FIX (2026-08-13, ver Tools/pst_new_strategy_lab.py --sweep): antes cortaba
+        # en cuanto encontraba `order` pivotes EN TOTAL (mezclando H y L), casi siempre
+        # 1H+1L — pero la divergencia necesita 2 pivotes del MISMO tipo (2 lows o 2
+        # highs), así que el escaneo se rendía antes de reunir lo necesario en la
+        # mayoría de los casos. Ahora exige `order` pivotes de CADA tipo.
+        highs_found = sum(1 for p in pivots_price if p[0] == 'H')
+        lows_found = sum(1 for p in pivots_price if p[0] == 'L')
+        if highs_found >= order and lows_found >= order: break
+
+    if len(pivots_price) < 2: return none_result
 
     # Lógica de Divergencia
     # BULLISH: Precio hace mínimo más bajo, RSI hace mínimo más alto
@@ -330,7 +339,11 @@ def detect_divergence(df, window=5, order=2):
         p2, p1 = lows[0], lows[1] # p2 es más reciente
         r2 = df['rsi'].iloc[p2[1]]
         r1 = df['rsi'].iloc[p1[1]]
-        if p2[2] < p1[2] and r2 > r1: return "BULLISH"
+        if p2[2] < p1[2] and r2 > r1:
+            if return_pivots:
+                return "BULLISH", {"idx": p2[1], "price": float(p2[2]), "rsi": float(r2),
+                                    "prev_idx": p1[1], "prev_price": float(p1[2]), "prev_rsi": float(r1)}
+            return "BULLISH"
 
     # BEARISH: Precio hace máximo más alto, RSI hace máximo más bajo
     highs = [p for p in pivots_price if p[0] == 'H']
@@ -338,9 +351,13 @@ def detect_divergence(df, window=5, order=2):
         p2, p1 = highs[0], highs[1]
         r2 = df['rsi'].iloc[p2[1]]
         r1 = df['rsi'].iloc[p1[1]]
-        if p2[2] > p1[2] and r2 < r1: return "BEARISH"
+        if p2[2] > p1[2] and r2 < r1:
+            if return_pivots:
+                return "BEARISH", {"idx": p2[1], "price": float(p2[2]), "rsi": float(r2),
+                                    "prev_idx": p1[1], "prev_price": float(p1[2]), "prev_rsi": float(r1)}
+            return "BEARISH"
 
-    return None
+    return none_result
 
 def get_market_session(dt_utc: datetime) -> str:
     """

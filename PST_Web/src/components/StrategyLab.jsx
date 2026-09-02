@@ -26,6 +26,20 @@ const STRATEGIES = [
         color: '#10b981',
         icon: Target,
     },
+    {
+        id: 'PST-MomentumPulse',
+        label: 'Momentum Pulse',
+        desc: 'Dirección/momentum con timeframe adaptativo + ML',
+        color: '#6366f1',
+        icon: TrendingUp,
+    },
+    {
+        id: 'PST-DivergenceReversion',
+        label: 'Divergence Reversion',
+        desc: 'Suelos/techos por divergencia RSI + ML',
+        color: '#a855f7',
+        icon: Activity,
+    },
 ];
 
 const TIMEFRAMES = ['M1', 'M5', 'M15', 'H1'];

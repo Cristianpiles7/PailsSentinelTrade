@@ -10,6 +10,8 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from ..ml.duration_cap import MAX_RR_CEILING_DEFAULT as MAX_RR_CEILING
+
 logger = logging.getLogger("PST-Backtest")
 
 
@@ -158,16 +160,23 @@ class PSTBacktestEngine:
 
     # Timeframes requeridos por cada estrategia
     STRATEGY_TIMEFRAMES: Dict[str, List[str]] = {
-        "PST-AlphaTrend":        ["h1", "m15"],
-        "PST-RangeBreaker":      ["m15", "h1"],
-        "PST-PrecisionScalping": ["m1", "m5"],
+        "PST-AlphaTrend":          ["h1", "m15"],
+        "PST-RangeBreaker":        ["m15", "h1"],
+        "PST-PrecisionScalping":   ["m1", "m5"],
+        # Primary TF = el más rápido de cada escalera de AdaptiveTFSelector, para que
+        # el motor evalúe con la cadencia suficiente; la estrategia elige internamente
+        # el TF activo real bar a bar (ver PST_Core/ml/tf_selector.py).
+        "PST-DivergenceReversion": ["m3", "m5", "m15", "m30", "h1"],
+        "PST-MomentumPulse":       ["m2", "m3", "m5", "m15", "m30", "h1"],
     }
 
     # SL por defecto (igual que el executor)
     DEFAULT_SL_MULT: Dict[str, float] = {
-        "PST-AlphaTrend":        2.5,
-        "PST-RangeBreaker":      2.5,
-        "PST-PrecisionScalping": 1.25,
+        "PST-AlphaTrend":          2.5,
+        "PST-RangeBreaker":        2.5,
+        "PST-PrecisionScalping":   1.25,
+        "PST-DivergenceReversion": 2.0,
+        "PST-MomentumPulse":       1.8,
     }
 
     # TP por defecto según clase de activo
@@ -179,15 +188,30 @@ class PSTBacktestEngine:
         "FOREX":     6.0,
     }
 
+    # Ventana deslizante (en velas) que se pasa a calculate_signal/check_exit_signal
+    # por timeframe en cada barra evaluada. Cubre con margen el lookback más exigente
+    # de las estrategias nuevas: AdaptiveTFSelector.lookback=100 (percentil de ATR),
+    # EMA50 + warmup, ADX/RSI(14), calculate_channel_boundary (recent_pivots=15).
+    MTF_SLICE_LOOKBACK = 400
+
     def __init__(
         self,
         score_threshold: int = 80,
         sl_mult: Optional[float] = None,
         tp_mult: Optional[float] = None,
+        model_costs: bool = False,
+        use_dynamic_exit: bool = False,
+        use_structural_sltp: bool = False,
     ):
         self.score_threshold = score_threshold
         self._sl_mult_override = sl_mult
         self._tp_mult_override = tp_mult
+        # Opt-in, apagados por defecto: comportamiento IDÉNTICO al de siempre para
+        # cualquier caller existente (walk_forward.py, /api/backtest/run,
+        # StrategyLab.jsx) que no los pase explícitamente.
+        self.model_costs = model_costs
+        self.use_dynamic_exit = use_dynamic_exit
+        self.use_structural_sltp = use_structural_sltp
 
     def _get_asset_class(self, symbol: str) -> str:
         try:
@@ -223,6 +247,12 @@ class PSTBacktestEngine:
         all_data: Dict[str, pd.DataFrame],
         warmup_bars: int = 220,
         step_bars: int = 1,
+        spread_dist: float = 0.0,
+        point: Optional[float] = None,
+        tick_value: Optional[float] = None,
+        tick_size: Optional[float] = None,
+        swap_long: float = 0.0,
+        swap_short: float = 0.0,
     ) -> BacktestResult:
         """
         Ejecuta el backtest completo para una estrategia y símbolo.
@@ -233,6 +263,10 @@ class PSTBacktestEngine:
             all_data:     Dict de DataFrames por timeframe {"h1": df, "m15": df, ...}
             warmup_bars:  Velas de calentamiento antes de generar señales
             step_bars:    Cada cuántas velas del timeframe primario evaluar señal
+            spread_dist, point, tick_value, tick_size, swap_long, swap_short:
+                Solo se usan si model_costs=True (ver __init__). Sin ellos con
+                model_costs=True, comisión/swap se omiten (spread sigue aplicando
+                si spread_dist>0) — no revienta, simplemente no descuenta ese coste.
         """
         strategy_name = strategy.STRATEGY_NAME
         tfs = self.STRATEGY_TIMEFRAMES.get(strategy_name, ["h1"])
@@ -246,6 +280,8 @@ class PSTBacktestEngine:
         asset_class = self._get_asset_class(symbol)
         sl_mult = self._sl_mult_override or self.DEFAULT_SL_MULT.get(strategy_name, 2.5)
         tp_mult = self._tp_mult_override or self.DEFAULT_TP_MULT.get(asset_class, 4.0)
+        value_per_price = (tick_value / tick_size) if (tick_value and tick_size) else None
+        has_dynamic_exit = self.use_dynamic_exit and hasattr(strategy, "check_exit_signal")
 
         has_time = "time" in primary_df.columns
         period_start = primary_df.iloc[warmup_bars]["time"] if has_time else None
@@ -257,62 +293,82 @@ class PSTBacktestEngine:
         total_bars = len(primary_df)
         logger.info(f"[Backtest] {strategy_name} | {symbol} | {total_bars - warmup_bars} barras a evaluar")
 
+        def _apply_costs(trade: BacktestTrade, sl_dist: float):
+            """Descuenta comisión + spread de salida + swap del pnl_r ya calculado
+            (bruto, ATR/estructural). No-op si model_costs=False."""
+            if not self.model_costs or sl_dist <= 0:
+                return
+            from .cost_model import commission_r, exit_spread_r, swap_r, nights_held
+            trade.pnl_r -= commission_r(asset_class, trade.entry_price, sl_dist, value_per_price)
+            trade.pnl_r -= exit_spread_r(spread_dist, sl_dist)
+            if point:
+                nights = nights_held(trade.entry_time, trade.exit_time)
+                trade.pnl_r -= swap_r(trade.direction, nights, swap_long, swap_short, point, sl_dist)
+
         for i in range(warmup_bars, total_bars - 1, step_bars):
             current_bar = primary_df.iloc[i]
             current_time = current_bar["time"] if has_time else None
 
-            # --- Resolución SL/TP del trade abierto en esta barra ---
-            if open_trade is not None:
-                h = current_bar["high"]
-                l = current_bar["low"]
-                if open_trade.direction == 1:  # BUY
-                    if l <= open_trade.sl_price:
-                        open_trade.exit_price = open_trade.sl_price
-                        open_trade.exit_time = current_time
-                        open_trade.result = "LOSS"
-                        open_trade.pnl_r = -1.0
-                        open_trade = None
-                    elif h >= open_trade.tp_price:
-                        open_trade.exit_price = open_trade.tp_price
-                        open_trade.exit_time = current_time
-                        open_trade.result = "WIN"
-                        r = (open_trade.tp_price - open_trade.entry_price) / max(
-                            open_trade.entry_price - open_trade.sl_price, 1e-10
-                        )
-                        open_trade.pnl_r = r
-                        open_trade = None
-                else:  # SELL
-                    if h >= open_trade.sl_price:
-                        open_trade.exit_price = open_trade.sl_price
-                        open_trade.exit_time = current_time
-                        open_trade.result = "LOSS"
-                        open_trade.pnl_r = -1.0
-                        open_trade = None
-                    elif l <= open_trade.tp_price:
-                        open_trade.exit_price = open_trade.tp_price
-                        open_trade.exit_time = current_time
-                        open_trade.result = "WIN"
-                        r = (open_trade.entry_price - open_trade.tp_price) / max(
-                            open_trade.sl_price - open_trade.entry_price, 1e-10
-                        )
-                        open_trade.pnl_r = r
-                        open_trade = None
-
-            # Si ya hay un trade abierto, no abrir otro
-            if open_trade is not None:
-                continue
-
-            # --- Construir snapshot MTF hasta la barra i ---
+            # --- Construir snapshot MTF hasta la barra i (se necesita tanto para
+            # gestionar un trade abierto —salida dinámica— como para evaluar una
+            # entrada nueva) ---
+            # Ventana deslizante ACOTADA (2026-08-13): antes se copiaba df.iloc[:end],
+            # que crece sin límite según avanza i -> O(n^2) en timeframes con muchas
+            # barras (M2/M3). Eso obligaba a truncar la serie ENTERA de M2/M3 a las
+            # últimas 3000/2500 velas en pst_new_strategy_lab.py, lo que a su vez
+            # descartaba la mayor parte de una ventana de --days 45 (45d de M2 =
+            # ~22000 velas, capadas a ~3000 = últimos ~4 días reales). Con una
+            # ventana deslizante de tamaño fijo, el coste por barra es constante y
+            # ya no hace falta truncar la serie de entrada.
             mtf_slice: Dict[str, pd.DataFrame] = {}
             for tf, df in all_data.items():
                 if has_time and "time" in df.columns and current_time is not None:
                     end = self._time_to_idx(df, current_time)
                 else:
-                    # Aproximar por proporción de barras
                     ratio = len(df) / total_bars
                     end = max(1, int(i * ratio))
                 if end > 0:
-                    mtf_slice[tf] = df.iloc[:end].copy()
+                    start = max(0, end - self.MTF_SLICE_LOOKBACK)
+                    mtf_slice[tf] = df.iloc[start:end].copy()
+
+            # --- Resolución SL/TP/salida dinámica del trade abierto en esta barra ---
+            if open_trade is not None:
+                h = current_bar["high"]
+                l = current_bar["low"]
+                sl_dist = abs(open_trade.entry_price - open_trade.sl_price)
+                exit_price = exit_reason = None
+                if open_trade.direction == 1:  # BUY
+                    if l <= open_trade.sl_price:
+                        exit_price, exit_reason = open_trade.sl_price, "SL"
+                    elif h >= open_trade.tp_price:
+                        exit_price, exit_reason = open_trade.tp_price, "TP"
+                else:  # SELL
+                    if h >= open_trade.sl_price:
+                        exit_price, exit_reason = open_trade.sl_price, "SL"
+                    elif l <= open_trade.tp_price:
+                        exit_price, exit_reason = open_trade.tp_price, "TP"
+
+                if exit_reason is None and has_dynamic_exit:
+                    pos_type = "BUY" if open_trade.direction == 1 else "SELL"
+                    try:
+                        if strategy.check_exit_signal(mtf_slice, pos_type, symbol=symbol):
+                            exit_price, exit_reason = float(current_bar["close"]), "DYNAMIC"
+                    except Exception:
+                        pass
+
+                if exit_reason is not None:
+                    open_trade.exit_price = exit_price
+                    open_trade.exit_time = current_time
+                    open_trade.exit_reason = exit_reason
+                    r = (exit_price - open_trade.entry_price) / max(sl_dist, 1e-10)
+                    open_trade.pnl_r = r if open_trade.direction == 1 else -r
+                    open_trade.result = "WIN" if open_trade.pnl_r > 0 else "LOSS"
+                    _apply_costs(open_trade, sl_dist)
+                    open_trade = None
+
+            # Si ya hay un trade abierto, no abrir otro
+            if open_trade is not None:
+                continue
 
             # --- Evaluar señal ---
             signal = await self._call_signal(strategy, mtf_slice)
@@ -334,10 +390,34 @@ class PSTBacktestEngine:
             sl_price = entry - direction * sl_dist
             tp_price = entry + direction * tp_dist
 
+            if self.use_structural_sltp:
+                struct_sl = float(meta.get("target_price_sl", 0) or 0)
+                struct_tp = float(signal.get("tp_price", 0) or 0)
+                if struct_sl > 0 and ((direction == 1 and struct_sl < entry) or (direction == -1 and struct_sl > entry)):
+                    sl_price = struct_sl
+                    sl_dist = abs(entry - struct_sl)
+                if struct_tp > 0 and ((direction == 1 and struct_tp > entry) or (direction == -1 and struct_tp < entry)):
+                    tp_price = struct_tp
+                    tp_dist = abs(struct_tp - entry)
+
             # Validar R:R mínimo
             rr = tp_dist / sl_dist if sl_dist > 0 else 0
             if rr < 1.2:
                 continue
+
+            # Tope de R:R MÁXIMO (2026-08-13, ver Tools/pst_new_strategy_trace.py): el
+            # cap de duración de las estrategias nuevas se calcula con el "price"
+            # interno de la estrategia (última vela del active_tf elegido por
+            # AdaptiveTFSelector), que puede diferir del "entry" real aquí (close de
+            # la barra del motor). Cuando el SL es muy ceñido, ese pequeño desfase de
+            # precio infla el R:R efectivo aunque la estrategia ya haya aplicado su
+            # propio tope — un trade real llegó a 11.5R con un SL de apenas 16 puntos
+            # en US30.cash. Se re-acota aquí sobre el SL/TP REALMENTE aplicados al
+            # trade, que es la única fuente de verdad para el R:R ejecutado.
+            if rr > MAX_RR_CEILING:
+                tp_dist = sl_dist * MAX_RR_CEILING
+                tp_price = entry + direction * tp_dist
+                rr = MAX_RR_CEILING
 
             trade = BacktestTrade(
                 entry_time=current_time,
@@ -363,6 +443,7 @@ class PSTBacktestEngine:
             last_close = float(last["close"])
             open_trade.exit_price = last_close
             open_trade.exit_time = period_end
+            open_trade.exit_reason = "EOD"
             open_trade.result = "OPEN"
             sl_d = abs(open_trade.entry_price - open_trade.sl_price)
             if sl_d > 0:
@@ -370,6 +451,7 @@ class PSTBacktestEngine:
                     open_trade.pnl_r = (last_close - open_trade.entry_price) / sl_d
                 else:
                     open_trade.pnl_r = (open_trade.entry_price - last_close) / sl_d
+                _apply_costs(open_trade, sl_d)
 
         logger.info(
             f"[Backtest] {strategy_name}/{symbol} completado: "

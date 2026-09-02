@@ -28,6 +28,10 @@ PailsSentinelTrade/Tools/migrate_to_pst.py
 # Caché de datos del backtest LAB (datos MT5 crudos, no versionar)
 Tools/.bt_cache/
 .bt_cache/
+# Caché de datos para entrenamiento ML (datos MT5 crudos, no versionar)
+Tools/.ml_cache/
+# Modelos entrenados (binarios, no versionar)
+PST_Core/ml/artifacts/
 # PST_MCP/ <- Eliminado para permitir subida del Hub
 
 # Distribution

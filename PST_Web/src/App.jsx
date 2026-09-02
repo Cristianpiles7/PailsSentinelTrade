@@ -76,8 +76,14 @@ const api = {
 // ─────────────────────────────────────────────────────────────────────────────
 // Fase 3 · Matrix Editor: modal de configuración por símbolo
 // ─────────────────────────────────────────────────────────────────────────────
-const MODAL_STRATS = ["PST-RangeBreaker", "PST-PrecisionScalping"];
-const MODAL_STRAT_LABELS = { "PST-RangeBreaker": "Range Breaker", "PST-PrecisionScalping": "Precision Scalp" };
+// RangeBreaker/PrecisionScalping pausadas (ver PST_Core/config.py::ENABLED_STRATEGIES)
+// — ocultas del modal mientras se valida el sistema nuevo. Sus filas en BBDD y su
+// código siguen intactos, solo no aparecen en esta UI por ahora.
+const MODAL_STRATS = ["PST-MomentumPulse", "PST-DivergenceReversion"];
+const MODAL_STRAT_LABELS = {
+  "PST-RangeBreaker": "Range Breaker", "PST-PrecisionScalping": "Precision Scalp",
+  "PST-MomentumPulse": "Momentum Pulse", "PST-DivergenceReversion": "Divergence Reversion",
+};
 // Knobs de filter_profile expuestos (solo PrecisionScalping)
 const FILTER_KNOBS = [
   { k: "entry_threshold", label: "Entry Score", hint: "Score mínimo para entrar (régimen normal)" },
@@ -166,7 +172,7 @@ const Seg = ({ options, value, onChange }) => (
 );
 
 function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
-  const [tab, setTab] = useState("PST-PrecisionScalping");
+  const [tab, setTab] = useState("PST-MomentumPulse");
   const [draft, setDraft] = useState(() => _buildDraft(symData.factors_map || {}));
   const [saving, setSaving] = useState(false);
 
@@ -2015,7 +2021,7 @@ function App() {
                             <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
                           </div>
                           <div className="flex gap-1 mt-0.5">
-                            {["PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
+                            {MODAL_STRATS.map(strat => {
                               const score = s.factors_map?.[strat]?.score || 0;
                               return (
                                 <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
@@ -2136,9 +2142,9 @@ function App() {
 
                     {/* Core Strategies Scores */}
                     <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      {["PST-RangeBreaker", "PST-PrecisionScalping"].map(strat => {
+                      {MODAL_STRATS.map(strat => {
                         const score = s.factors_map?.[strat]?.score || 0;
-                        const label = strat.replace("PST-", "").replace("RangeBreaker", "Range").replace("PrecisionScalping", "Scalp").toUpperCase();
+                        const label = strat.replace("PST-", "").replace("MomentumPulse", "Pulse").replace("DivergenceReversion", "Diverg").toUpperCase();
                         return (
                           <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
                             <span className="text-[7px] font-black text-zinc-600 mb-0.5">{label}</span>
@@ -3599,12 +3605,16 @@ function App() {
 
                   // Mapeo de nombres limpios y estratégicos
                   const STRAT_NAME_MAP = {
-                    "PST-RangeBreaker":      "Range Breaker",
-                    "PST-PrecisionScalping": "Precision Scalp",
+                    "PST-RangeBreaker":        "Range Breaker",
+                    "PST-PrecisionScalping":   "Precision Scalp",
+                    "PST-MomentumPulse":       "Momentum Pulse",
+                    "PST-DivergenceReversion": "Divergence Reversion",
                   };
 
-                  // Estrategias CORE activas (v3.0)
-                  const CORE_STRATS = ["PST-RangeBreaker", "PST-PrecisionScalping"];
+                  // Estrategias CORE activas — RangeBreaker/PrecisionScalping quedan
+                  // pausadas (ver PST_Core/config.py::ENABLED_STRATEGIES) mientras se
+                  // valida el sistema nuevo; se ocultan aquí para no confundir.
+                  const CORE_STRATS = ["PST-MomentumPulse", "PST-DivergenceReversion"];
                   const knownStrategies = Array.from(new Set([
                     ...strategies,
                     ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
