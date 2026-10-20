@@ -81,12 +81,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PST_API")
 
 load_dotenv() # Carga variables desde el archivo .env
-WEB_PASSWORD = os.getenv("WEB_PASSWORD", "PstAdmin01")
+
+# Sin valor por defecto a proposito. Antes habia uno hardcodeado aqui, y este repo es
+# PUBLICO: cualquiera podia leer la contrasena maestra del panel en GitHub, ademas de
+# quedar en el historico de varios commits. Ahora falla cerrado: si AUTH_ENABLED esta
+# activo y WEB_PASSWORD no esta definida en .env (que si esta en .gitignore), la app no
+# arranca en vez de caer en una credencial publica.
+WEB_PASSWORD = os.getenv("WEB_PASSWORD")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
+    # Falla cerrado antes de tocar nada: con autenticación activa y sin WEB_PASSWORD, el
+    # panel quedaría accesible con cualquier token (o con uno público, como antes).
+    if os.getenv("AUTH_ENABLED", "false").lower() != "false" and not WEB_PASSWORD:
+        raise RuntimeError(
+            "AUTH_ENABLED está activo pero WEB_PASSWORD no está definida. "
+            "Añade WEB_PASSWORD=<tu contraseña> al archivo .env (está en .gitignore) "
+            "o pon AUTH_ENABLED=false si quieres el panel sin autenticación."
+        )
     await db.initialize()
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
     logger.info(f"✅ Sentinel v2.0.9: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
@@ -157,8 +171,13 @@ async def auth_middleware(request: Request, call_next):
         if auth_enabled:
             token = request.headers.get("X-PST-Token")
             if not token or token != WEB_PASSWORD:
-                logger.warning(f"🔒 Intento de acceso bloqueado al endpoint {request.url.path}")
-                logger.warning(f"🔧 Recibido: '{token}', Esperado: '{WEB_PASSWORD}', Method: {request.method}")
+                # Nunca se registra la contrasena esperada ni el token recibido: estos logs
+                # van a PST_Startup.log / v2_sentinel_prime.log en disco, y escribir ahi el
+                # secreto en claro convertia cualquier log compartido en una filtracion.
+                logger.warning(
+                    "🔒 Intento de acceso bloqueado al endpoint %s (%s) — token %s",
+                    request.url.path, request.method, "ausente" if not token else "incorrecto",
+                )
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized. Invalid or missing X-PST-Token."})
     return await call_next(request)
 
