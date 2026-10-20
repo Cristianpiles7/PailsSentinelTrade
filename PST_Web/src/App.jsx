@@ -11,7 +11,7 @@ import {
   ArrowUpRight, RefreshCw, Power, Target, Clock, ShieldAlert, BookMarked,
   Image as ImageIcon, FileText, ChevronRight, Save, X, MoreVertical, LayoutDashboard,
   LayoutGrid, History, ShoppingCart, Zap, Trash2, ChevronUp, ChevronDown, Cpu,
-  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical
+  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -36,6 +36,7 @@ import { EquityCurve } from './components/ui/EquityCurve'
 import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
 import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
 import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
+import { AgentsOffice } from './components/AgentsOffice'
 
 
 
@@ -904,6 +905,19 @@ function App() {
           </button>
 
           <button
+            onClick={() => { setActiveView('agents'); setCurrentView('agents'); }}
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
+              ${activeView === 'agents'
+                ? 'bg-cyan-500/20 text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.3)]'
+                : 'text-zinc-500 hover:text-cyan-400 hover:bg-zinc-800/50'}`}
+          >
+            <Users size={24} />
+            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+              Oficina de Agentes
+            </div>
+          </button>
+
+          <button
             onClick={() => {
               setCurrentView('history')
               fetchHistory()
@@ -1331,6 +1345,12 @@ function App() {
         {currentView === 'strategylab' && (
           <div className="w-full h-full animate-in fade-in slide-in-from-bottom-2 duration-700">
             <StrategyLab symbols={symbols} />
+          </div>
+        )}
+
+        {currentView === 'agents' && (
+          <div className="w-full h-full px-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <AgentsOffice />
           </div>
         )}
 

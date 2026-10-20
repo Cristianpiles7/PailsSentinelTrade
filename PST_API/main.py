@@ -23,6 +23,7 @@ if project_root not in sys.path:
 from PST_Core.models.database import PSTDatabase
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_API.schemas import AccountStatus, Trade, SymbolStatus, APIResponse, OHLCBar, ConfigUpdate, ManualOrder, StrategyBreakdown, BotConfigUpdate, PerformanceMetrics, EquityPoint, StrategyPerformance, LoginRequest, RiskProfileRequest, TradeNoteUpdate
+from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_thread, MIRROR_PORT
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
@@ -1288,6 +1289,12 @@ else:
 
 react_dist_path = os.path.join(base_dir, "PST_Web", "dist")
 
+# Proxy JSON de habblaud. OJO AL ORDEN: tiene que registrarse ANTES del catch-all
+# `@app.get("/{full_path:path}")` de abajo, que devuelve 404 para todo lo que empiece por
+# "api/". Starlette casa rutas por orden de registro, asi que un GET declarado despues del
+# catch-all queda tapado (por eso /api/backtest/run, mas abajo, solo funciona al ser POST).
+app.include_router(habblaud_router)
+
 if os.path.isdir(react_dist_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_path, "assets")), name="assets")
 
@@ -1458,6 +1465,11 @@ def start_app():
     if not server_ready:
         print("El servidor falló al iniciar en el puerto", port)
         sys.exit(1)
+
+    # Espejo de habblaud (puerto propio, sin X-Frame-Options) para la pestaña Oficina.
+    # Best-effort: si habblaud no esta levantado, el espejo responde 503 y la pestaña lo
+    # pinta como "oficina apagada". Ver PST_API/habblaud_proxy.py.
+    start_mirror_in_thread()
 
     # Lanzar ventana nativa única apuntando al puerto dinámico
     webview.create_window(
