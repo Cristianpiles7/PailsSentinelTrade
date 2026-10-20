@@ -369,10 +369,17 @@ excluyentes.
 
 ## 11. Pendiente de verificar
 
-- [ ] Headers de habblaud: `curl -I http://127.0.0.1:4747/` (¿`X-Frame-Options`?)
-- [ ] `WebRequest()` en Strategy Tester — test empírico pendiente (EA mínimo + backtest + journal)
+- [x] Headers de habblaud — **RESUELTO y mi suposición era FALSA**: sirve la página con
+      `X-Frame-Options: DENY` (está en `server/http/static.ts` y lo fija su propio test),
+      así que el iframe directo es imposible. De ahí el espejo de §8.
 - [x] `metatrader5-mcp` levantado — **OK el 2026-10-20**, ver §12
+- [x] Entorno del terminal — **FTMO-Demo reconectado**, los 13 símbolos disponibles, §12
+- [ ] `WebRequest()` en Strategy Tester — test empírico pendiente (EA mínimo + backtest +
+      journal). Decide si la Opción D de §5 está muerta del todo; la doy por muerta pero
+      sin haberlo ejecutado.
 - [ ] ⚠️ Comportamiento real de `--max-budget-usd` bajo suscripción
+- [ ] Rotar `WEB_PASSWORD` en `.env`: el código ya no publica la credencial, pero el valor
+      en uso sigue siendo el que estuvo en el repo público
 
 ---
 
@@ -387,41 +394,50 @@ Confirmado que **sigue sin haber tool de compilar expuesta** (dos búsquedas): l
 `can_compile_file` indica que el compilador existe, no que haya una tool. Compilar sigue
 siendo vía `metaeditor64.exe` por CLI.
 
-### 🔴 BLOQUEANTE para la Opción B: el terminal conectado es el entorno equivocado
+### ✅ RESUELTO el bloqueante del entorno (verificado 2026-10-20, 20:05)
 
-| Síntoma | Valor |
-|---|---|
-| `server_connected` | **false** |
-| `trade_server_last_known_time` | **2026-09-15T18:47:07** (más de un mes congelado) |
-| Cuenta | `MetaQuotes-Demo`, login 5055699033, "MetaQuotes Ltd." |
-| Terminal | FTMO Global Markets MT5 Terminal, build 6182 |
-| `equity` | 0.00 (con `balance` 10009.77 EUR) |
-| `update_time` de todos los símbolos | 2026.09.15 18:47 |
+Durante unas horas este apartado describía un bloqueante real: el terminal era el de FTMO
+pero estaba logueado en `MetaQuotes-Demo` y **desconectado desde el 2026-09-15**, con
+equity 0.00, cotizaciones congeladas y **sin los `.cash`** donde operan 6 de los 9
+despliegues. El usuario reconectó la cuenta y queda resuelto.
 
-El terminal es el de FTMO pero está logueado en una demo de MetaQuotes y desconectado.
-Consecuencia en el Market Watch: **no existen los símbolos `.cash`** donde operan 6 de los
-9 despliegues de producción.
-
-| Hipótesis | Símbolo que necesita | ¿Disponible? |
+| | Antes (MetaQuotes-Demo) | Ahora (verificado) |
 |---|---|---|
-| H25 (el mejor, Sharpe 5.45) | `UK100.cash` | ❌ |
-| H28b, H45 | `GER40.cash` | ❌ |
-| H12 | `JP225.cash` | ❌ |
-| H20 (referencia) | `US500.cash` | ❌ |
+| Servidor | `MetaQuotes-Demo` | **`FTMO-Demo`** |
+| Cuenta | 5055699033 | **1515029407** — "€10k FTMO Free Trial 2-Step" |
+| Broker | MetaQuotes Ltd. | **FTMO Global Markets Ltd** |
+| `server_connected` | false | **true** |
+| Cotizaciones | congeladas en 2026-09-15 | **en vivo** |
+| `experts_trade_allowed` | — | **true** |
+
+**Los 13 símbolos de las 9 hipótesis están disponibles.** Ninguno falta:
+
+| Hipótesis | Símbolo(s) | Estado |
+|---|---|---|
+| H25 (el mejor, Sharpe 5.45) | `UK100.cash` | ✅ 10741.40 / 10743.45 (spread 2.05) |
+| H28b, H45 | `GER40.cash` | ✅ 25370.44 / 25372.77 (spread 2.33) |
+| H12 | `JP225.cash` | ✅ 64834.50 / 64844.50 (spread 10.00) |
+| H20 (referencia) | `US500.cash` | ✅ 7711.05 / 7711.65 (spread 0.60) |
 | H5 | EURGBP, AUDCAD, GBPAUD, GBPUSD | ✅ |
 | H21 | EURUSD | ✅ |
 | H41, H42 | AAPL, TSLA | ✅ |
+| H20 | MSFT | ✅ |
 | H45 (parcial) | CADJPY | ✅ |
 
-**Por qué es bloqueante y no un detalle:** el pipeline de `MT5/README.md` se apoya en
-*"cribado con coste de spread real"*. Los spreads, swaps y especificaciones de contrato de
-este terminal son de MetaQuotes, no de FTMO. Cribar hipótesis aquí usa el modelo de costes
-equivocado — exactamente el modo de fallo que §7 advierte: optimizar contra un juez que no
-cuadra con el live.
+Market Watch: 66 símbolos, con 10 índices `.cash` (AUS200, EU50, FRA40, GER40, HK50,
+JP225, UK100, US100, US30, US500).
 
-**Acción antes de la Fase 4:** reconectar el terminal a la cuenta FTMO-Demo y confirmar que
-`get_marketwatch_symbols` devuelve los `.cash`. Hasta entonces, la Opción B sólo puede
-cribar las hipótesis de forex y acciones de la tabla.
+**Por qué importaba:** el pipeline de `MT5/README.md` se apoya en *"cribado con coste de
+spread real"*. Con spreads y swaps de MetaQuotes el cribado usaba el modelo de costes
+equivocado — el mismo modo de fallo que advierte §7 (optimizar contra un juez que no cuadra
+con el live). Ahora los costes son los de FTMO, incluidos los swaps reales, que no son
+menores: `GER40.cash` tiene swap largo de −496.04 y `JP225.cash` de −993.18. Cualquier
+hipótesis que mantenga posición varios días tiene que digerir eso.
+
+**Comprobación de regresión:** antes de dar por bueno cualquier cribado futuro, confirmar
+`server_connected: true` y que `get_marketwatch_symbols` devuelve los `.cash` con
+`update_time` reciente. Es un estado que se pierde con un login equivocado, y el síntoma
+—resultados plausibles calculados con costes erróneos— no salta a la vista.
 
 ### Hallazgo lateral: el terminal tiene 28 EAs, el repo tiene 9
 
@@ -433,3 +449,40 @@ quedaban "en el proyecto original": `PST_KeltnerFade_UK100_H1`, `PST_RsiDivergen
 
 Es material de entrenamiento para el `cazador`: hipótesis ya probadas y su veredicto. Vale la
 pena que el agente las lea antes de proponer, para no repetir trabajo muerto.
+
+---
+
+## 13. Estado del servidor MCP de PST (verificado 2026-10-20)
+
+La Fase 1 decía "expandir el MCP de 2 a 12 tools". La realidad al ejecutarlo: **nunca había
+funcionado**. Cinco fallos, todos comprobados corriéndolo, no leyéndolo:
+
+| # | Fallo | Efecto |
+|---|---|---|
+| 1 | No estaba registrado como servidor MCP en ningún sitio | Nunca invocable |
+| 2 | `Tool(input_schema=)` en vez de `inputSchema` | `ValidationError` en la primera llamada a `tools/list` |
+| 3 | `get_drawdown_report` y `get_symbol_matrix` declaradas sin implementar | Caían en silencio en el `return` final |
+| 4 | **`PST_Core/config.py` hacía `print()` a stdout** | En MCP stdout es el transporte JSON-RPC: el handshake moría con `Expecting value: line 1 column 1` |
+| 5 | Sincronización MT5 completa en *cada* llamada a *cualquier* tool | 20 consultas de un agente = 20 escrituras en la BBDD viva |
+
+El cuarto es el instructivo: es invisible leyendo el código del servidor, porque el `print`
+está en otro fichero que el servidor importa.
+
+**Estado actual:** 13 tools funcionando, registradas en `.mcp.json` (ámbito proyecto y
+versionable, mejor que `~/.claude.json`). Verificado con handshake MCP real por stdio:
+`initialize` → `PST-Intelligence-Hub`, `tools/list` → 13, `tools/call` → datos reales.
+
+Sólo **dos** tools escriben, y lo declaran en su descripción: `propose_change` (inserta en
+estado `propuesta`; no aplica nada) y `sync_mt5_today`. Las lecturas abren la BBDD en
+`?mode=ro` para que una consulta no pueda alterar datos ni por error.
+
+Guardas verificados: `query_select` rechaza `DELETE`/`UPDATE`/multi-sentencia; `run_lab`
+tiene lista blanca cerrada de labs — una ruta libre sería ejecución de código arbitrario vía
+MCP — con timeout de 900 s y salida recortada para no agotar el contexto del agente.
+
+### Lo que queda para que la flota produzca algo
+
+La Fase 1 está completa (tablas, MCP, esquema, runner, prompt del reconciliador), pero
+**falta el dato**: la BBDD se reseteó de cero el 2026-10-20 y tiene 1 operación cerrada.
+Lanzar el reconciliador ahora gasta cuota para que conteste, con razón, que no hay datos.
+Esperar a 20-30 cierres antes de la primera pasada.
