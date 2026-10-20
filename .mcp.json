@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "pst": {
+      "command": "python",
+      "args": ["PST_MCP/pst_server.py"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
