@@ -117,6 +117,34 @@ def _dias_desde_ultima_pasada(agente: str):
         return None
 
 
+def puerta_autopsia():
+    """
+    Hay perdidas sin diseccionar desde la ultima autopsia.
+
+    En LOTE y no por operacion a proposito: el suelo medido por pasada es ~132k tokens,
+    asi que cinco autopsias sueltas costarian cinco veces mas que una de las cinco juntas.
+    Y lo que tiene valor es la causa COMUN entre varias perdidas: una autopsia por
+    operacion no puede ver ese patron ni aunque quiera.
+    """
+    con = _db()
+    fila = con.execute(
+        "SELECT finished_at FROM agent_runs WHERE agent = 'autopsia' AND status = 'ok' "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    desde = fila["finished_at"] if fila else None
+    if desde:
+        n = con.execute(
+            "SELECT COUNT(*) FROM trades WHERE profit < 0 AND time_out IS NOT NULL "
+            "AND time_out != '' AND time_out > ?", (desde,)).fetchone()[0]
+    else:
+        n = con.execute(
+            "SELECT COUNT(*) FROM trades WHERE profit < 0 AND time_out IS NOT NULL "
+            "AND time_out != '' AND time_out >= datetime('now','-2 days')").fetchone()[0]
+    con.close()
+    if n == 0:
+        return False, "sin pérdidas nuevas que diseccionar"
+    return True, f"{n} pérdida(s) sin diseccionar"
+
+
 def puerta_reconciliador():
     n, desde = _cierres_desde_ultima_pasada("reconciliador")
     if n < 20:
@@ -151,6 +179,9 @@ def puerta_cazador():
 
 # agente -> (puerta, es_caro). "caro" = opus, que consume mucho más de la ventana.
 AGENDA = {
+    # La autopsia va primero: es la mas barata de justificar (basta una perdida) y la que
+    # da contexto cualitativo al resto. Ademas no escribe propuestas, solo un informe.
+    "autopsia":      (puerta_autopsia, False),
     "reconciliador": (puerta_reconciliador, False),
     "juez":          (puerta_juez, False),
     "cazador":       (puerta_cazador, True),

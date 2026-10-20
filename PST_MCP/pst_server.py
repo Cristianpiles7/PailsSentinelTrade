@@ -79,7 +79,9 @@ ALLOWED_LABS = {
     "audit_precision":      "audit_precisionscalping.py",
     "export_loss_context":  "PST_Core/tools/export_loss_context.py",
 }
-LAB_TIMEOUT_S = 900
+# 300s y no 900: un lab sano tarda segundos. Un tope de 15 min solo sirve para que un
+# lab colgado bloquee al agente un cuarto de hora antes de que nadie se entere.
+LAB_TIMEOUT_S = 300
 
 
 # ── Acceso a BBDD ─────────────────────────────────────────────────────────────
@@ -360,7 +362,16 @@ async def _tool_run_lab(args):
 
     cmd = ["python", script] + [str(a) for a in (args.get("args") or [])]
     try:
+        # stdin=DEVNULL es OBLIGATORIO, no una precaucion: este servidor corre sobre stdio
+        # y su stdin ES la tuberia JSON-RPC del protocolo. Sin esto el hijo la hereda y se
+        # queda esperando en un pipe que nunca le va a dar nada.
+        #
+        # Sintoma real (2026-10-20): un lab que tarda 0.94s ejecutado a mano se quedaba
+        # colgado 390s+ cuando lo llamaba un agente, hasta agotar LAB_TIMEOUT_S y volver
+        # con returncode 143 y salida vacia. Costo tres pasadas de agente diagnosticarlo,
+        # porque desde fuera parecia que el modelo iba lento.
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL,
                               timeout=LAB_TIMEOUT_S, encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return {"error": f"'{lab}' excedio el timeout de {LAB_TIMEOUT_S}s"}

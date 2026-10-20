@@ -57,6 +57,7 @@ if str(REPO_ROOT) not in sys.path:
 # agentes mecanicos (corren labs y resumen numeros) van en sonnet/low; opus/high se reserva
 # para donde hace falta criterio de verdad.
 PROFILES = {
+    "autopsia":        {"model": "sonnet", "effort": "low"},
     "reconciliador":   {"model": "sonnet", "effort": "low"},
     "juez":            {"model": "sonnet", "effort": "low"},
     "revisor":         {"model": "sonnet", "effort": "medium"},
@@ -67,6 +68,9 @@ PROFILES = {
 # Tools permitidas por agente. Deliberadamente estrechas: un agente con mas superficie de
 # la que necesita improvisa. mcp__pst__* es el servidor de .mcp.json.
 ALLOWED_TOOLS = {
+    # autopsia necesita Write para dejar el informe. Queda acotado por --add-dir al
+    # repo, y su prompt le prohibe escribir fuera de .agents/autopsias/.
+    "autopsia":       "mcp__pst__*,Read,Write,Glob,Grep",
     "reconciliador":  "mcp__pst__*,Read,Glob,Grep",
     "juez":           "mcp__pst__*,Read,Glob,Grep",
     "revisor":        "mcp__pst__*,Read,Glob,Grep,Bash(git *)",
