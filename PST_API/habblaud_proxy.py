@@ -198,6 +198,72 @@ def create_mirror_app() -> Starlette:
     )
 
 
+def _is_listening(host: str, port: int, timeout: float = 0.5) -> bool:
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_habblaud_running() -> bool:
+    """
+    Levanta habblaud si no esta escuchando. OPT-IN: solo actua con HABBLAUD_AUTOSTART=1.
+
+    Apagado por defecto a proposito. Lanzar un proceso de Node desde la app que vigila la
+    cuenta en cada arranque es invasivo, y en Windows un hijo no muere con el padre: cada
+    reinicio de PST dejaria un habblaud huerfano acumulandose. Lo normal es gobernarlo a
+    mano con Tools/habblaud.ps1, que ademas da stop/status/logs.
+
+    Devuelve True si al terminar habblaud esta escuchando.
+    """
+    port = _port_of(HABBLAUD_URL)
+    if _is_listening("127.0.0.1", port):
+        return True
+
+    if os.getenv("HABBLAUD_AUTOSTART", "0") not in ("1", "true", "True"):
+        logger.info("[HABBLAUD] Apagado y autostart desactivado. Para levantarlo: Tools/habblaud.ps1 start")
+        return False
+
+    habblaud_dir = os.getenv("HABBLAUD_DIR")
+    if not habblaud_dir:
+        # Hermana del repo: <...>/PailsSentinelTrade/habblaud, con PST en <...>/PailsSentinelTrade/PailsSentinelTrade
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        habblaud_dir = os.path.join(os.path.dirname(repo_root), "habblaud")
+
+    entry = os.path.join(habblaud_dir, "dist", "server", "index.js")
+    if not os.path.isfile(entry):
+        logger.warning("[HABBLAUD] No hay build en %s (falta `npm install && npm run build`)", entry)
+        return False
+
+    import subprocess
+    try:
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(
+            ["node", "dist/server/index.js"],
+            cwd=habblaud_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except (OSError, ValueError) as e:
+        logger.warning("[HABBLAUD] No se pudo lanzar node: %s", e)
+        return False
+
+    import time
+    for _ in range(20):
+        if _is_listening("127.0.0.1", port):
+            logger.info("[HABBLAUD] Arrancado automaticamente desde %s", habblaud_dir)
+            return True
+        time.sleep(0.5)
+
+    logger.warning("[HABBLAUD] Lanzado pero no llego a escuchar en el puerto %s", port)
+    return False
+
+
 def start_mirror_in_thread() -> None:
     """
     Arranca el espejo en un hilo daemon. Es best-effort: si el puerto esta ocupado o uvicorn

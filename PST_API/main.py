@@ -23,7 +23,7 @@ if project_root not in sys.path:
 from PST_Core.models.database import PSTDatabase
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_API.schemas import AccountStatus, Trade, SymbolStatus, APIResponse, OHLCBar, ConfigUpdate, ManualOrder, StrategyBreakdown, BotConfigUpdate, PerformanceMetrics, EquityPoint, StrategyPerformance, LoginRequest, RiskProfileRequest, TradeNoteUpdate
-from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_thread, MIRROR_PORT
+from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_thread, ensure_habblaud_running, MIRROR_PORT
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
@@ -1469,6 +1469,9 @@ def start_app():
     # Espejo de habblaud (puerto propio, sin X-Frame-Options) para la pestaña Oficina.
     # Best-effort: si habblaud no esta levantado, el espejo responde 503 y la pestaña lo
     # pinta como "oficina apagada". Ver PST_API/habblaud_proxy.py.
+    # ensure_habblaud_running() solo hace algo con HABBLAUD_AUTOSTART=1; lo normal es
+    # gobernar habblaud a mano con Tools/habblaud.ps1.
+    ensure_habblaud_running()
     start_mirror_in_thread()
 
     # Lanzar ventana nativa única apuntando al puerto dinámico
