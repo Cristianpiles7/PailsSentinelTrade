@@ -38,3 +38,7 @@ PST_Core/ml/artifacts/
 build/
 dist/
 *.spec
+
+# Salidas de la flota de agentes: JSON transitorios por ejecucion, la version
+# persistente vive en las tablas agent_runs/proposals de la BBDD.
+.agents/out/
