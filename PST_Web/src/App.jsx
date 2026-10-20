@@ -73,305 +73,6 @@ const api = {
 
 
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fase 3 · Matrix Editor: modal de configuración por símbolo
-// ─────────────────────────────────────────────────────────────────────────────
-// RangeBreaker/PrecisionScalping pausadas (ver PST_Core/config.py::ENABLED_STRATEGIES)
-// — ocultas del modal mientras se valida el sistema nuevo. Sus filas en BBDD y su
-// código siguen intactos, solo no aparecen en esta UI por ahora.
-const MODAL_STRATS = ["PST-MomentumPulse", "PST-DivergenceReversion"];
-const MODAL_STRAT_LABELS = {
-  "PST-RangeBreaker": "Range Breaker", "PST-PrecisionScalping": "Precision Scalp",
-  "PST-MomentumPulse": "Momentum Pulse", "PST-DivergenceReversion": "Divergence Reversion",
-};
-// Knobs de filter_profile expuestos (solo PrecisionScalping)
-const FILTER_KNOBS = [
-  { k: "entry_threshold", label: "Entry Score", hint: "Score mínimo para entrar (régimen normal)" },
-  { k: "entry_threshold_volatile", label: "Entry Score · Volátil", hint: "Score mínimo en régimen VOLÁTIL" },
-  { k: "adx_clean", label: "ADX limpio", hint: "ADX ≥ y Chop ≤ límite → tendencia limpia (+6)" },
-  { k: "chop_clean", label: "Chop limpio", hint: "Chop ≤ este valor → tendencia limpia" },
-  { k: "adx_ok", label: "ADX ok", hint: "ADX ≥ este valor → aceptable (neutro)" },
-  { k: "chop_ok", label: "Chop ok", hint: "Chop ≤ este valor → aceptable (neutro)" },
-  { k: "adx_extreme", label: "ADX extremo", hint: "ADX < y Chop > → lateral extrema (veto)" },
-  { k: "chop_extreme", label: "Chop extremo", hint: "Chop > y ADX < → lateral extrema (veto)" },
-  { k: "rsi_strong", label: "RSI fuerte", hint: "RSI M5 momentum fuerte (short usa 100-x)" },
-  { k: "rsi_ok", label: "RSI ok", hint: "RSI M5 momentum aceptable" },
-];
-const FILTER_KNOB_KEYS = FILTER_KNOBS.map(f => f.k).concat(["noise_mode", "vwap_exit", "entry_tf", "validation_tf"]);
-const TF_OPTIONS = [{ value: 'm1', label: 'M1' }, { value: 'm2', label: 'M2' }, { value: 'm3', label: 'M3' }, { value: 'm5', label: 'M5' }];
-
-function _parseFilter(raw) {
-  let knobs = {}, advanced = {};
-  try {
-    const o = raw ? JSON.parse(raw) : {};
-    for (const [k, v] of Object.entries(o)) {
-      if (FILTER_KNOB_KEYS.includes(k)) knobs[k] = v; else advanced[k] = v;
-    }
-  } catch { /* ignora perfil corrupto */ }
-  return { knobs, advancedStr: Object.keys(advanced).length ? JSON.stringify(advanced) : "" };
-}
-
-function _buildDraft(fm) {
-  const d = {};
-  for (const strat of MODAL_STRATS) {
-    const s = fm[strat] || {};
-    d[strat] = {
-      is_active: !!s.is_active,
-      risk_mode: s.risk_mode || "MONEY",
-      risk_value: s.risk_value ?? "",
-      sl_mult: s.sl_mult ?? "",
-      tp_mult: s.tp_mult ?? "",
-      score_threshold: s.score_threshold ?? "",
-      use_breakeven: !!s.use_breakeven,
-      be_mult: s.be_mult ?? "",
-      use_trailing: !!s.use_trailing,
-      ts_mult: s.ts_mult ?? "",
-      min_rr: s.min_rr ?? "",
-    };
-    if (strat === "PST-PrecisionScalping") {
-      const f = _parseFilter(s.filter_profile);
-      d[strat].__noise = f.knobs.noise_mode || "on";
-      d[strat].__vwapExit = f.knobs.vwap_exit || "on";
-      d[strat].__entryTf = f.knobs.entry_tf || "m1";
-      d[strat].__validationTf = f.knobs.validation_tf || "m5";
-      d[strat].__knobs = {};
-      for (const kk of FILTER_KNOBS) d[strat].__knobs[kk.k] = f.knobs[kk.k] ?? "";
-      d[strat].__advanced = f.advancedStr;
-    }
-  }
-  return d;
-}
-
-// Campos reutilizables (nivel de módulo → identidad estable, sin pérdida de foco)
-const Num = ({ label, value, onChange, hint, ph, color = "text-white", disabled }) => (
-  <label className="flex flex-col gap-1" title={hint || ""}>
-    <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">{label}</span>
-    <input type="number" step="0.1" value={value} placeholder={ph || ""} disabled={disabled}
-      onChange={e => onChange(e.target.value)}
-      className={`bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[12px] font-black ${color} outline-none focus:border-indigo-500/50 disabled:opacity-40 disabled:cursor-not-allowed`} />
-  </label>
-);
-const Toggle = ({ label, on, onClick, hint }) => (
-  <button onClick={onClick} title={hint || ""}
-    className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border transition-all ${on ? 'bg-indigo-500/10 border-indigo-500/40' : 'bg-black/30 border-white/10'}`}>
-    <span className={`text-[9px] font-black uppercase tracking-widest ${on ? 'text-indigo-300' : 'text-zinc-500'}`}>{label}</span>
-    <div className={`w-8 h-4 rounded-full relative transition-all ${on ? 'bg-indigo-600' : 'bg-zinc-800'}`}>
-      <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${on ? 'right-0.5' : 'left-0.5'}`} />
-    </div>
-  </button>
-);
-const Seg = ({ options, value, onChange }) => (
-  <div className="flex items-center bg-black/40 p-1 rounded-xl border border-white/10 gap-1">
-    {options.map(o => (
-      <button key={o.value} onClick={() => onChange(o.value)}
-        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${value === o.value ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>
-        {o.label}
-      </button>
-    ))}
-  </div>
-);
-
-function ConfigModal({ symbol, symData, onClose, onSaved, addToast }) {
-  const [tab, setTab] = useState("PST-MomentumPulse");
-  const [draft, setDraft] = useState(() => _buildDraft(symData.factors_map || {}));
-  const [saving, setSaving] = useState(false);
-
-  const setField = (strat, field, val) => setDraft(p => ({ ...p, [strat]: { ...p[strat], [field]: val } }));
-  const setKnob = (strat, k, val) => setDraft(p => ({ ...p, [strat]: { ...p[strat], __knobs: { ...p[strat].__knobs, [k]: val } } }));
-
-  const buildFilterProfile = (sd) => {
-    let obj = {};
-    if (sd.__advanced && sd.__advanced.trim()) {
-      obj = { ...JSON.parse(sd.__advanced) }; // lanza si es inválido → capturado en save()
-    }
-    obj.noise_mode = sd.__noise;
-    obj.vwap_exit = sd.__vwapExit;
-    obj.entry_tf = sd.__entryTf;
-    obj.validation_tf = sd.__validationTf;
-    for (const [k, v] of Object.entries(sd.__knobs || {})) {
-      if (v !== "" && v !== null && v !== undefined) obj[k] = Number(v);
-    }
-    return JSON.stringify(obj);
-  };
-
-  const numOrNull = (v) => (v === "" || v === null || v === undefined ? null : Number(v));
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      for (const strat of MODAL_STRATS) {
-        const sd = draft[strat];
-        const fields = {
-          is_active: sd.is_active,
-          risk_mode: sd.risk_mode,
-          risk_value: numOrNull(sd.risk_value),
-          sl_mult: numOrNull(sd.sl_mult),
-          tp_mult: numOrNull(sd.tp_mult),
-          score_threshold: numOrNull(sd.score_threshold),
-          use_breakeven: sd.use_breakeven,
-          be_mult: numOrNull(sd.be_mult),
-          use_trailing: sd.use_trailing,
-          ts_mult: numOrNull(sd.ts_mult),
-          min_rr: numOrNull(sd.min_rr),
-        };
-        if (strat === "PST-PrecisionScalping") fields.filter_profile = buildFilterProfile(sd);
-        await api.post(`${API_BASE}/config/strategy`, { symbol, strategy: strat, ...fields });
-      }
-      addToast(`${symbol} configurado`, "success");
-      onSaved();
-      onClose();
-    } catch (e) {
-      const msg = e?.response?.data?.detail || (e instanceof SyntaxError ? "JSON avanzado inválido" : e.message) || "Error al guardar";
-      addToast(msg, "error");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const sd = draft[tab];
-  const isScalp = tab === "PST-PrecisionScalping";
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#020202]/90 backdrop-blur-md" onClick={onClose}>
-      <motion.div initial={{ scale: 0.9, opacity: 0, y: 30 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 30 }}
-        onClick={e => e.stopPropagation()}
-        className="w-full max-w-4xl bg-[#050505] border border-white/10 rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 bg-indigo-500/10 rounded-2xl flex items-center justify-center border border-indigo-500/20">
-              <Settings className="text-indigo-400" size={20} />
-            </div>
-            <div>
-              <h2 className="text-xl font-black text-white italic tracking-tighter uppercase">Configurar {symbol}</h2>
-              <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-0.5">{symData.type || ""} · aplica en ~10s</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-3 bg-zinc-900 border border-white/5 rounded-2xl text-zinc-500 hover:text-white hover:border-rose-500/30 transition-all">
-            <X size={20} />
-          </button>
-        </div>
-
-        {/* Tabs de estrategia */}
-        <div className="px-8 pt-5 flex items-center gap-2">
-          {MODAL_STRATS.map(st => (
-            <button key={st} onClick={() => setTab(st)}
-              className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === st ? 'bg-indigo-600 text-white' : 'bg-white/[0.03] text-zinc-500 hover:text-zinc-300'}`}>
-              {MODAL_STRAT_LABELS[st]}
-              <span className={`ml-2 inline-block w-1.5 h-1.5 rounded-full ${draft[st].is_active ? 'bg-emerald-400' : 'bg-zinc-700'}`} />
-            </button>
-          ))}
-        </div>
-
-        {/* Cuerpo */}
-        <div className="flex-1 p-8 overflow-y-auto space-y-6">
-          <Toggle label="Estrategia activa para este símbolo" on={sd.is_active} onClick={() => setField(tab, 'is_active', !sd.is_active)} />
-
-          {/* Riesgo */}
-          <div className="space-y-3">
-            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Riesgo</p>
-            <div className="flex items-end gap-4 flex-wrap">
-              <Seg options={[{ value: 'LOTS', label: 'Lotes' }, { value: 'PCT', label: '%' }, { value: 'MONEY', label: '€' }]}
-                value={sd.risk_mode} onChange={v => setField(tab, 'risk_mode', v)} />
-              <Num label="Valor de riesgo" value={sd.risk_value} onChange={v => setField(tab, 'risk_value', v)} ph="auto" color="text-indigo-300" hint="Riesgo por operación en la unidad elegida" />
-            </div>
-          </div>
-
-          {/* SL / TP */}
-          <div className="space-y-3">
-            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Stop Loss / Take Profit</p>
-            <div className="grid grid-cols-3 gap-4">
-              <Num label="SL × ATR" value={sd.sl_mult} onChange={v => setField(tab, 'sl_mult', v)} color="text-rose-300" hint="Multiplicador de Stop Loss (fallback si no hay SL estructural)" />
-              <Num label={isScalp ? "TP (usa técnico)" : "TP × ATR"} value={sd.tp_mult} onChange={v => setField(tab, 'tp_mult', v)} color="text-emerald-300" disabled={isScalp} hint={isScalp ? "PrecisionScalping usa TP técnico/banda VWAP" : "Multiplicador de Take Profit"} />
-              <Num label="Min R:R" value={sd.min_rr} onChange={v => setField(tab, 'min_rr', v)} color="text-indigo-300" hint="Ratio R:R mínimo para ejecutar" />
-            </div>
-          </div>
-
-          {/* Gestión */}
-          <div className="space-y-3">
-            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Gestión de la posición</p>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-end gap-3">
-                <Toggle label="Breakeven" on={sd.use_breakeven} onClick={() => setField(tab, 'use_breakeven', !sd.use_breakeven)} />
-                <Num label="BE × ATR" value={sd.be_mult} onChange={v => setField(tab, 'be_mult', v)} color="text-amber-300" disabled={!sd.use_breakeven} />
-              </div>
-              <div className="flex items-end gap-3">
-                <Toggle label="Trailing" on={sd.use_trailing} onClick={() => setField(tab, 'use_trailing', !sd.use_trailing)} />
-                <Num label="TS × ATR" value={sd.ts_mult} onChange={v => setField(tab, 'ts_mult', v)} color="text-emerald-300" disabled={!sd.use_trailing} />
-              </div>
-            </div>
-          </div>
-
-          {/* Señal — solo RangeBreaker usa score_threshold como gate. En PrecisionScalping
-              el umbral real es entry_threshold (sección Filtros), así que se oculta aquí. */}
-          {!isScalp && (
-            <div className="space-y-3">
-              <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.25em]">Señal</p>
-              <div className="grid grid-cols-3 gap-4">
-                <Num label="Score threshold" value={sd.score_threshold} onChange={v => setField(tab, 'score_threshold', v)} color="text-amber-300" hint="Score mínimo del orquestador para ejecutar" />
-              </div>
-            </div>
-          )}
-
-          {/* Filtros (solo PrecisionScalping) */}
-          {isScalp && (
-            <div className="space-y-3 pt-2 border-t border-white/5">
-              <div className="flex items-center gap-2">
-                <Zap size={13} className="text-indigo-400" />
-                <p className="text-[9px] font-black text-indigo-300 uppercase tracking-[0.25em]">Filtros de precisión (filter_profile)</p>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Filtro de ruido</span>
-                <Seg options={[{ value: 'on', label: 'On' }, { value: 'soft', label: 'Soft' }, { value: 'off', label: 'Off' }]}
-                  value={sd.__noise} onChange={v => setField(tab, '__noise', v)} />
-                <span className="text-[8px] text-zinc-600 italic">on=penaliza ruido · soft=solo veto extremo · off=sin penalización</span>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Salida VWAP dinámica</span>
-                <Seg options={[{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }]}
-                  value={sd.__vwapExit} onChange={v => setField(tab, '__vwapExit', v)} />
-                <span className="text-[8px] text-zinc-600 italic">on=cierra si el precio cruza VWAP en contra · off=deja correr el trade (mejor en cripto/índices, validado)</span>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Timeframe de entrada</span>
-                <Seg options={TF_OPTIONS} value={sd.__entryTf} onChange={v => setField(tab, '__entryTf', v)} />
-                <span className="text-[8px] text-zinc-600 italic">vela de gate EMA9/21 y estructura SL/TP · default M1</span>
-              </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Timeframe de validación</span>
-                <Seg options={TF_OPTIONS} value={sd.__validationTf} onChange={v => setField(tab, '__validationTf', v)} />
-                <span className="text-[8px] text-zinc-600 italic">contexto RSI/ADX/Chop · default M5</span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {FILTER_KNOBS.map(kk => (
-                  <Num key={kk.k} label={kk.label} value={sd.__knobs[kk.k]} onChange={v => setKnob(tab, kk.k, v)} ph="def" hint={kk.hint} color="text-zinc-200" />
-                ))}
-              </div>
-              <label className="flex flex-col gap-1">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">JSON avanzado (claves no expuestas · se fusiona al guardar)</span>
-                <textarea rows={2} value={sd.__advanced} onChange={e => setField(tab, '__advanced', e.target.value)}
-                  placeholder='{"noise_penalty": 10}'
-                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-[11px] font-mono text-zinc-300 outline-none focus:border-indigo-500/50 resize-none" />
-              </label>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-8 py-5 border-t border-white/5 flex items-center justify-end gap-3 bg-white/[0.02]">
-          <button onClick={onClose} className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-white border border-white/10 transition-all">Cancelar</button>
-          <button onClick={save} disabled={saving}
-            className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${saving ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/20'}`}>
-            {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
-            {saving ? 'Guardando' : 'Guardar configuración'}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
 function App() {
 
 
@@ -416,20 +117,9 @@ function App() {
 
 
 
-  const [manualLot, setManualLot] = useState(0.10)
 
 
 
-  const [isSmartMode, setIsSmartMode] = useState(true)
-  const [riskAmount, setRiskAmount] = useState(25)
-  const [slPrice, setSlPrice] = useState('')
-  const [tpPrice, setTpPrice] = useState('')
-  const [rrRatio, setRrRatio] = useState(2.0)
-  const [isExecuting, setIsExecuting] = useState(false)
-
-
-
-  const [isAutoTrading, setIsAutoTrading] = useState(true)
 
 
 
@@ -437,8 +127,6 @@ function App() {
 
   const [historyTrades, setHistoryTrades] = useState([])
 
-  // Fase 3: símbolo seleccionado para el modal de configuración del Matrix Editor
-  const [configModal, setConfigModal] = useState(null)
 
   const [activeStrategyTab, setActiveStrategyTab] = useState(null)
 
@@ -456,15 +144,9 @@ function App() {
 
 
 
-  const [matrixData, setMatrixData] = useState([])
 
 
 
-  const [editingParams, setEditingParams] = useState({}) // {symbol: {lot_size, sl_mult, tp_mult, score_threshold}}
-
-
-
-  const [savingSymbol, setSavingSymbol] = useState(null)
 
   // -- FASE 35 RISK PROFILES --
   const [riskProfiles, setRiskProfiles] = useState([])
@@ -475,7 +157,7 @@ function App() {
   const [replayTrade, setReplayTrade] = useState(null)
   const [upcomingNews, setUpcomingNews] = useState([])
   const [isNewsBlocked, setIsNewsBlocked] = useState(false)
-  const prevSignalsRef = useRef({}) // {symbol: score}
+  const prevTicketsRef = useRef(new Set()) // tickets abiertos en el último fetch, para detectar aperturas/cierres nuevos
 
   // -- FASE 51-53 EXPANSION --
   const [activeView, setActiveView] = useState('home') // 'home', 'history', 'analytics', 'heatmap', 'multichart', 'strategylab'
@@ -491,7 +173,6 @@ function App() {
 
   const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
   const activeSymbols = symbols.filter(s => s.is_active)
-  const strategies = symbols.length > 0 ? Object.keys(symbols[0].factors_map || {}) : []
 
 
 
@@ -513,11 +194,9 @@ function App() {
 
     // Carga inicial inmediata
     fetchData();
-    fetchBotConfig();
     fetchPerformance();
     fetchHistory();
     fetchLogs();
-    fetchMatrix();
     fetchNews();
 
     // Polling rápido cada 3 segundos para datos críticos
@@ -539,37 +218,32 @@ function App() {
     }
   }, [isAuthenticated])
 
-  // FASE 50: SENTINEL ALERTS (Audio & Visual)
+  // Alertas de posiciones reales (2026-09-02): sustituye al sistema de alertas por "score" del
+  // motor de trading retirado -- ahora avisa de aperturas/cierres reales detectados por el
+  // sincronizador MT5 (mt5_sync.py), no de una señal simulada que nunca se dispara.
   useEffect(() => {
-    if (isMuted || symbols.length === 0) return;
+    if (isMuted) return;
+    const prevTickets = prevTicketsRef.current;
+    const currentTickets = new Set(trades.map(t => t.ticket));
 
-    let hasAlert = false;
-    const newSignals = {};
-
-    symbols.forEach(s => {
-      newSignals[s.symbol] = s.score;
-      const prevScore = prevSignalsRef.current[s.symbol] || 0;
-
-      // Alerta de Señal Crítica (>= 80)
-      if (s.score >= 80 && prevScore < 80) {
-        hasAlert = true;
-        addToast(`SENTINEL SIGNAL: ${s.symbol} ready for ${s.signal_direction}`, 'success');
-        playSentinelSound('high');
+    if (prevTickets.size > 0) {
+      for (const t of trades) {
+        if (!prevTickets.has(t.ticket)) {
+          addToast(`Nueva posición: ${t.type} ${t.symbol} (${t.strategy})`, 'success');
+          playSentinelSound('high');
+          flashTabTitle();
+        }
       }
-      // Alerta de Pre-Señal (>= 70)
-      else if (s.score >= 70 && prevScore < 70) {
-        hasAlert = true;
-        addToast(`PRE-SIGNAL: ${s.symbol} charging (${s.score}%)`, 'info');
-        playSentinelSound('low');
+      for (const ticket of prevTickets) {
+        if (!currentTickets.has(ticket)) {
+          addToast(`Posición cerrada (ticket ${ticket})`, 'info');
+          playSentinelSound('low');
+        }
       }
-    });
-
-    if (hasAlert) {
-      flashTabTitle();
     }
 
-    prevSignalsRef.current = newSignals;
-  }, [symbols, isMuted])
+    prevTicketsRef.current = currentTickets;
+  }, [trades, isMuted])
 
   const playSentinelSound = (type) => {
     if (isMuted) return;
@@ -672,13 +346,6 @@ function App() {
     setLoading(false);
   }
 
-  const fetchBotConfig = async () => {
-    try {
-      const resp = await api.get(`${API_BASE}/config/bot/trading_mode?default=AUTO`)
-      setIsAutoTrading(resp.data.value === 'AUTO')
-    } catch (err) { console.error(err) }
-  }
-
   const fetchPerformance = async () => {
     try {
       const [perfRes, eqRes, stratRes, buckRes, hourlyRes] = await Promise.all([
@@ -710,13 +377,6 @@ function App() {
     } catch (err) { console.error(err) }
   }
 
-  const fetchMatrix = async () => {
-    try {
-      const resp = await api.get(`${API_BASE}/matrix`)
-      setMatrixData(resp.data)
-    } catch (err) { console.error(err) }
-  }
-
   const fetchOhlc = async (sym, tf) => {
     if (!sym) return;
     try {
@@ -741,15 +401,6 @@ function App() {
     } catch (err) { console.error(err) }
   }
 
-  const toggleAutoTrading = async () => {
-    const newVal = isAutoTrading ? 'MANUAL' : 'AUTO'
-    try {
-      await api.post(`${API_BASE}/config/bot`, { key: 'trading_mode', value: newVal })
-      setIsAutoTrading(!isAutoTrading)
-      addToast(`Trading mode set to ${newVal}`, 'success')
-    } catch (err) { addToast('Error toggling bot', 'error') }
-  }
-
   const handleCloseTrade = async (ticket) => {
     if (!window.confirm(`¿Cerrar posición ${ticket}?`)) return
     try {
@@ -757,18 +408,6 @@ function App() {
       addToast(`Posición ${ticket} cerrada`, 'success')
       fetchData()
     } catch (err) { addToast('Error al cerrar posición', 'error') }
-  }
-
-  const handlePurgeSymbol = async () => {
-    if (!selectedSymbol) return;
-    if (!window.confirm(`¿Purgar ${selectedSymbol}? Se detendrán todas las estrategias.`)) return;
-    try {
-      await api.post(`${API_BASE}/config/toggle`, { symbol: selectedSymbol, is_active: false });
-      addToast(`${selectedSymbol} deactivated`, 'info');
-      fetchMatrix();
-    } catch (err) {
-      addToast('Error purging symbol', 'error');
-    }
   }
 
   const handleViewTrade = (trade) => {
@@ -788,78 +427,12 @@ function App() {
     } catch (err) { addToast('Error closing trades', 'error') }
   }
 
-  const saveSymbolParams = async (symbol) => {
-    const params = editingParams[symbol]
-    if (!params) return
-    setSavingSymbol(symbol)
-    try {
-      await api.put(`${API_BASE}/symbols/${symbol}/params`, params)
-      addToast(`Params for ${symbol} updated`, 'success')
-      setSavingSymbol(null)
-      fetchMatrix()
-    } catch (err) {
-      addToast('Error saving params', 'error')
-      setSavingSymbol(null)
-    }
-  }
-
-  const updateParam = (symbol, field, val) => {
-    setEditingParams(prev => ({
-      ...prev,
-      [symbol]: {
-        ...(prev[symbol] || (symbols.find(s => s.symbol === symbol) ? {
-          lot_size: symbols.find(s => s.symbol === symbol).lot_size,
-          sl_mult: symbols.find(s => s.symbol === symbol).sl_mult,
-          tp_mult: symbols.find(s => s.symbol === symbol).tp_mult,
-          score_threshold: symbols.find(s => s.symbol === symbol).score_threshold,
-          risk_mode: symbols.find(s => s.symbol === symbol).risk_mode || 'LOTS',
-          risk_value: symbols.find(s => s.symbol === symbol).risk_value || 0.01
-        } : {})),
-        [field]: val
-      }
-    }))
-  }
-
-  const updateStrategyConfig = async (symbol, strategy, field, val) => {
-    try {
-      await api.post(`${API_BASE}/config/strategy`, {
-        symbol,
-        strategy,
-        [field]: val
-      })
-      addToast(`${strategy} updated`, 'success')
-      fetchMatrix()
-    } catch (err) {
-      addToast('Error updating strategy', 'error')
-    }
-  }
-
   const toggleSymbolStatus = async (symbol, isActive) => {
     try {
       await api.post(`${API_BASE}/config/symbol`, { symbol, is_active: !isActive })
       addToast(`${symbol} status updated`, 'success')
       fetchData()
-      fetchMatrix()
     } catch (err) { addToast('Error updating status', 'error') }
-  }
-
-  const handleManualTrade = async (symbol, action) => {
-    setIsExecuting(true)
-    try {
-      await api.post(`${API_BASE}/trades/manual`, {
-        symbol,
-        action,
-        volume: manualLot,
-        is_smart: isSmartMode,
-        risk_amount: isSmartMode ? riskAmount : null,
-        sl_price: isSmartMode && slPrice !== '' ? parseFloat(slPrice) : null,
-        tp_price: isSmartMode && tpPrice !== '' ? parseFloat(tpPrice) : null,
-        rr_ratio: isSmartMode ? rrRatio : null
-      })
-      addToast(`${isSmartMode ? 'Smart' : 'Market'} ${action} ${symbol} executed`, 'success')
-      fetchData()
-    } catch (err) { addToast('Error executing trade', 'error') }
-    finally { setIsExecuting(false) }
   }
 
   const fetchNews = async () => {
@@ -1394,58 +967,14 @@ function App() {
 
 
 
-            {/* Kill Switch Toggle */}
-
-
-
+            {/* Modo solo-monitorizacion: el motor de trading autonomo esta retirado (ver
+                PST_API/main.py, lifespan()), ya no hay AUTO/MANUAL que alternar. */}
             <div className="flex flex-col items-end mr-2">
-
-
-
-              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] leading-none mb-1.5">Trading Mode</span>
-
-
-
-              <button
-
-
-
-                onClick={toggleAutoTrading}
-
-
-
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all active:scale-95 ${isAutoTrading
-
-
-
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
-
-
-
-                  : 'bg-zinc-800 border-zinc-700 text-zinc-500'
-
-
-
-                  }`}
-
-
-
-              >
-
-
-
-                <div className={`w-1.5 h-1.5 rounded-full ${isAutoTrading ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'}`} />
-
-
-
-                <span className="text-[10px] font-black uppercase tracking-widest">{isAutoTrading ? 'Auto' : 'Manual'}</span>
-
-
-
-              </button>
-
-
-
+              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] leading-none mb-1.5">Modo</span>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-sky-500/10 border-sky-500/30 text-sky-400">
+                <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                <span className="text-[10px] font-black uppercase tracking-widest">Monitor</span>
+              </div>
             </div>
 
 
@@ -1538,7 +1067,7 @@ function App() {
 
 
 
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.6.13 SMC</span>
+                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.6.14 SMC</span>
 
 
 
@@ -1918,43 +1447,23 @@ function App() {
             <div
               className={`grid gap-4 w-full ${viewMode === 'nano' ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6'}`}
             >
-              {activeSymbols.length > 0 ? (isFocusMode ? [...activeSymbols].sort((a, b) => (b.score || 0) - (a.score || 0)) : activeSymbols).map(s => {
-                const hasSignal = s.signal_direction && s.signal_direction !== 'NONE';
-                const isBuy = s.signal_direction === 'BUY';
-                const isSell = s.signal_direction === 'SELL';
-
-
-
-
-
-
-
-                let colorBase = 'indigo';
-                let statusLabel = 'SCANNING';
-                let signalText = 'NO-SIGNAL';
-                const isBlocked = s.gate_failed || false;
-
-                if (hasSignal && !isBlocked) {
-                  colorBase = isBuy ? 'emerald' : 'rose';
-                  statusLabel = isBuy ? '🟢 BUY READY' : '🔴 SELL READY';
-                  signalText = isBuy ? 'BULLISH INTENT' : 'BEARISH INTENT';
-                } else if (isBlocked && s.score >= 70) {
-                  colorBase = 'amber';
-                  statusLabel = '⛔ BLOCKED: FILTERS';
-                } else if (s.score >= 70) {
-                  colorBase = 'amber';
-                  statusLabel = '🟡 PRE-SIGNAL';
-                }
-
-
-
+              {activeSymbols.length > 0 ? (isFocusMode ? [...activeSymbols].sort((a, b) => (b.open_positions || 0) - (a.open_positions || 0) || Math.abs(b.daily_pnl || 0) - Math.abs(a.daily_pnl || 0)) : activeSymbols).map(s => {
+                // Panel de solo monitorización (2026-09-02): ya no hay score/señal del motor
+                // retirado -- el estado real y util es si hay posiciones abiertas ahora mismo.
+                const openCount = s.open_positions || 0;
+                const hasOpenPosition = openCount > 0;
                 let isClosed = s.market_open === false;
+
+                let colorBase = 'zinc';
+                let statusLabel = '○ SIN POSICIONES';
+                if (hasOpenPosition) {
+                  colorBase = 'indigo';
+                  statusLabel = `● EN VIVO (${openCount})`;
+                }
                 if (isClosed) {
-                  statusLabel = '💤 CLOSED';
+                  statusLabel = '💤 MERCADO CERRADO';
                   colorBase = 'zinc';
                 }
-
-
 
                 const colorClass = `text-${colorBase}-500`;
                 const bgClass = `bg-${colorBase}-500`;
@@ -1974,7 +1483,7 @@ function App() {
                   heatGlow = 'bg-rose-500/5';
                 }
 
-                const glowClass = (hasSignal && !isClosed) ? `shadow-[0_0_40px_rgba(${isBuy ? '16,185,129' : '244,63,94'},0.15)]` : '';
+                const glowClass = (hasOpenPosition && !isClosed) ? 'shadow-[0_0_40px_rgba(99,102,241,0.15)]' : '';
                 const closedClass = isClosed ? 'opacity-40 grayscale-[0.8]' : 'opacity-100';
 
                 if (viewMode === 'nano') {
@@ -1990,7 +1499,7 @@ function App() {
                         </div>
                         <div>
                           <h3 className="text-white text-[11px] font-black uppercase tracking-widest leading-none">{s.symbol}</h3>
-                          <span className="text-[7px] font-bold text-zinc-500 tracking-tighter uppercase">{s.regime}</span>
+                          <span className="text-[7px] font-bold text-zinc-500 tracking-tighter uppercase">{(s.strategies || []).length} EA{(s.strategies || []).length === 1 ? '' : 's'}</span>
                         </div>
                       </div>
 
@@ -2004,7 +1513,7 @@ function App() {
                           </span>
                         </div>
                         <div className="h-6 w-20 flex-shrink-0">
-                          {s.sparkline && s.sparkline.length > 0 && <Sparkline data={s.sparkline} color={colorBase} />}
+                          {s.sparkline && s.sparkline.length > 0 && <Sparkline data={s.sparkline} color={(s.daily_change_pct || 0) >= 0 ? 'emerald' : 'rose'} />}
                         </div>
                         <div className="flex flex-col items-center min-w-[60px] border-l border-white/5 pl-4">
                           <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase tracking-tighter">Day PNL</span>
@@ -2017,41 +1526,9 @@ function App() {
                       <div className="flex items-center gap-2">
                         <div className="flex flex-col items-end mr-2">
                           <div className="flex items-center gap-1.5">
-                            {isBlocked && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" title="GATED" />}
-                            <span className={`text-[10px] font-black ${colorClass}`}>{Math.round(s.score)}%</span>
+                            {hasOpenPosition && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />}
+                            <span className={`text-[10px] font-black ${colorClass}`}>{openCount > 0 ? `${openCount} ABIERTA${openCount === 1 ? '' : 'S'}` : '--'}</span>
                           </div>
-                          <div className="flex gap-1 mt-0.5">
-                            {MODAL_STRATS.map(strat => {
-                              const score = s.factors_map?.[strat]?.score || 0;
-                              return (
-                                <div key={strat} className={`w-1.5 h-1.5 rounded-full ${score >= 70 ? 'bg-indigo-500' : 'bg-zinc-800'}`} title={`${strat}: ${Math.round(score)}%`} />
-                              );
-                            })}
-                          </div>
-                          <span className="text-[5px] font-black text-zinc-700 uppercase tracking-widest mt-1">
-                            {(() => {
-                              const factors = s.factors_map ? Object.entries(s.factors_map) : [];
-                              if (factors.length === 0) return s.active_strategy || "PST-AUTO";
-                              const best = factors.reduce((a, b) => (a[1].score > b[1].score ? a : b));
-                              return best[1].score > 0 ? best[0].replace("PST-", "").toUpperCase() : (s.active_strategy || "PST-AUTO");
-                            })()}
-                          </span>
-                        </div>
-                        <div className="flex gap-1.5">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleManualTrade(s.symbol, 'BUY') }}
-                            disabled={isClosed}
-                            className={`px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 text-emerald-400 text-[9px] font-black uppercase tracking-widest hover:bg-emerald-500/20 transition-all ${isClosed ? 'opacity-30' : ''}`}
-                          >
-                            BUY
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleManualTrade(s.symbol, 'SELL') }}
-                            disabled={isClosed}
-                            className={`px-3 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/5 text-rose-400 text-[9px] font-black uppercase tracking-widest hover:bg-rose-500/20 transition-all ${isClosed ? 'opacity-30' : ''}`}
-                          >
-                            SELL
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -2073,7 +1550,7 @@ function App() {
                         </div>
                         <div>
                           <h3 className="text-white text-sm font-black uppercase tracking-widest leading-none">{s.symbol}</h3>
-                          <span className="text-[8px] font-bold text-zinc-500 tracking-[0.2em]">{s.regime}</span>
+                          <span className="text-[8px] font-bold text-zinc-500 tracking-[0.2em]">{(s.strategies || []).length} EA{(s.strategies || []).length === 1 ? '' : 's'} configurada{(s.strategies || []).length === 1 ? '' : 's'}</span>
                         </div>
                       </div>
                       <div className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase border ${bgClass}/10 ${colorClass} ${borderClass} backdrop-blur-md`}>
@@ -2099,101 +1576,43 @@ function App() {
                         </div>
                       </div>
                       <div className="w-24 h-10">
-                        {s.sparkline && s.sparkline.length > 0 && <Sparkline data={s.sparkline} color={colorBase} />}
+                        {s.sparkline && s.sparkline.length > 0 && <Sparkline data={s.sparkline} color={(s.daily_change_pct || 0) >= 0 ? 'emerald' : 'rose'} />}
                       </div>
                     </div>
 
-                    {/* Telemetry Grid (Multi-Timeframe + Daily PnL) */}
-                    <div className="grid grid-cols-4 gap-2 bg-black/20 p-3 rounded-2xl border border-white/5 relative z-10">
-                      <div className="flex flex-col items-center justify-center border-r border-white/5 px-1 min-w-[65px]">
-                        <div className="flex flex-col items-center mb-1">
-                          <span className="text-[7px] font-black text-zinc-600 uppercase">PNL 24H</span>
-                          <span className={`text-[10px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
-                          </span>
-                        </div>
-                        <div className="flex flex-col items-center border-t border-white/5 pt-1 w-full">
-                          <span className="text-[7px] font-black text-zinc-600 uppercase">TOTAL PNL</span>
-                          <span className={`text-[11px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
-                          </span>
-                        </div>
-                      </div>
-                      {['M5', 'M15', 'H1'].map(tf => {
-                        const tel = s.telemetry?.[tf] || {};
-                        const rsi = tel.rsi;
-                        const adx = tel.adx;
-                        let rsiColor = 'text-zinc-500';
-                        if (rsi >= 70) rsiColor = 'text-rose-400';
-                        else if (rsi <= 30) rsiColor = 'text-emerald-400';
-                        else if (rsi) rsiColor = 'text-white';
-
-                        return (
-                          <div key={tf} className="flex flex-col items-center">
-                            <span className="text-[7px] font-black text-zinc-600 mb-1">{tf}</span>
-                            <div className="flex flex-col gap-0.5 items-center">
-                              <span className={`text-[10px] font-black ${rsiColor}`}>{rsi || '--'}</span>
-                              <span className="text-[7px] font-bold text-zinc-500">A:{adx || '--'}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Core Strategies Scores */}
-                    <div className="flex justify-between items-center gap-1.5 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      {MODAL_STRATS.map(strat => {
-                        const score = s.factors_map?.[strat]?.score || 0;
-                        const label = strat.replace("PST-", "").replace("MomentumPulse", "Pulse").replace("DivergenceReversion", "Diverg").toUpperCase();
-                        return (
-                          <div key={strat} className="flex flex-col items-center flex-1 border-r last:border-0 border-white/5">
-                            <span className="text-[7px] font-black text-zinc-600 mb-0.5">{label}</span>
-                            <span className={`text-[11px] font-black ${score >= 70 ? 'text-indigo-400' : 'text-zinc-500'}`}>{Math.round(score)}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Sentiment / Score Bar */}
-                    <div className="space-y-1.5 relative z-10 px-1">
-                      <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-widest text-zinc-500">
-                        <span>
-                          {(() => {
-                            const factors = s.factors_map ? Object.entries(s.factors_map) : [];
-                            if (factors.length === 0) return s.active_strategy || "PST-AUTO";
-                            const best = factors.reduce((a, b) => (a[1].score > b[1].score ? a : b));
-                            return best[1].score > 0 ? best[0].replace("PST-", "").toUpperCase() : (s.active_strategy || "PST-AUTO");
-                          })()}
+                    {/* PnL — el detalle RSI/ADX por timeframe vive en Live Detail (clic en la
+                        tarjeta), no aquí: pedirlo para las 12 tarjetas a la vez en cada sondeo
+                        de 3s sería caro y bloquearía el resto de la API (calculo sincrono). */}
+                    <div className="flex justify-around items-center gap-2 bg-black/20 p-3 rounded-2xl border border-white/5 relative z-10">
+                      <div className="flex flex-col items-center">
+                        <span className="text-[7px] font-black text-zinc-600 uppercase">PNL 24H</span>
+                        <span className={`text-[13px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                         </span>
-                        <div className="flex items-center gap-2">
-                          {isBlocked && <span className="text-amber-500 text-[7px] border border-amber-500/30 px-1 rounded">GATED</span>}
-                          <span className={`text-xs font-black ${colorClass}`}>{Math.round(s.score)}%</span>
-                        </div>
                       </div>
-                      <div className="h-1.5 w-full bg-zinc-800/50 rounded-full border border-white/5 overflow-hidden">
-                        <div
-                          className={`h-full ${bgClass} transition-all duration-1000 shadow-[0_0_10px] shadow-${colorBase}-500/50`}
-                          style={{ width: `${s.score}%` }}
-                        />
+                      <div className="flex flex-col items-center border-l border-white/5 pl-6">
+                        <span className="text-[7px] font-black text-zinc-600 uppercase">TOTAL PNL</span>
+                        <span className={`text-[13px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
+                        </span>
                       </div>
                     </div>
 
-                    {/* Quick Actions */}
-                    <div className="grid grid-cols-2 gap-3 relative z-10">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleManualTrade(s.symbol, 'BUY') }}
-                        disabled={isClosed}
-                        className={`py-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 text-emerald-400 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500/20 transition-all ${isClosed ? 'opacity-30' : ''}`}
-                      >
-                        BUY
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleManualTrade(s.symbol, 'SELL') }}
-                        disabled={isClosed}
-                        className={`py-2 rounded-xl border border-rose-500/30 bg-rose-500/5 text-rose-400 text-[10px] font-black uppercase tracking-widest hover:bg-rose-500/20 transition-all ${isClosed ? 'opacity-30' : ''}`}
-                      >
-                        SELL
-                      </button>
+                    {/* EAs configurados + Spread + Posiciones abiertas */}
+                    <div className="flex flex-col gap-2 px-3 py-2 bg-black/40 rounded-xl border border-white/5 relative z-10">
+                      <div className="flex flex-wrap gap-1">
+                        {(s.strategies && s.strategies.length > 0) ? s.strategies.map(name => (
+                          <span key={name} className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[7px] font-black uppercase tracking-wide">
+                            {name.replace('PST_', '')}
+                          </span>
+                        )) : <span className="text-[7px] font-bold text-zinc-600 uppercase italic">Sin EA asignado</span>}
+                      </div>
+                      <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-widest text-zinc-500 border-t border-white/5 pt-1.5">
+                        <span>Spread: <span className="text-zinc-300">{s.spread ? s.spread.toFixed(5) : '--'}</span></span>
+                        <span className={hasOpenPosition ? 'text-indigo-400' : 'text-zinc-600'}>
+                          {openCount} posición{openCount === 1 ? '' : 'es'} abierta{openCount === 1 ? '' : 's'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Decor Glow */}
@@ -3012,235 +2431,6 @@ function App() {
 
 
 
-              {/* Manual Execution Node */}
-
-
-
-              <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-4 shadow-2xl flex flex-col gap-4 flex-shrink-0">
-
-
-
-                {/* Smart Mode Toggle */}
-
-
-
-                <div className="flex items-center justify-between p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-xl">
-
-
-
-                  <div className="flex items-center gap-2">
-
-
-
-                    <div className={`p-1.5 rounded-lg transition-all ${isSmartMode ? 'bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.5)]' : 'bg-zinc-800 text-zinc-600'}`}>
-
-
-
-                      <ShieldCheck size={14} />
-
-
-
-                    </div>
-
-
-
-                    <div>
-
-
-
-                      <p className="text-[9px] font-black text-white uppercase tracking-widest leading-none italic">Smart Entry</p>
-
-
-
-                      <p className="text-[7px] font-bold text-zinc-500 uppercase tracking-tighter leading-none mt-0.5">Auto SL/TP & Risk</p>
-
-
-
-                    </div>
-
-
-
-                  </div>
-
-
-
-                  <button onClick={() => setIsSmartMode(!isSmartMode)} className={`w-10 h-5 rounded-full relative transition-all duration-500 ${isSmartMode ? 'bg-indigo-600' : 'bg-zinc-800'}`}>
-
-
-
-                    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all duration-500 ${isSmartMode ? 'right-0.5' : 'left-0.5'}`} />
-
-
-
-                  </button>
-
-
-
-                </div>
-                {/* Smart Risk Configuration (FASE 72) */}
-                <AnimatePresence>
-                  {isSmartMode && (
-                    <motion.div 
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden space-y-3"
-                    >
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Riesgo (€)</p>
-                          <div className="flex items-center gap-2">
-                            <Zap size={10} className="text-amber-500" />
-                            <input 
-                              type="number" 
-                              value={riskAmount} 
-                              onChange={(e) => setRiskAmount(Number(e.target.value))}
-                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-                          <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">RR Ratio</p>
-                          <div className="flex items-center gap-2">
-                            <Target size={10} className="text-indigo-400" />
-                            <input 
-                              type="number" 
-                              step="0.1"
-                              value={rrRatio} 
-                              onChange={(e) => setRrRatio(Number(e.target.value))}
-                              className="w-full bg-transparent text-sm font-black text-white italic outline-none border-none p-0"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5 p-2.5 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-                        <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Stop Loss Price (Optional)</p>
-                        <div className="flex items-center gap-2">
-                          <Shield size={10} className="text-rose-500" />
-                          <input 
-                            type="number" 
-                            step="0.00001"
-                            placeholder="Vacío = Estructural"
-                            value={slPrice} 
-                            onChange={(e) => setSlPrice(e.target.value)}
-                            className="w-full bg-transparent text-xs font-bold text-white outline-none border-none p-0 placeholder:text-zinc-700 placeholder:italic"
-                          />
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Volume Selector */}
-
-
-
-                <div className={`space-y-2 transition-all duration-500 ${isSmartMode ? 'opacity-30 grayscale pointer-events-none scale-95' : 'opacity-100'}`}>
-
-
-
-                  <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Volume (Lots)</span>
-
-
-
-                  <div className="flex items-center justify-between bg-zinc-900/40 p-2 border border-zinc-800 rounded-xl">
-
-
-
-                    <button onClick={() => setManualLot(Math.max(0.01, manualLot - 0.01))} className="p-1.5 hover:bg-zinc-800 rounded-lg transition-all text-zinc-400 active:scale-90"><ChevronDown size={16} /></button>
-
-
-
-                    <span className="text-xl font-black font-mono text-white italic">{manualLot.toFixed(2)}</span>
-
-
-
-                    <button onClick={() => setManualLot(manualLot + 0.01)} className="p-1.5 hover:bg-zinc-800 rounded-lg transition-all text-zinc-400 active:scale-90"><ChevronUp size={16} /></button>
-
-
-
-                  </div>
-
-
-
-                  <div className="grid grid-cols-4 gap-1.5">
-
-
-
-                    {[0.01, 0.1, 0.5, 1.0].map(v => (
-
-
-
-                      <button key={v} onClick={() => setManualLot(v)} className={`py-1.5 rounded-lg text-[9px] font-black border transition-all ${manualLot === v ? 'bg-indigo-500/20 border-indigo-500 text-indigo-400' : 'bg-zinc-900 border-zinc-800 text-zinc-600 hover:text-white'}`}>{v.toFixed(2)}</button>
-
-
-
-                    ))}
-
-
-
-                  </div>
-
-
-
-                </div>
-
-
-
-
-
-
-
-                {/* Premium Execution Buttons */}
-
-
-
-                <div className="space-y-2">
-
-
-
-                  <button disabled={isExecuting} onClick={() => handleManualTrade(selectedSymbol, 'BUY')} className={`w-full py-4 rounded-xl font-black tracking-[0.15em] transition-all flex items-center justify-center gap-2 active:scale-[0.97] disabled:opacity-60 group text-sm ${isSmartMode ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-[0_4px_20px_rgba(99,102,241,0.4)] hover:shadow-[0_4px_30px_rgba(99,102,241,0.6)] border border-indigo-500/50' : 'bg-gradient-to-r from-emerald-500 to-green-400 text-white shadow-[0_4px_20px_rgba(16,185,129,0.35)] hover:shadow-[0_4px_30px_rgba(16,185,129,0.55)] border border-emerald-400/50'}`}>
-
-
-
-                    {isExecuting ? <><RefreshCw size={14} className="animate-spin" /> EXECUTING...</> : <><TrendingUp size={14} className="group-hover:scale-110 transition-transform" /> {isSmartMode ? 'SMART BUY' : 'MARKET BUY'}</>}
-
-
-
-                  </button>
-
-
-
-                  <button disabled={isExecuting} onClick={() => handleManualTrade(selectedSymbol, 'SELL')} className={`w-full py-4 rounded-xl font-black tracking-[0.15em] transition-all flex items-center justify-center gap-2 active:scale-[0.97] disabled:opacity-60 group text-sm ${isSmartMode ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-[0_4px_20px_rgba(99,102,241,0.4)] hover:shadow-[0_4px_30px_rgba(99,102,241,0.6)] border border-indigo-500/50' : 'bg-gradient-to-r from-rose-600 to-red-500 text-white shadow-[0_4px_20px_rgba(244,63,94,0.35)] hover:shadow-[0_4px_30px_rgba(244,63,94,0.55)] border border-rose-500/50'}`}>
-
-
-
-                    {isExecuting ? <><RefreshCw size={14} className="animate-spin" /> EXECUTING...</> : <><TrendingDown size={14} className="group-hover:scale-110 transition-transform" /> {isSmartMode ? 'SMART SELL' : 'MARKET SELL'}</>}
-
-
-
-                  </button>
-
-
-
-                  <button disabled={isExecuting} onClick={handlePurgeSymbol} className="w-full py-2.5 bg-zinc-900 hover:bg-rose-950/50 text-zinc-500 hover:text-rose-400 border border-zinc-800 hover:border-rose-800/50 rounded-xl font-black text-[9px] tracking-[0.3em] transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50">
-
-
-
-                    <Trash2 size={12} /> PURGE {selectedSymbol}
-
-
-
-                  </button>
-
-
-
-                </div>
-
-
-
-              </div>
 
 
 
@@ -3442,314 +2632,68 @@ function App() {
 
 
           currentView === 'config' && (
-
-
-
             <div className="w-full px-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-
-
-
               {/* Header */}
-
-
-
               <div className="flex items-center gap-6 mb-8">
-
-
-
                 <div className="w-16 h-16 bg-indigo-500/10 rounded-[1.5rem] flex items-center justify-center border border-indigo-500/20 shadow-[0_0_40px_rgba(99,102,241,0.15)]">
-
-
-
                   <Settings className="text-indigo-500" size={32} />
-
-
-
                 </div>
-
-
-
                 <div>
-
-
-
-                  <h2 className="text-3xl font-black text-white tracking-widest uppercase italic leading-none">Matrix Editor</h2>
-
-
-
-                  <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-[0.35em] mt-1.5">Control total de parámetros por activo · Persistencia en tiempo real</p>
-
-
-
+                  <h2 className="text-3xl font-black text-white tracking-widest uppercase italic leading-none">Símbolos</h2>
+                  <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-[0.35em] mt-1.5">Activa o desactiva qué símbolos ver en el dashboard</p>
                 </div>
-
-
-
-                <div className="ml-auto flex items-center gap-2 px-4 py-2 bg-emerald-500/5 border border-emerald-500/15 rounded-full">
-
-
-
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-
-
-
-                  <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Live Sync</span>
-
-
-
-                </div>
-
-
-
               </div>
-
-
-
-
-
-
-
-              {/* Legend */}
-
-
-
-              <div className="flex gap-4 mb-6">
-
-
-
-                {[
-
-
-
-                  { label: 'Lot Size', desc: 'Volumen base del bot', color: 'indigo' },
-
-
-
-                  { label: 'SL/ATR', desc: 'Multiplicador de Stop Loss', color: 'rose' },
-
-
-
-                  { label: 'TP/ATR', desc: 'Multiplicador de Take Profit', color: 'emerald' },
-
-
-
-                  { label: 'Min Score', desc: 'Umbral de señal mínima', color: 'amber' },
-
-
-
-                ].map(l => (
-
-
-
-                  <div key={l.label} className={`flex items-center gap-2 px-3 py-1.5 bg-${l.color}-500/5 border border-${l.color}-500/20 rounded-xl`}>
-
-
-
-                    <div className={`w-2 h-2 bg-${l.color}-500 rounded-full`} />
-
-
-
-                    <div>
-
-
-
-                      <p className={`text-[9px] font-black text-${l.color}-400 uppercase tracking-widest leading-none`}>{l.label}</p>
-
-
-
-                      <p className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest">{l.desc}</p>
-
-
-
-                    </div>
-
-
-
-                  </div>
-
-
-
-                ))}
-
-
-
-              </div>
-
-
-
-
-
-
 
               {/* Symbol Cards Grid */}
-
-
-
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
-
-
-
-                {(matrixData.length > 0 ? matrixData : symbols).map(s => {
-                  const params = editingParams[s.symbol] || {
-                    lot_size: s.lot_size ?? 0.01,
-                    sl_mult: s.sl_mult ?? 2.5,
-                    tp_mult: s.tp_mult ?? 6.0,
-                    score_threshold: s.score_threshold && s.score_threshold >= 80 ? s.score_threshold : 80.0,
-                    risk_mode: s.risk_mode ?? 'LOTS',
-                    risk_value: s.risk_value ?? 0.01
-                  }
-
-                  const isSaving = savingSymbol === s.symbol
-                  // Asegurar que mostramos todas las estrategias globales si el mapa está vacío
-                  const symbolStrats = s.factors_map || {};
-
-                  // Mapeo de nombres limpios y estratégicos
-                  const STRAT_NAME_MAP = {
-                    "PST-RangeBreaker":        "Range Breaker",
-                    "PST-PrecisionScalping":   "Precision Scalp",
-                    "PST-MomentumPulse":       "Momentum Pulse",
-                    "PST-DivergenceReversion": "Divergence Reversion",
-                  };
-
-                  // Estrategias CORE activas — RangeBreaker/PrecisionScalping quedan
-                  // pausadas (ver PST_Core/config.py::ENABLED_STRATEGIES) mientras se
-                  // valida el sistema nuevo; se ocultan aquí para no confundir.
-                  const CORE_STRATS = ["PST-MomentumPulse", "PST-DivergenceReversion"];
-                  const knownStrategies = Array.from(new Set([
-                    ...strategies,
-                    ...matrixData.flatMap(m => Object.keys(m.factors_map || {})),
-                    ...symbols.flatMap(sym => Object.keys(sym.factors_map || {}))
-                  ]))
-                    .filter(st => CORE_STRATS.includes(st))
-                    .sort();
-
-                  const allStratNames = CORE_STRATS; // Forzamos a que siempre aparezcan estas dos
-
-                  return (
-                    <div
-                      key={s.symbol}
-                      onClick={() => setConfigModal(s.symbol)}
-                      className={`group bg-[#050505] border rounded-[1.5rem] p-4 flex flex-col gap-3 cursor-pointer transition-all duration-300 hover:border-indigo-500/60 hover:shadow-[0_0_30px_rgba(99,102,241,0.15)] ${s.is_active ? 'border-indigo-500/40' : 'border-zinc-800/40 opacity-60'}`}
-                    >
-                      {/* Header: símbolo + tipo + toggle rápido */}
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <Activity size={16} className={s.is_active ? 'text-indigo-400 animate-pulse' : 'text-zinc-600'} />
-                          <h3 className="text-base font-black text-white italic tracking-tighter">{s.symbol}</h3>
-                          {s.type ? <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest px-1.5 py-0.5 bg-white/5 rounded">{s.type}</span> : null}
-                        </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleSymbolStatus(s.symbol, s.is_active); }}
-                          className={`w-9 h-4.5 rounded-full relative transition-all ${s.is_active ? 'bg-indigo-600' : 'bg-zinc-800'}`}
-                        >
-                          <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${s.is_active ? 'right-0.5' : 'left-0.5'}`} />
-                        </button>
+                {symbols.map(s => (
+                  <div
+                    key={s.symbol}
+                    onClick={() => toggleSymbolStatus(s.symbol, s.is_active)}
+                    className={`group bg-[#050505] border rounded-[1.5rem] p-4 flex flex-col gap-3 cursor-pointer transition-all duration-300 hover:border-indigo-500/60 hover:shadow-[0_0_30px_rgba(99,102,241,0.15)] ${s.is_active ? 'border-indigo-500/40' : 'border-zinc-800/40 opacity-60'}`}
+                  >
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <Activity size={16} className={s.is_active ? 'text-indigo-400 animate-pulse' : 'text-zinc-600'} />
+                        <h3 className="text-base font-black text-white italic tracking-tighter">{s.symbol}</h3>
+                        {s.type ? <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest px-1.5 py-0.5 bg-white/5 rounded">{s.type}</span> : null}
                       </div>
-
-                      {/* Resumen por estrategia (solo lectura) */}
-                      <div className="flex flex-col gap-2">
-                        {allStratNames.map(strat => {
-                          const stratData = symbolStrats[strat] || {};
-                          // v2.6.7: antes, si is_active era 0 (deshabilitado a propósito, p.ej.
-                          // RangeBreaker en los símbolos nuevos sin edge) el fallback lo mostraba
-                          // "ON" igualmente para RangeBreaker. Ahora refleja el valor real de BBDD.
-                          const isEnabled = !!stratData.is_active;
-                          const displayName = STRAT_NAME_MAP[strat] || strat.replace("PST-", "").replace(/-/g, " ");
-                          let noiseMode = null;
-                          let vwapExitOff = false;
-                          // Para PrecisionScalping el umbral real de entrada es entry_threshold
-                          // (del filter_profile), no la columna score_threshold. Mostramos ese.
-                          let scoreVal = stratData.score_threshold ?? '—';
-                          if (strat === "PST-PrecisionScalping" && stratData.filter_profile) {
-                            try {
-                              const fp = JSON.parse(stratData.filter_profile);
-                              noiseMode = fp.noise_mode;
-                              vwapExitOff = String(fp.vwap_exit || 'on').toLowerCase() === 'off';
-                              scoreVal = fp.entry_threshold ?? '—';   // '—' = usa el default de la estrategia
-                            } catch { /* noop */ }
-                          }
-                          const stats = [
-                            { label: 'RISK', val: `${stratData.risk_value ?? '—'}${stratData.risk_mode === 'MONEY' ? '€' : stratData.risk_mode === 'PCT' ? '%' : ''}`, color: 'indigo' },
-                            { label: 'SL', val: stratData.sl_mult ?? '—', color: 'rose' },
-                            { label: 'TP', val: strat === 'PST-PrecisionScalping' ? 'TEC' : (stratData.tp_mult ?? '—'), color: 'emerald' },
-                            { label: 'SCORE', val: scoreVal, color: 'amber' },
-                            ...(noiseMode ? [{ label: 'NOISE', val: String(noiseMode).toUpperCase(), color: 'indigo' }] : []),
-                            ...(vwapExitOff ? [{ label: 'VWAP-EXIT', val: 'OFF', color: 'rose' }] : []),
-                          ];
-                          return (
-                            <div key={strat} className={`flex flex-col gap-1.5 p-2.5 rounded-xl border ${isEnabled ? 'bg-indigo-500/[0.06] border-indigo-500/25' : 'bg-transparent border-zinc-800/40 opacity-50'}`}>
-                              <div className="flex items-center justify-between">
-                                <span className={`text-[10px] font-black uppercase ${isEnabled ? 'text-white' : 'text-zinc-500'}`}>{displayName}</span>
-                                <span className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded-full ${isEnabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-zinc-800 text-zinc-600'}`}>{isEnabled ? 'ON' : 'OFF'}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                {stats.map(st => (
-                                  <div key={st.label} className="flex items-center gap-1 bg-black/30 px-1.5 py-1 rounded-md border border-white/5">
-                                    <span className="text-[7px] font-black text-zinc-600 uppercase">{st.label}</span>
-                                    <span className={`text-[10px] font-black text-${st.color}-400`}>{st.val}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Pie: abrir configuración */}
-                      <div className="mt-auto flex items-center justify-center gap-2 py-2 rounded-xl bg-white/[0.03] border border-white/5 text-zinc-500 group-hover:text-indigo-400 group-hover:border-indigo-500/20 transition-all">
-                        <Settings size={12} />
-                        <span className="text-[9px] font-black uppercase tracking-widest">Configurar</span>
-                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleSymbolStatus(s.symbol, s.is_active); }}
+                        className={`w-9 h-4.5 rounded-full relative transition-all ${s.is_active ? 'bg-indigo-600' : 'bg-zinc-800'}`}
+                      >
+                        <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${s.is_active ? 'right-0.5' : 'left-0.5'}`} />
+                      </button>
                     </div>
-                  )
-                })}
 
+                    {/* EAs configurados en MT5 para este símbolo (informativo, no editable aquí) */}
+                    <div className="flex flex-wrap gap-1">
+                      {(s.strategies && s.strategies.length > 0) ? s.strategies.map(name => (
+                        <span key={name} className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[8px] font-black uppercase tracking-wide">
+                          {name.replace('PST_', '')}
+                        </span>
+                      )) : <span className="text-[8px] font-bold text-zinc-600 uppercase italic">Sin EA asignado</span>}
+                    </div>
 
-
+                    <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-zinc-500 border-t border-white/5 pt-2 mt-auto">
+                      <span>Spread: <span className="text-zinc-300">{s.spread ? s.spread.toFixed(5) : '--'}</span></span>
+                      <span className={(s.open_positions || 0) > 0 ? 'text-indigo-400' : 'text-zinc-600'}>
+                        {s.open_positions || 0} abierta{(s.open_positions || 0) === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-
-
-
-
-
-
 
               {/* Footer Info */}
-
-
-
               <div className="mt-8 p-4 bg-zinc-900/30 border border-zinc-800/50 rounded-2xl flex items-start gap-3">
-
-
-
                 <div className="p-1.5 bg-indigo-500/10 rounded-lg mt-0.5"><Info size={14} className="text-indigo-400" /></div>
-
-
-
                 <div>
-
-
-
-                  <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Los cambios se aplican en el próximo ciclo del bot (~10s)</p>
-
-
-
-                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-wider mt-0.5">El orquestador lee `lot_size`, `sl_mult` y `tp_mult` antes de cada operación. `score_threshold` filtra señales de baja calidad.</p>
-
-
-
+                  <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Este toggle solo controla qué se muestra en el dashboard</p>
+                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-wider mt-0.5">Los 9 EAs MQL5 operan de forma independiente directamente en MT5 -- desactivar un símbolo aquí no los para ni los afecta, solo lo oculta de esta vista.</p>
                 </div>
-
-
-
               </div>
-
-
-
             </div>
-
-
-
           )
 
 
@@ -3757,11 +2701,10 @@ function App() {
         }
         {/* Mobile Bottom Nav */}
         <div className="md:hidden fixed bottom-0 left-0 w-full bg-[#050505]/90 backdrop-blur-xl border-t border-zinc-800 flex justify-between px-6 py-4 z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.8)]">
-          <NavItem icon={<LayoutGrid size={24} />} isActive={currentView === 'home'} onClick={() => setCurrentView('home')} />
-          <NavItem icon={<Terminal size={24} />} isActive={currentView === 'surveillance'} onClick={() => setCurrentView('surveillance')} />
-          <NavItem icon={<History size={24} />} isActive={currentView === 'history'} onClick={() => setCurrentView('history')} />
-          <NavItem icon={<Settings size={24} />} isActive={currentView === 'config'} onClick={() => setCurrentView('config')} />
-          <NavItem icon={<Target size={24} />} isActive={currentView === 'matrix'} onClick={() => setCurrentView('matrix')} />
+          <NavItem icon={<LayoutGrid size={24} />} active={currentView === 'home'} onClick={() => setCurrentView('home')} />
+          <NavItem icon={<Terminal size={24} />} active={currentView === 'surveillance'} onClick={() => setCurrentView('surveillance')} />
+          <NavItem icon={<History size={24} />} active={currentView === 'history'} onClick={() => setCurrentView('history')} />
+          <NavItem icon={<Settings size={24} />} active={currentView === 'config'} onClick={() => setCurrentView('config')} />
         </div>
 
 
@@ -3860,22 +2803,6 @@ function App() {
           )}
         </AnimatePresence>
 
-        {/* Config Modal (Fase 3) — configuración por símbolo del Matrix Editor */}
-        <AnimatePresence>
-          {configModal && (() => {
-            const symData = (matrixData.length > 0 ? matrixData : symbols).find(m => m.symbol === configModal)
-            if (!symData) return null
-            return (
-              <ConfigModal
-                symbol={configModal}
-                symData={symData}
-                onClose={() => setConfigModal(null)}
-                onSaved={fetchMatrix}
-                addToast={addToast}
-              />
-            )
-          })()}
-        </AnimatePresence>
 
       </main >
 

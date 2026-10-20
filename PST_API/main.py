@@ -91,18 +91,29 @@ async def lifespan(app: FastAPI):
     logger.info(f"✅ Sentinel v2.0.9: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
     if not mt5.initialize():
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
-    
-    # Iniciar motor de trading en segundo plano (Re-integración unificada)
-    try:
-        # Registrar el WSLogHandler en el logger root para capturar todo
-        logging.getLogger().addHandler(ws_handler)
 
-        from PST_Core.engine.orchestrator import start_v6
-        # Símbolos por defecto si no hay en la DB
-        default_symbols = ["US500.cash", "EU50.cash", "XAGUSD", "XAUUSD", "BTCUSD", "ETHUSD"]
-        asyncio.create_task(start_v6(default_symbols))
+    # Registrar el WSLogHandler en el logger root para capturar todo
+    logging.getLogger().addHandler(ws_handler)
+
+    # NOTA (2026-09-02): el motor de trading autónomo (orchestrator.start_v6) queda RETIRADO
+    # a propósito. El trading real ahora vive en 9 EAs MQL5 confirmados en MT5 (ver
+    # ../MT5/README.md); esta web pasa a ser un panel de solo monitorización. No basta con
+    # trading_mode='MANUAL' -- ese flag solo bloqueaba aperturas nuevas (antiguo
+    # orchestrator.py:669), pero global_trade_management() seguia enviando ordenes reales cada
+    # 10s sin mirarlo (trailing/breakeven/cierre de sesion/cierre de panico/reversal-close, ver
+    # executor.py). Retirar el arranque del motor es la unica forma de garantizar que esta web
+    # no pueda operar por su cuenta. Si algun dia se quiere reactivar el auto-trading, el codigo
+    # de orchestrator/executor sigue intacto, solo hay que volver a lanzar start_v6 aqui.
+
+    # Iniciar sincronizador continuo MT5 -> BBDD (posiciones abiertas + cierres), sustituye a
+    # sync_trades_task del motor retirado (que solo cubria historial cerrado cada 60s)
+    try:
+        from PST_Core.engine.mt5_sync import MT5PositionSync
+        position_sync = MT5PositionSync(db=db)
+        asyncio.create_task(position_sync.run())
+        logger.info("✅ [SYNC] Sincronizador de posiciones MT5 iniciado.")
     except Exception as e:
-        logger.error(f"Error starting trading engine: {e}")
+        logger.error(f"Error starting MT5 position sync: {e}")
 
     # Iniciar Agente Monitor en segundo plano
     try:
@@ -121,7 +132,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.13",
+    version="2.6.14",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -201,17 +212,13 @@ async def get_account():
     status = await portfolio.get_account_status()
     if not status:
         raise HTTPException(status_code=503, detail="Error fetching status from MT5")
-    
-    # --- Sincronización de historial con timestamps UNIX (v1.8.5) ---
-    import time as _time
-    _end_ts = int(_time.time()) + 86400 # Margen amplio para brokers adelantados
-    _start_ts = _end_ts - (3600 * 24 * 30) # Últimos 30 días para historial completo
-    try:
-        deals = mt5.history_deals_get(_start_ts, _end_ts)
-        if deals:
-            await db.sync_mt5_history(deals)
-    except Exception as e:
-        logger.error(f"⚠️ Error sincronizando historial en API: {e}")
+
+    # Nota (2026-09-02): la sincronización de historial de deals ya NO se dispara aquí en
+    # cada GET (este endpoint se sondea cada 3s desde el frontend) -- lo hace de forma
+    # centralizada MT5PositionSync (PST_Core/engine/mt5_sync.py, cada 15s). Llamarlo aquí
+    # también generaba una condición de carrera: dos sync_mt5_history() casi simultáneos
+    # (este + el de /api/symbols) podían insertar el mismo cierre dos veces antes de que
+    # el primero confirmara, dejando duplicados en `trades`.
 
     from datetime import datetime, time, timedelta
     today_start = datetime.combine(datetime.now().date(), time.min).strftime('%Y-%m-%d %H:%M:%S')
@@ -398,25 +405,38 @@ def calculate_symbol_telemetry(symbol: str) -> str:
     except:
         return "ERROR"
 
+SYMBOL_EA_NAMES = {
+    # Fuente de verdad: MT5/README.md (migrado desde PailsSentinelMT5TradeV2, 2026-09-02).
+    # Que EAs MQL5 reales estan configurados para operar cada simbolo -- puramente informativo,
+    # esta web ya no decide ni ejecuta nada de trading.
+    'EURGBP': ['PST_MeanReversion_EURGBP_BB'],
+    'AUDCAD': ['PST_MeanReversion_EURGBP_BB'],
+    'GBPAUD': ['PST_MeanReversion_EURGBP_BB'],
+    'GBPUSD': ['PST_MeanReversion_EURGBP_BB'],
+    'EURUSD': ['PST_LiquiditySweepFade_EURUSD_M5'],
+    'CADJPY': ['PST_IchimokuTrend_GER40_H1'],
+    'GER40.cash': ['PST_MacdMomentum_GER40_H1', 'PST_IchimokuTrend_GER40_H1'],
+    'UK100.cash': ['PST_VwapReversion_ADX'],
+    'JP225.cash': ['PST_MeanReversion_GapFill_D1'],
+    'AAPL': ['PST_RelativeStrength_H1', 'PST_DonchianVolumeBreakout_Stocks', 'PST_GapAndGo_AAPL_H1'],
+    'MSFT': ['PST_RelativeStrength_H1'],
+    'TSLA': ['PST_RelativeStrength_H1', 'PST_DonchianVolumeBreakout_Stocks'],
+}
+
+
 @app.get("/api/symbols", response_model=List[SymbolStatus], tags=["Config"])
 async def get_symbols():
-    """Obtiene la lista de símbolos y su telemetría de radar en vivo."""
+    """Lista de simbolos monitorizados con precio/PnL en vivo desde MT5 + BBDD.
+    Ya no calcula score/regimen/senal (venian del motor de trading autonomo, retirado
+    2026-09-02) -- panel de solo monitorizacion, ver PST_API/main.py lifespan()."""
     if not ensure_mt5_connected():
          raise HTTPException(status_code=503, detail="MetaTrader 5 not connected")
-         
-    # --- PROACTIVE SYNC v1.8.5: Asegurar que la DB tenga los cierres de hoy ---
-    try:
-        import time as _time
-        _end_ts = int(_time.time()) + 86400
-        _start_ts = _end_ts - (3600 * 24 * 30) # Últimos 30 días
-        deals = await asyncio.to_thread(mt5.history_deals_get, _start_ts, _end_ts)
-        if deals:
-            await db.sync_mt5_history(deals)
-    except Exception as e:
-        logger.error(f"⚠️ Error sync proactivo en get_symbols: {e}")
+
+    # Nota (2026-09-02): sync proactivo retirado de aquí (mismo motivo que /api/account) --
+    # MT5PositionSync ya lo hace de forma centralizada cada 15s, sin la condición de carrera
+    # de dos syncs casi simultáneos duplicando una fila.
 
     symbols_cfg = await db.get_all_symbols_config()
-    radar_data = await db.get_radar_data()
     today_realized_map = await db.get_today_profit_by_symbol()
     total_realized_map = await db.get_all_time_profit_by_symbol()
     profit_24h_map = await db.get_24h_profit_by_symbol()
@@ -428,33 +448,34 @@ async def get_symbols():
         s_base = s_up.split('.')[0]
         return m.get(s, m.get(s_up, m.get(s_base, 0.0)))
 
-    # Mapeo de P&L flotante (sólo posiciones ABIERTAS)
+    # Mapeo de P&L flotante y nº de posiciones abiertas (sólo posiciones ABIERTAS)
     positions = await asyncio.to_thread(mt5.positions_get)
     pnl_map = {}
+    open_count_map = {}
     if positions:
         for p in positions:
             sym_p = p.symbol.upper().strip()
             pnl_map[sym_p] = pnl_map.get(sym_p, 0.0) + p.profit
+            open_count_map[sym_p] = open_count_map.get(sym_p, 0) + 1
 
     results = []
     for s in symbols_cfg:
         sym = s['symbol']
-        radar = radar_data.get(sym, {})
-        
-        # Obtener precio actual y rendimiento diario
+
         tick = await asyncio.to_thread(mt5.symbol_info_tick, sym)
         price = tick.bid if tick else 0.0
-        
+
         import time
         market_open = True
         if tick and tick.time:
-            # Si el último tick fue hace más de 10 minutos (600 segundos), asume cerrado
             if (int(time.time()) - tick.time) > 600:
                 market_open = False
         else:
             market_open = False
-        
-        # Calcular cambio diario % (basado en la apertura de la vela D1 actual)
+
+        info = await asyncio.to_thread(mt5.symbol_info, sym)
+        spread_price = (info.spread * info.point) if info else 0.0
+
         daily_change = 0.0
         spark_data = []
         try:
@@ -464,129 +485,30 @@ async def get_symbols():
                 if open_price > 0:
                     daily_change = ((price - open_price) / open_price) * 100
 
-            # Sparkline: últimos 20 cierres M5
             m5_data = await asyncio.to_thread(mt5.copy_rates_from_pos, sym, mt5.TIMEFRAME_M5, 0, 20)
             if m5_data is not None:
                 spark_data = [float(x['close']) for x in m5_data]
         except:
             pass
 
-        # Procesar factores (compatibilidad lista vs dict)
-        raw_factors = radar.get('factors', [])
-        factors_list = []
-        factors_map = {}
-        
-        if isinstance(raw_factors, list):
-            factors_list = raw_factors
-        elif isinstance(raw_factors, dict):
-            # Nuevo formato: {"Strategy": {"factors": [...], "score": 85}}
-            strat_states = await db.get_symbol_strategies(sym)
-            
-            # Normalización para cruzar nombres técnicos vs descriptivos (ej: PSTEMAFlow vs PST-EMA-Flow)
-            def norm(n): return n.lower().replace("-","").replace("_","").strip()
-            norm_map = {norm(k): v for k, v in strat_states.items()}
-
-            for s_name_tech, s_data in raw_factors.items():
-                # Buscar en DB por nombre técnico, descriptivo o normalizado
-                db_cfg = strat_states.get(s_name_tech)
-                if not db_cfg:
-                    db_cfg = norm_map.get(norm(s_name_tech), {})
-                
-                is_strat_active = bool(db_cfg.get("is_active", 0))
-                
-                # Importación local para evitar NameError persistente
-                from PST_API.schemas import Factor
-                
-                # Extraemos la configuración real guardada en la base de datos para cada estrategia técnica.
-                s_risk_mode = db_cfg.get("risk_mode")
-                s_risk_value = db_cfg.get("risk_value")
-                s_sl_mult = db_cfg.get("sl_mult")
-                s_tp_mult = db_cfg.get("tp_mult")
-                s_use_breakeven = db_cfg.get("use_breakeven")
-                s_use_trailing = db_cfg.get("use_trailing")
-                s_be_mult = db_cfg.get("be_mult")
-                s_ts_mult = db_cfg.get("ts_mult")
-
-                if isinstance(s_data, dict) and "factors" in s_data:
-                    factors_map[s_name_tech] = StrategyBreakdown(
-                        score=s_data.get("score", 0.0),
-                        factors=[Factor(**f) if isinstance(f, dict) else f for f in s_data.get("factors", [])],
-                        is_active=is_strat_active,
-                        risk_mode=s_risk_mode,
-                        risk_value=s_risk_value,
-                        sl_mult=s_sl_mult,
-                        tp_mult=s_tp_mult,
-                        use_breakeven=s_use_breakeven,
-                        use_trailing=s_use_trailing,
-                        be_mult=s_be_mult,
-                        ts_mult=s_ts_mult
-                    )
-                else:
-                    # Formato antiguo
-                    factors_map[s_name_tech] = StrategyBreakdown(
-                        score=0.0,
-                        factors=s_data if isinstance(s_data, list) else [], # Original line
-                        is_active=is_strat_active,
-                        risk_mode=s_risk_mode,
-                        risk_value=s_risk_value,
-                        sl_mult=s_sl_mult,
-                        tp_mult=s_tp_mult,
-                        use_breakeven=s_use_breakeven,
-                        use_trailing=s_use_trailing,
-                        be_mult=s_be_mult,
-                        ts_mult=s_ts_mult
-                    )
-            
-            if factors_map:
-                active_strat = radar.get('active_strategy')
-                if active_strat in factors_map:
-                    factors_list = factors_map[active_strat].factors
-                else:
-                    factors_list = list(factors_map.values())[0].factors
-
-        # Calcular score global (máximo de las estrategias activas)
-        overall_score = radar.get('score', 0.0)
-        if factors_map:
-            active_scores = [v.score for k, v in factors_map.items() if v.is_active]
-            if active_scores:
-                overall_score = max(active_scores)
-            else:
-                # Si no hay activas, mostrar el máximo general pero con precaución
-                overall_score = max([v.score for v in factors_map.values()]) if factors_map else 0.0
-
-        floating_now = get_val_tolerant(pnl_map, sym)
-        today_realized = get_val_tolerant(today_realized_map, sym)
-        total_realized = get_val_tolerant(total_realized_map, sym)
-        
-        # PNL Mapping
-
-        # --- FIX: Forzar score 0 si el mercado está cerrado ---
-        if not market_open:
-            overall_score = 0.0
-
         results.append(SymbolStatus(
             symbol=sym,
-            is_active=bool(s['is_active']), # Restaurado filtrado por DB
+            is_active=bool(s['is_active']),
             market_open=market_open,
-            regime=radar.get('regime', 'UNKNOWN'),
-            score=overall_score,
-            signal_direction=radar.get('signal_direction', 'NONE'),
             price=price,
-            floating_pnl=floating_now,
-            daily_pnl=today_realized,
-            total_pnl=total_realized,
+            spread=spread_price,
+            open_positions=get_val_tolerant(open_count_map, sym) or 0,
+            floating_pnl=get_val_tolerant(pnl_map, sym),
+            daily_pnl=get_val_tolerant(today_realized_map, sym),
+            total_pnl=get_val_tolerant(total_realized_map, sym),
             profit_24h=get_val_tolerant(profit_24h_map, sym),
             daily_change_pct=daily_change,
             sparkline=spark_data,
-            factors=factors_list,
-            factors_map=factors_map,
-            telemetry=calculate_symbol_telemetry(sym),
-            active_strategy=radar.get("active_strategy", "PST-Auto")
+            strategies=SYMBOL_EA_NAMES.get(sym, []),
         ))
-    
-    # --- FIX: Ordenar resultados: 1. Abiertos primero, 2. Puntuación desc ---
-    results.sort(key=lambda x: (x.market_open, x.score), reverse=True)
-    
+
+    results.sort(key=lambda x: (not x.market_open, x.symbol))
+
     return results
 
 @app.get("/api/news/upcoming", tags=["News"])

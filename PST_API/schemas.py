@@ -63,6 +63,9 @@ class SymbolStatus(BaseModel):
     factors_map: Optional[Dict[str, StrategyBreakdown]] = {}
     telemetry: Optional[Dict] = {}
     active_strategy: Optional[str] = "PST-Auto"
+    spread: Optional[float] = 0.0
+    open_positions: Optional[int] = 0
+    strategies: Optional[List[str]] = []
 
 class OHLCBar(BaseModel):
     time: int

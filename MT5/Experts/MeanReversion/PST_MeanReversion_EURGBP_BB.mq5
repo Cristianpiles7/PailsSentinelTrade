@@ -178,11 +178,32 @@ void OnTick()
    double rsiRef = rsiBuf[1];
    double atrRef = atrBuf[1];
 
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(point <= 0)
+      return;
+
    bool hasPosition = HasOpenPosition();
 
    if(hasPosition)
      {
       long posType = PositionGetInteger(POSITION_TYPE);
+
+      // TP dinamico: la banda media se recalcula cada vela, asi que el TP
+      // "sigue" a la media movil en vez de quedar fijo en el precio de entrada.
+      double newTp = NormalizeDouble(midRef, digits);
+      double curTp = PositionGetDouble(POSITION_TP);
+      double curSl = PositionGetDouble(POSITION_SL);
+      if(MathAbs(newTp - curTp) >= point)
+        {
+         if(trade.PositionModify(_Symbol, curSl, newTp))
+            PST_Log(EA_Name, StringFormat("TP dinamico actualizado a %s (banda media).", DoubleToString(newTp, digits)));
+         else
+            PST_Log(EA_Name, "ERROR al actualizar TP dinamico: " + IntegerToString(trade.ResultRetcode()));
+        }
+
+      // Red de seguridad: si el broker no llego a ejecutar el TP (gap, spread)
+      // pero el cierre de la vela ya volvio a tocar la banda, cerramos igualmente.
       bool exitSignal = (posType == POSITION_TYPE_BUY  && closeSignal >= midRef) ||
                          (posType == POSITION_TYPE_SELL && closeSignal <= midRef);
       if(exitSignal)
@@ -222,11 +243,6 @@ void OnTick()
       if(widthAvg > 0)
          widthOk = (widthNow / widthAvg) <= InpMaxBandWidthRatio;
      }
-
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   if(point <= 0)
-      return;
 
    bool wantLong  = closeSignal <= lowerRef && rsiRef < InpRsiOversold && widthOk;
    bool wantShort = closeSignal >= upperRef && rsiRef > InpRsiOverbought && widthOk;

@@ -46,6 +46,34 @@ double PST_CalcLotByRisk(string symbol, double riskPercent, double slDistancePoi
    lots = MathFloor(lots / lotStep) * lotStep;
    lots = MathMax(lotMin, MathMin(lotMax, lots));
 
+   // Topar por margen disponible: con un SL muy ajustado, el riesgo en %
+   // puede pedir un lote que la cuenta no puede margar aunque el riesgo en
+   // dinero sea correcto. En vez de descartar la señal entera (dejando que
+   // PST_CheckMarginOk la bloquee despues), se reduce el lote al maximo que
+   // cabe en el margen libre, respetando el step del simbolo.
+   double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+   if(price <= 0)
+      price = SymbolInfoDouble(symbol, SYMBOL_BID);
+
+   double marginRequired = 0.0;
+   if(price > 0 && OrderCalcMargin(ORDER_TYPE_BUY, symbol, lots, price, marginRequired) && marginRequired > 0)
+     {
+      double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+      if(marginRequired > freeMargin)
+        {
+         double lotsFitMargin = MathFloor(lots * (freeMargin / marginRequired) / lotStep) * lotStep;
+         if(lotsFitMargin < lotMin)
+           {
+            Print("PST_CalcLotByRisk: margen insuficiente incluso para el lote minimo de ", symbol,
+                  " (calculado ", DoubleToString(lots, 2), " lotes). Se descarta la señal.");
+            return 0.0;
+           }
+         Print("PST_CalcLotByRisk: lote de ", symbol, " reducido de ", DoubleToString(lots, 2),
+               " a ", DoubleToString(lotsFitMargin, 2), " lotes por margen disponible.");
+         lots = lotsFitMargin;
+        }
+     }
+
    return NormalizeDouble(lots, 2);
   }
 

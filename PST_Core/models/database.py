@@ -44,12 +44,14 @@ class PSTDatabase:
                 if count == 0:
                     # Universo activo por defecto (is_active=1 por la columna). Debe coincidir con
                     # enabled_by_default de la siembra maestra para no dejar símbolos activos de más.
+                    # 2026-09-02: pivote a dashboard de solo monitorización -- estos son exactamente
+                    # los 12 símbolos que operan los 9 EAs MQL5 reales en produccion (ya no el
+                    # universo del motor de trading autonomo, retirado; ver ../../MT5/README.md).
                     default_symbols = [
-                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'),
-                        ('XAUUSD', 'COMMODITY'),
-                        ('BTCUSD', 'CRYPTO'), ('ETHUSD', 'CRYPTO'),
-                        ('US500.cash', 'INDEX'), ('EU50.cash', 'INDEX'),
-                        ('AAPL', 'STOCK')
+                        ('EURUSD', 'FOREX'), ('GBPUSD', 'FOREX'), ('EURGBP', 'FOREX'),
+                        ('AUDCAD', 'FOREX'), ('GBPAUD', 'FOREX'), ('CADJPY', 'FOREX'),
+                        ('GER40.cash', 'INDEX'), ('UK100.cash', 'INDEX'), ('JP225.cash', 'INDEX'),
+                        ('AAPL', 'STOCK'), ('MSFT', 'STOCK'), ('TSLA', 'STOCK'),
                     ]
                     await db.executemany("INSERT INTO symbols_config (symbol, type) VALUES (?, ?)", default_symbols)
 
@@ -299,68 +301,24 @@ class PSTDatabase:
                 # v2.6.6: 3ª tanda de acciones (juez fiel 20d, ver enabled_by_default abajo).
                 ('AVGO', 'STOCK'), ('BABA', 'STOCK'), ('GM', 'STOCK'), ('BRK.B', 'STOCK'),
                 ('NFLX', 'STOCK'), ('FDX', 'STOCK'), ('ASML', 'STOCK'), ('ARM', 'STOCK'),
+                # 2026-09-02: 3 pares que faltaban para cubrir los 12 símbolos de los 9 EAs
+                # MQL5 reales en producción (dashboard de solo monitorización, ver enabled_by_default).
+                ('CADJPY', 'FOREX'), ('AUDCAD', 'FOREX'), ('GBPAUD', 'FOREX'),
             ]
             
-            # Universo ACTIVO por defecto (whitelist). Solo estos arrancan operando; el resto
-            # queda desactivado hasta activarlo desde el Matrix Editor. Son los símbolos con
-            # perfil de scalping tuneado y validado en el harness fiel (entry_threshold 72).
-            # Universo re-validado a lookback 200 con el motor fiel YA consciente de COSTES
-            # reales (comisión del bróker + spread de salida) y con el SL/TP dimensionados
-            # como el executor (ATR de M5, no M1). A esa escala, con costes:
-            #   · EURUSD fuera: negativo tras comisión (−0.06R; forex clavado al suelo, fiable).
-            #   · NVDA fuera (negativo en 2 ventanas previas).
-            # ETHUSD reactivado (v2.6.2): con el guard de comisión cripto + entry_threshold
-            # 72→80 (juez fiel 20d, perfil real shippeado) pasa de −3.51R a +1.57R. Antes
-            # estaba fuera por perder −0.18R con el perfil viejo (threshold 72, sin guard).
-            # Expansión 2026-07-04: barrido COMPLETO del universo inactivo (22 símbolos) a
-            # lookback 200 con costes reales, en 2 ventanas independientes (15d y 30d;
-            # baselines en Tools/bt_baselines/scan200_*). Confirmados los 4 índices nuevos
-            # + MSFT (positivos en AMBAS ventanas); UK100 entra como EXPERIMENTAL (PF 1.19,
-            # el más fino). Todo lo demás quedó descartado por costes: cruces forex
-            # (−0.47..−1.04R), XAGUSD, petróleo, altcoins (comisión pct_notional) y el
-            # resto de acciones (GOOG/META/AMZN/TSLA negativas).
+            # Universo ACTIVO por defecto (whitelist). Solo estos arrancan mostrandose activos en
+            # el dashboard; el resto queda desactivado hasta activarlo desde el Matrix Editor.
+            # 2026-09-02: reemplaza la whitelist del motor de trading autonomo (retirado, ver
+            # PST_API/main.py lifespan()) -- ya NO es "que simbolos opera el bot", es "que
+            # simbolos monitorizamos". Son exactamente los 12 simbolos que operan los 9 EAs
+            # MQL5 reales en produccion (FTMO-Demo), ver ../../MT5/README.md para el detalle de
+            # cada estrategia/magic number:
             enabled_by_default = {
-                'GBPUSD',                     # FOREX (+0.20R con costes)
-                'XAUUSD',                     # COMMODITY (+0.24R con costes)
-                'BTCUSD',                     # CRYPTO (breakeven ~0.00R; vigilar)
-                'ETHUSD',                     # CRYPTO (v2.6.2: +1.57R@20d con guard+threshold80)
-                'US500.cash', 'EU50.cash',    # INDEX (+0.16 / +0.05R con costes)
-                'US100.cash',                 # INDEX (+0.29R@30d PF1.86 — el mejor del barrido)
-                'US30.cash',                  # INDEX (+0.20R@30d PF1.73 DD3.6R)
-                'GER40.cash',                 # INDEX (+0.19R@30d PF1.56; +0.46R@15d)
-                'UK100.cash',                 # INDEX EXPERIMENTAL (+0.07R@30d PF1.19 — vigilar)
-                'AAPL',                       # STOCK (+0.06R con costes; NVDA fuera)
-                'MSFT',                       # STOCK (+0.14R@30d PF1.47)
-                # v2.6.4: expansión de universo (juez fiel 20d, guard comisión + no-partial
-                # METAL + threshold shippeado ya activos). 4 índices nuevos, TODOS positivos:
-                'AUS200.cash',                # INDEX (+9.3R@20d avg_rr 1.14 wr 58.5%)
-                'FRA40.cash',                 # INDEX (+2.7R@20d avg_rr 1.09 wr 56.5%)
-                'HK50.cash',                  # INDEX (+7.7R@20d avg_rr 1.11 wr 60.0%)
-                'JP225.cash',                 # INDEX (+13.9R@20d avg_rr 0.90 wr 68.8%)
-                # 4 acciones ganadoras de 11 probadas (DIS/WMT/IBM/QCOM/PFE/JPM/CSCO
-                # negativas o casi neutras, quedan fuera):
-                'BA',                         # STOCK (+13.3R@20d avg_rr 1.97 wr 58.8%)
-                'XOM',                        # STOCK (+7.1R@20d avg_rr 1.91 wr 46.7%)
-                'AMD',                        # STOCK (+4.1R@20d avg_rr 1.84 wr 42.9%)
-                'KO',                         # STOCK (+3.0R@20d avg_rr 1.94 wr 40.9%)
-                # v2.6.5: 2ª tanda de acciones (6 ganadoras de 12 probadas; JNJ/NKE/SBUX/BAC
-                # negativas y SNOW/LMT marginales +1.2R quedan fuera, muestra pequeña):
-                'ZM',                         # STOCK (+7.9R@20d avg_rr 1.48 wr 53.8%)
-                'MCD',                        # STOCK (+6.7R@20d avg_rr 1.52 wr 53.3%)
-                'CVX',                        # STOCK (+6.2R@20d avg_rr 1.76 wr 50.0%)
-                'INTC',                       # STOCK (+4.9R@20d avg_rr 1.59 wr 50.0%)
-                'RTX',                        # STOCK (+4.8R@20d avg_rr 1.13 wr 66.7%, n=18 chico)
-                'PLTR',                       # STOCK (+2.2R@20d avg_rr 1.34 wr 46.7%)
-                # v2.6.6: 3ª tanda de acciones (8 ganadoras de 10 probadas; GME/AZN negativas
-                # quedan fuera):
-                'AVGO',                       # STOCK (+15.8R@20d avg_rr 1.83 wr 64.5%)
-                'BABA',                       # STOCK (+8.1R@20d avg_rr 2.20 wr 45.0%)
-                'GM',                         # STOCK (+5.1R@20d avg_rr 1.24 wr 52.5%)
-                'BRK.B',                      # STOCK (+4.5R@20d avg_rr 1.41 wr 55.0%)
-                'NFLX',                       # STOCK (+2.8R@20d avg_rr 2.16 wr 36.4%)
-                'FDX',                        # STOCK (+2.4R@20d avg_rr 1.22 wr 50.0%)
-                'ASML',                       # STOCK (+2.1R@20d avg_rr 1.66 wr 41.7%)
-                'ARM',                        # STOCK (+1.8R@20d avg_rr 1.37 wr 44.7%)
+                'EURUSD', 'CADJPY',                     # FOREX (H21, H45)
+                'GBPUSD', 'EURGBP', 'AUDCAD', 'GBPAUD',  # FOREX (H5)
+                'GER40.cash',                            # INDEX (H28b + H45)
+                'UK100.cash', 'JP225.cash',               # INDEX (H25, H12)
+                'AAPL', 'TSLA', 'MSFT',                   # STOCK (H20 + H41 en AAPL/TSLA, +H42 en AAPL)
             }
             
             # Fase 3: DEFAULTS ÓPTIMOS de PST-PrecisionScalping POR GRUPO de activo.
@@ -583,7 +541,7 @@ class PSTDatabase:
             # queremos que llegue a instalaciones ya existentes UNA vez. Guardado por un flag con
             # versión: se aplica una sola vez por versión; los toggles manuales POSTERIORES persisten.
             # Bumpear UNIVERSE_VERSION cada vez que cambie enabled_by_default.
-            UNIVERSE_VERSION = "2026-07-14-a"  # PrecisionScalping desactivado en ETHUSD (baseline negativo -0.220R) y JP225.cash/HK50.cash (pausa: brecha juez-vivo 1/12, -51€, pendiente pst_reconcile)
+            UNIVERSE_VERSION = "2026-09-02-a"  # Pivote a dashboard de solo monitorizacion: enabled_by_default pasa a ser los 12 simbolos de los 9 EAs MQL5 reales, ya no la whitelist del motor autonomo retirado
             async with db.execute("SELECT value FROM bot_config WHERE key='universe_migration_applied'") as cur:
                 _uni_row = await cur.fetchone()
             if not _uni_row or _uni_row[0] != UNIVERSE_VERSION:
@@ -1455,23 +1413,37 @@ class PSTDatabase:
                     # PASO 3: Trade externo/manual → Importar buscando su apertura para ser PRO
                     trade_type = "BUY" if d.type == 1 else "SELL" # El deal OUT tiene tipo opuesto a la posición
                     
-                    # Intentar buscar el deal de apertura (ENTRY_IN) para tener price_in y time_in reales
+                    # Intentar buscar el deal de apertura (ENTRY_IN) para tener price_in y time_in
+                    # reales, y su `comment` -- es el EA_Name que el EA MQL5 paso a trade.Buy/Sell,
+                    # literalmente el nombre guardado en MT5 (preferible al generico "AUTO_SYNC").
                     time_in_str = time_out_str
                     price_in = 0.0
-                    
+                    strategy_name = "AUTO_SYNC"
+
                     try:
                         import time as _time
                         # Buscamos deals de entrada para esta posición
                         # Ampliamos el rango a 30 días para la apertura
                         h_end = d.time + 10
                         h_start = d.time - (3600 * 24 * 30)
+                        # 2026-09-02: el argumento position=... de history_deals_get NO filtra de
+                        # verdad en este broker/build (devuelve TODOS los deals del rango,
+                        # cualquiera que sea el position_id pedido) -- se comprobo en vivo:
+                        # devolvia el deal de "Initial account balance" (position_id=0) como
+                        # apertura de posiciones reales distintas, contaminando price_in/time_in/
+                        # comment. Se filtra a mano por pd.position_id para no confiar en el
+                        # filtro del lado del servidor.
                         pos_deals = mt5.history_deals_get(h_start, h_end, position=d.position_id)
                         if pos_deals:
                             for pd in pos_deals:
+                                if pd.position_id != d.position_id:
+                                    continue
                                 if pd.entry == 0: # ENTRY_IN
                                     price_in = pd.price
                                     # Hora de pared del servidor, sin doble desplazamiento
                                     time_in_str = datetime.fromtimestamp(pd.time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                                    if getattr(pd, 'comment', ''):
+                                        strategy_name = pd.comment.strip()
                                     break
                     except:
                         pass # Fallback a time_out si falla la búsqueda
@@ -1479,7 +1451,7 @@ class PSTDatabase:
                     await db.execute("""
                         INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_in, time_out, ticket, strategy_name, is_partial_closed)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (d.symbol, trade_type, d.volume, price_in, d.price, float(total_pnl), time_in_str, time_out_str, d.ticket, "AUTO_SYNC", 0))
+                    """, (d.symbol, trade_type, d.volume, price_in, d.price, float(total_pnl), time_in_str, time_out_str, d.ticket, strategy_name, 0))
                     await db.commit()
                     count_imported += 1
                     logger.info(f"📥 [SYNC-EXT] Importado manual/externo: {d.symbol} (ID {d.position_id}) | PnL: {total_pnl:.2f}")
