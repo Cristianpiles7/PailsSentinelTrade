@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Salida de un agente de la flota PST",
+  "description": "Lo que un agente devuelve al runner. Se pasa a `claude -p --json-schema` para que la salida venga validada y pueda insertarse en la tabla proposals sin parsear prosa.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent", "summary", "proposals"],
+  "properties": {
+    "agent": {
+      "type": "string",
+      "description": "Nombre del agente que produjo esto, igual que en .claude/agents/"
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "Una o dos frases para el carrete de la UI. Qué encontraste, no qué hiciste."
+    },
+    "judge_live_caveat": {
+      "type": "string",
+      "description": "Obligatorio en la práctica si alguna propuesta trae judge_delta_eur: qué parte de la brecha juez-live conocida (comisión, swap, spread de salida, offset de reloj de 210 min) NO está contemplada en tus números."
+    },
+    "proposals": {
+      "type": "array",
+      "description": "Puede ir vacío. Un array vacío con un summary honesto es un resultado válido y preferible a inventarse una propuesta.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "target", "rationale", "evidence"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "disable_symbol",
+              "enable_symbol",
+              "adjust_param",
+              "new_hypothesis",
+              "retire_deployment",
+              "investigate"
+            ],
+            "description": "investigate = hallazgo que no propone cambio todavía, sólo pide mirar algo."
+          },
+          "target": {
+            "type": "string",
+            "description": "Símbolo, estrategia o id de despliegue (p.ej. 'ETHUSD', 'PST-RangeBreaker', 'H25')"
+          },
+          "current": {
+            "type": "object",
+            "description": "Estado actual. Necesario para poder revertir.",
+            "additionalProperties": true
+          },
+          "proposed": {
+            "type": "object",
+            "description": "Estado propuesto.",
+            "additionalProperties": true
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Datos reales que lo respaldan. Una propuesta sin evidencia se descarta.",
+            "additionalProperties": true,
+            "properties": {
+              "trades": { "type": "integer", "description": "Número de operaciones en que te basas" },
+              "window_days": { "type": "integer" },
+              "win_rate_pct": { "type": "number" },
+              "profit_eur": { "type": "number" },
+              "judge_run": { "type": "string", "description": "Lab y argumentos con que obtuviste el veredicto fiel" },
+              "source_tools": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Tools del MCP que usaste, para poder reproducir el análisis"
+              }
+            }
+          },
+          "judge_delta_eur": {
+            "type": "number",
+            "description": "Δ€ que predice el juez fiel. Omitir si no corriste el juez; NO estimarlo a ojo."
+          },
+          "rationale": {
+            "type": "string",
+            "maxLength": 600,
+            "description": "Por qué. Si la única razón es 'lo encontré probando', dilo: se descartará, y eso es correcto."
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["baja", "media", "alta"],
+            "description": "Baja con pocas operaciones o una sola ventana. Sé conservador: el proyecto ya tiene historial de barridos sin ganador robusto."
+          }
+        }
+      }
+    }
+  }
+}

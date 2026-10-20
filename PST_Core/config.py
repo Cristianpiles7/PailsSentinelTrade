@@ -18,14 +18,18 @@ def get_db_path():
             base_persist_dir, 
             os.getcwd()
         ]
+        # Estas trazas van a stderr y NO a stdout a proposito: PST_MCP/pst_server.py
+        # importa DB_PATH de aqui, y en un servidor MCP stdout es el transporte del
+        # protocolo JSON-RPC. Un print suelto corrompe el stream y el handshake falla
+        # con "Expecting value: line 1 column 1", que es exactamente lo que pasaba.
         for d in search_dirs:
             p = os.path.join(d, ".env")
             if os.path.exists(p):
-                print(f"DEBUG: Cargando .env desde {p}")
+                print(f"DEBUG: Cargando .env desde {p}", file=sys.stderr)
                 load_dotenv(p, override=True)
                 break
         else:
-            print("DEBUG: No se encontro archivo .env en las rutas buscadas.")
+            print("DEBUG: No se encontro archivo .env en las rutas buscadas.", file=sys.stderr)
             
     # Candidatos de ruta (v1.8.3 Autodiscovery)
     candidates = [

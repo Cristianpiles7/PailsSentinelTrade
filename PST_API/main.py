@@ -23,6 +23,7 @@ if project_root not in sys.path:
 from PST_Core.models.database import PSTDatabase
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_API.schemas import AccountStatus, Trade, SymbolStatus, APIResponse, OHLCBar, ConfigUpdate, ManualOrder, StrategyBreakdown, BotConfigUpdate, PerformanceMetrics, EquityPoint, StrategyPerformance, LoginRequest, RiskProfileRequest, TradeNoteUpdate
+from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_thread, ensure_habblaud_running, MIRROR_PORT
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
@@ -80,12 +81,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PST_API")
 
 load_dotenv() # Carga variables desde el archivo .env
-WEB_PASSWORD = os.getenv("WEB_PASSWORD", "PstAdmin01")
+
+# Sin valor por defecto a proposito. Antes habia uno hardcodeado aqui, y este repo es
+# PUBLICO: cualquiera podia leer la contrasena maestra del panel en GitHub, ademas de
+# quedar en el historico de varios commits. Ahora falla cerrado: si AUTH_ENABLED esta
+# activo y WEB_PASSWORD no esta definida en .env (que si esta en .gitignore), la app no
+# arranca en vez de caer en una credencial publica.
+WEB_PASSWORD = os.getenv("WEB_PASSWORD")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
+    # Falla cerrado antes de tocar nada: con autenticación activa y sin WEB_PASSWORD, el
+    # panel quedaría accesible con cualquier token (o con uno público, como antes).
+    if os.getenv("AUTH_ENABLED", "false").lower() != "false" and not WEB_PASSWORD:
+        raise RuntimeError(
+            "AUTH_ENABLED está activo pero WEB_PASSWORD no está definida. "
+            "Añade WEB_PASSWORD=<tu contraseña> al archivo .env (está en .gitignore) "
+            "o pon AUTH_ENABLED=false si quieres el panel sin autenticación."
+        )
     await db.initialize()
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
     logger.info(f"✅ Sentinel v2.0.9: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
@@ -156,8 +171,13 @@ async def auth_middleware(request: Request, call_next):
         if auth_enabled:
             token = request.headers.get("X-PST-Token")
             if not token or token != WEB_PASSWORD:
-                logger.warning(f"🔒 Intento de acceso bloqueado al endpoint {request.url.path}")
-                logger.warning(f"🔧 Recibido: '{token}', Esperado: '{WEB_PASSWORD}', Method: {request.method}")
+                # Nunca se registra la contrasena esperada ni el token recibido: estos logs
+                # van a PST_Startup.log / v2_sentinel_prime.log en disco, y escribir ahi el
+                # secreto en claro convertia cualquier log compartido en una filtracion.
+                logger.warning(
+                    "🔒 Intento de acceso bloqueado al endpoint %s (%s) — token %s",
+                    request.url.path, request.method, "ausente" if not token else "incorrecto",
+                )
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized. Invalid or missing X-PST-Token."})
     return await call_next(request)
 
@@ -1288,6 +1308,12 @@ else:
 
 react_dist_path = os.path.join(base_dir, "PST_Web", "dist")
 
+# Proxy JSON de habblaud. OJO AL ORDEN: tiene que registrarse ANTES del catch-all
+# `@app.get("/{full_path:path}")` de abajo, que devuelve 404 para todo lo que empiece por
+# "api/". Starlette casa rutas por orden de registro, asi que un GET declarado despues del
+# catch-all queda tapado (por eso /api/backtest/run, mas abajo, solo funciona al ser POST).
+app.include_router(habblaud_router)
+
 if os.path.isdir(react_dist_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_path, "assets")), name="assets")
 
@@ -1458,6 +1484,14 @@ def start_app():
     if not server_ready:
         print("El servidor falló al iniciar en el puerto", port)
         sys.exit(1)
+
+    # Espejo de habblaud (puerto propio, sin X-Frame-Options) para la pestaña Oficina.
+    # Best-effort: si habblaud no esta levantado, el espejo responde 503 y la pestaña lo
+    # pinta como "oficina apagada". Ver PST_API/habblaud_proxy.py.
+    # ensure_habblaud_running() solo hace algo con HABBLAUD_AUTOSTART=1; lo normal es
+    # gobernar habblaud a mano con Tools/habblaud.ps1.
+    ensure_habblaud_running()
+    start_mirror_in_thread()
 
     # Lanzar ventana nativa única apuntando al puerto dinámico
     webview.create_window(
