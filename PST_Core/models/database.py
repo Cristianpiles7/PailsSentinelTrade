@@ -222,7 +222,62 @@ class PSTDatabase:
                     source TEXT
                 )
             """)
-            
+
+            # ── FLOTA DE AGENTES (Fase 1 del plan, ver manual_docs/PLAN_AGENTES.md) ──
+            #
+            # Contabilidad de cada ejecucion de un agente de Claude Code. No es telemetria
+            # decorativa: con cuenta de suscripcion la cuota (ventana de 5h + tope semanal)
+            # se comparte con el trabajo interactivo del usuario, asi que saber lo que
+            # consumio cada pasada es lo que permite decidir que agentes caben esta noche.
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent TEXT NOT NULL,           -- reconciliador | juez | cazador | ...
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TIMESTAMP,
+                    status TEXT DEFAULT 'running', -- running | ok | error | timeout
+                    model TEXT,                    -- sonnet | opus | ...
+                    effort TEXT,                   -- low | medium | high
+                    cost_tokens INTEGER,           -- uso devuelto por --output-format json
+                    duration_s REAL,
+                    summary TEXT,                  -- una linea para el carrete de la UI
+                    artifacts_json TEXT,           -- rutas de salidas (JSON de propuestas, XML del Tester...)
+                    error TEXT
+                )
+            """)
+
+            # Propuestas de cambio que escriben los agentes. APPEND-ONLY: nada se aplica
+            # solo, y cada fila carga su evidencia y su delta en euros segun el juez fiel.
+            # Es lo que convierte "la IA sugirio X" en algo auditable, y la superficie
+            # legible por maquina contra la que los agentes proponen.
+            #
+            # El estado sigue una maquina estricta:
+            #   propuesta -> shadow -> aprobada -> viva -> revertida   (o rechazada)
+            # Ninguna transicion la hace un agente: las decide el usuario desde la bandeja.
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS proposals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_run_id INTEGER REFERENCES agent_runs(id),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    kind TEXT NOT NULL,            -- disable_symbol | adjust_param | new_hypothesis | ...
+                    target TEXT NOT NULL,          -- símbolo, estrategia o id de despliegue
+                    current_json TEXT,             -- estado actual, para poder revertir
+                    proposed_json TEXT,            -- estado propuesto
+                    evidence_json TEXT,            -- trades, corridas del juez, XML del Tester
+                    judge_delta_eur REAL,          -- Δ€ que predice el juez fiel
+                    rationale TEXT,                -- por que, en prosa, del agente
+                    state TEXT DEFAULT 'propuesta',
+                    decided_by TEXT,               -- 'usuario' o 'auto-revert'
+                    decided_at TIMESTAMP,
+                    applied_at TIMESTAMP,
+                    reverts_proposal_id INTEGER REFERENCES proposals(id)
+                )
+            """)
+            # El carrete de la UI y el scheduler nocturno leen siempre por estos dos ejes.
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_proposals_state ON proposals(state, created_at DESC)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent, started_at DESC)")
+
+
             # Migraciones Fase 34: Matrix Editor (columnas de parámetros por símbolo)
             for col, col_def in [
                 ("lot_size", "REAL DEFAULT 0.01"),
@@ -1460,3 +1515,107 @@ class PSTDatabase:
         except Exception as e:
             logger.error(f"❌ Error sync_mt5_history: {e}")
             return 0, closed_bot_trades
+
+    # ── FLOTA DE AGENTES (Fase 1, ver manual_docs/PLAN_AGENTES.md) ────────────
+
+    async def start_agent_run(self, agent: str, model: str = None, effort: str = None) -> int:
+        """Abre una ejecución de agente y devuelve su id, para colgarle las propuestas."""
+        async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            cur = await db.execute(
+                "INSERT INTO agent_runs (agent, model, effort, status) VALUES (?, ?, ?, 'running')",
+                (agent, model, effort),
+            )
+            await db.commit()
+            return cur.lastrowid
+
+    async def finish_agent_run(self, run_id: int, status: str, summary: str = None,
+                               cost_tokens: int = None, duration_s: float = None,
+                               artifacts_json: str = None, error: str = None):
+        """Cierra la ejecución. `status`: ok | error | timeout."""
+        async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            await db.execute("""
+                UPDATE agent_runs
+                   SET finished_at = CURRENT_TIMESTAMP, status = ?, summary = ?,
+                       cost_tokens = ?, duration_s = ?, artifacts_json = ?, error = ?
+                 WHERE id = ?
+            """, (status, summary, cost_tokens, duration_s, artifacts_json, error, run_id))
+            await db.commit()
+
+    async def add_proposal(self, agent_run_id: int, kind: str, target: str,
+                           current_json: str = None, proposed_json: str = None,
+                           evidence_json: str = None, judge_delta_eur: float = None,
+                           rationale: str = None) -> int:
+        """
+        Inserta una propuesta en estado 'propuesta'. Nunca se aplica nada aquí: el cambio
+        de estado lo decide el usuario desde la bandeja (ver decide_proposal).
+        """
+        async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            cur = await db.execute("""
+                INSERT INTO proposals (agent_run_id, kind, target, current_json, proposed_json,
+                                       evidence_json, judge_delta_eur, rationale, state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'propuesta')
+            """, (agent_run_id, kind, target, current_json, proposed_json,
+                  evidence_json, judge_delta_eur, rationale))
+            await db.commit()
+            return cur.lastrowid
+
+    # Transiciones permitidas. Se valida en código y no solo por convención porque esta
+    # tabla es el registro de auditoría de lo que la IA ha tocado: un salto no previsto
+    # (p.ej. de 'propuesta' directo a 'viva', saltándose la decisión) dejaría un cambio
+    # aplicado sin rastro de quién lo aprobó.
+    PROPOSAL_TRANSITIONS = {
+        "propuesta": {"shadow", "aprobada", "rechazada"},
+        "shadow":    {"aprobada", "rechazada"},
+        "aprobada":  {"viva", "rechazada"},
+        "viva":      {"revertida"},
+        "rechazada": set(),
+        "revertida": set(),
+    }
+
+    async def decide_proposal(self, proposal_id: int, new_state: str, decided_by: str = "usuario") -> bool:
+        """
+        Mueve una propuesta de estado validando la máquina. Devuelve False si la transición
+        no está permitida o la propuesta no existe (y no toca nada).
+        """
+        async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT state FROM proposals WHERE id = ?", (proposal_id,))
+            row = await cur.fetchone()
+            if not row:
+                logger.warning("[AGENTES] Propuesta %s no existe", proposal_id)
+                return False
+
+            current = row["state"]
+            if new_state not in self.PROPOSAL_TRANSITIONS.get(current, set()):
+                logger.warning("[AGENTES] Transición no permitida en propuesta %s: %s -> %s",
+                               proposal_id, current, new_state)
+                return False
+
+            applied = ", applied_at = CURRENT_TIMESTAMP" if new_state == "viva" else ""
+            await db.execute(
+                f"UPDATE proposals SET state = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP{applied} WHERE id = ?",
+                (new_state, decided_by, proposal_id),
+            )
+            await db.commit()
+            logger.info("[AGENTES] Propuesta %s: %s -> %s (%s)", proposal_id, current, new_state, decided_by)
+            return True
+
+    async def list_proposals(self, state: str = None, limit: int = 50) -> list:
+        """Propuestas más recientes primero, opcionalmente filtradas por estado."""
+        async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            db.row_factory = aiosqlite.Row
+            if state:
+                cur = await db.execute(
+                    "SELECT * FROM proposals WHERE state = ? ORDER BY created_at DESC LIMIT ?", (state, limit))
+            else:
+                cur = await db.execute(
+                    "SELECT * FROM proposals ORDER BY created_at DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def list_agent_runs(self, limit: int = 20) -> list:
+        """Últimas ejecuciones, para el carrete de la UI y el presupuesto de cuota."""
+        async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cur.fetchall()]
