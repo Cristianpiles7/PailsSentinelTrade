@@ -57,18 +57,44 @@ switch ($Action) {
         $accion  = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $cmd
         $trigger = New-ScheduledTaskTrigger -Daily -At $Hora
         # No despierta el equipo ni corre con bateria: la flota es util, no urgente.
+        # -AllowStartIfOnBatteries hace falta explicitamente: sin el, el valor por defecto
+        # es NO arrancar con bateria, y en un portatil la flota no correria nunca.
         $ajustes = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+                                                -AllowStartIfOnBatteries `
                                                 -DontStopIfGoingOnBatteries `
                                                 -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+
+        # LogonType S4U: la tarea corre aunque la sesion este bloqueada o cerrada, y SIN
+        # guardar la contrasena del usuario. Con el valor por defecto (Interactive) solo
+        # corre con la sesion iniciada, asi que una noche con el equipo bloqueado se
+        # perderia en silencio.
+        $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
 
         if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
             Write-Host "La tarea ya existia: se reemplaza." -ForegroundColor Yellow
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         }
 
-        Register-ScheduledTask -TaskName $TaskName -Action $accion -Trigger $trigger `
-                               -Settings $ajustes `
-                               -Description 'Flota de agentes PST: evalua puertas y presupuesto de cuota, y lanza los agentes que proceda.' | Out-Null
+        # S4U necesita elevacion. Si no la hay, se registra con el principal por defecto
+        # (Interactive) en vez de dejar al usuario SIN tarea: el script la desregistra antes
+        # de recrearla, asi que un fallo aqui sin repliegue borraria la programacion entera.
+        $desc = 'Flota de agentes PST: evalua puertas y presupuesto de cuota, y lanza los agentes que proceda.'
+        $registrada = $false
+        try {
+            Register-ScheduledTask -TaskName $TaskName -Action $accion -Trigger $trigger `
+                                   -Settings $ajustes -Principal $principal `
+                                   -Description $desc -ErrorAction Stop | Out-Null
+            $registrada = $true
+            Write-Host "Modo S4U: correra aunque la sesion este bloqueada o cerrada." -ForegroundColor Green
+        } catch {
+            Write-Host "Sin permisos para el modo S4U (hace falta ejecutar como administrador)." -ForegroundColor Yellow
+            Register-ScheduledTask -TaskName $TaskName -Action $accion -Trigger $trigger `
+                                   -Settings $ajustes -Description $desc | Out-Null
+            $registrada = $true
+            Write-Host "Registrada en modo Interactive: SOLO correra con tu sesion iniciada." -ForegroundColor Yellow
+            Write-Host "  Para que corra tambien con la sesion cerrada, relanza este script como administrador."
+        }
+        if (-not $registrada) { throw 'No se pudo registrar la tarea.' }
 
         Write-Host "Tarea '$TaskName' registrada para las $Hora cada dia." -ForegroundColor Green
         Write-Host "  python : $python"
