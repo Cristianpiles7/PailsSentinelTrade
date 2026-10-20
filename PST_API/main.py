@@ -24,6 +24,7 @@ from PST_Core.models.database import PSTDatabase
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_API.schemas import AccountStatus, Trade, SymbolStatus, APIResponse, OHLCBar, ConfigUpdate, ManualOrder, StrategyBreakdown, BotConfigUpdate, PerformanceMetrics, EquityPoint, StrategyPerformance, LoginRequest, RiskProfileRequest, TradeNoteUpdate
 from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_thread, ensure_habblaud_running, MIRROR_PORT
+from PST_API.agents_api import router as agents_router
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
@@ -1313,6 +1314,7 @@ react_dist_path = os.path.join(base_dir, "PST_Web", "dist")
 # "api/". Starlette casa rutas por orden de registro, asi que un GET declarado despues del
 # catch-all queda tapado (por eso /api/backtest/run, mas abajo, solo funciona al ser POST).
 app.include_router(habblaud_router)
+app.include_router(agents_router)
 
 if os.path.isdir(react_dist_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_path, "assets")), name="assets")

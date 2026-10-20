@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import { RefreshCw, ExternalLink, AlertTriangle } from 'lucide-react'
 import { AgentFleetWidget } from './ui/AgentFleetWidget'
+import { ProposalsTray } from './ui/ProposalsTray'
 
 /**
  * Pestaña Oficina: la vista pixel-art de habblaud dentro de PST, mas el widget de flota.
@@ -55,6 +56,10 @@ export function AgentsOffice() {
           )}
         </div>
       </div>
+
+      {/* La bandeja va ARRIBA de la oficina a proposito: es donde se toman las decisiones.
+          La vista pixel-art es contexto; esto es el trabajo. */}
+      <ProposalsTray />
 
       <div className="flex-1 min-h-[600px] bg-[#090909] border border-zinc-800/60 rounded-2xl overflow-hidden relative">
         {error && (
