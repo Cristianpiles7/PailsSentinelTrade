@@ -15,7 +15,23 @@ Brecha conocida entre juez y live, por orden de tamaño estimado:
   timeout de 30 min dispara a las 3h30 reales, y el VWAP-exit a las 3h02.
 - Histórico: en 24h reales el resultado fue −39 € contra +25 € esperados.
 
-## Procedimiento
+## PASO 0 — PUERTA DE SALIDA (hazlo SIEMPRE lo primero)
+
+Llama a `get_trading_stats` y mira `operaciones_cerradas`.
+
+**Si hay menos de 20 operaciones cerradas, PARA AHÍ.** Devuelve inmediatamente:
+
+```json
+{"agent": "reconciliador",
+ "summary": "Sólo N operaciones cerradas; no hay muestra para reconciliar nada.",
+ "proposals": []}
+```
+
+No sigas investigando, no corras labs, no leas ficheros. Una brecha estadística no existe
+con 3 operaciones, y gastar diez minutos de cuota para concluir que no hay datos es el peor
+resultado posible. Salir pronto y barato es un ÉXITO, no un fracaso.
+
+## Procedimiento (sólo si pasaste el Paso 0)
 
 1. `get_db_schema` antes de escribir cualquier `query_select`. No inventes columnas.
 2. `get_drawdown_report` y `read_trades` para el resultado **real** por símbolo.

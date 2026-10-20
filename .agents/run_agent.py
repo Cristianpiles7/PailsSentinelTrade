@@ -34,6 +34,16 @@ import sys
 import time
 from pathlib import Path
 
+# La consola de Windows usa cp1252: imprimir un resumen que traiga un signo menos
+# tipografico (U+2212), comillas angulares o un emoji revienta con UnicodeEncodeError. Y
+# como el print del resumen va ANTES de persistir, una pasada correcta se perdia entera por
+# un caracter. Mismo arreglo que ya hace PST_MASTER.py en su arranque.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AGENTS_DIR = REPO_ROOT / ".agents"
 SCHEMA = AGENTS_DIR / "schemas" / "proposal.json"
@@ -101,6 +111,14 @@ def build_command(agent: str, model: str, effort: str, prompt: str) -> list:
         "--effort", effort,
         "--output-format", "json",
         "--json-schema", SCHEMA.read_text(encoding="utf-8"),
+        # --mcp-config NO es opcional, aunque .mcp.json este en la raiz del proyecto: los
+        # servidores MCP de proyecto piden aprobacion la primera vez, y con
+        # --permission-prompts none esa aprobacion se DENIEGA sola. El agente arrancaba sin
+        # ninguna de sus tools y se quedaba dando vueltas hasta el timeout.
+        # Medido: sin esto, 900s y cero resultado; con esto, 8.7s y respuesta correcta.
+        # --strict-mcp-config ademas evita que herede servidores ajenos al proyecto.
+        "--mcp-config", str(REPO_ROOT / ".mcp.json"),
+        "--strict-mcp-config",
         "--allowedTools", ALLOWED_TOOLS.get(agent, "mcp__pst__*,Read"),
         # Nadie va a estar delante a las 3 de la manana: lo que pediria permiso se deniega
         # solo en vez de dejar la ejecucion colgada hasta el timeout.
@@ -227,7 +245,9 @@ def main():
     ap.add_argument("--model")
     ap.add_argument("--effort")
     ap.add_argument("--dry-run", action="store_true", help="No escribe en BBDD; deja el JSON en .agents/out")
-    ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--timeout", type=int, default=600,
+                    help="Tope de reloj. 600s es generoso: una pasada sana son segundos, "
+                         "y un agente que pasa de aqui esta dando vueltas, no pensando.")
     args = ap.parse_args()
 
     profile = PROFILES[args.agent]
