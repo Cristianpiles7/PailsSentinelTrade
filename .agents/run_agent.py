@@ -65,9 +65,38 @@ ALLOWED_TOOLS = {
 }
 
 
+def resolve_claude() -> str:
+    """
+    Ruta al ejecutable de Claude Code.
+
+    En Windows `claude` es un shim `.cmd` y subprocess sin shell NO lo puede lanzar: falla
+    con FileNotFoundError (y con un `.cmd` explicito, con EINVAL, por la mitigacion de
+    CVE-2024-27980 en Node). Hay que apuntar al .exe real. Si no aparece, se cae al nombre
+    pelado, que es lo correcto en Linux y macOS.
+    """
+    import shutil
+
+    if os.name == "nt":
+        candidatos = [
+            os.path.expandvars(r"%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\claude\claude.exe"),
+        ]
+        for c in candidatos:
+            if os.path.isfile(c):
+                return c
+        # Ultimo recurso: deducir el .exe a partir del shim que encuentre el PATH.
+        shim = shutil.which("claude")
+        if shim and shim.lower().endswith(".cmd"):
+            guess = os.path.join(os.path.dirname(shim), "node_modules", "@anthropic-ai",
+                                 "claude-code", "bin", "claude.exe")
+            if os.path.isfile(guess):
+                return guess
+    return shutil.which("claude") or "claude"
+
+
 def build_command(agent: str, model: str, effort: str, prompt: str) -> list:
     return [
-        "claude", "-p", prompt,
+        resolve_claude(), "-p", prompt,
         "--model", model,
         "--effort", effort,
         "--output-format", "json",
