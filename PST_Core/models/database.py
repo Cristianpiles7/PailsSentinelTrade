@@ -1592,11 +1592,21 @@ class PSTDatabase:
                 return False
 
             applied = ", applied_at = CURRENT_TIMESTAMP" if new_state == "viva" else ""
-            await db.execute(
-                f"UPDATE proposals SET state = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP{applied} WHERE id = ?",
-                (new_state, decided_by, proposal_id),
+            # El UPDATE lleva `AND state = ?` y se comprueba rowcount: entre el SELECT de
+            # arriba y este UPDATE hay una ventana en la que otra decision pudo mover la
+            # propuesta (dos pestañas de la bandeja, o aprobar y rechazar a la vez). Sin
+            # esta condicion ambas validarian contra el mismo estado leido y la ultima
+            # escritura ganaria, pudiendo pisar incluso un estado terminal.
+            cur = await db.execute(
+                f"UPDATE proposals SET state = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP{applied}"
+                f" WHERE id = ? AND state = ?",
+                (new_state, decided_by, proposal_id, current),
             )
             await db.commit()
+            if cur.rowcount == 0:
+                logger.warning("[AGENTES] Propuesta %s cambió de estado mientras se decidía; no se aplicó %s",
+                               proposal_id, new_state)
+                return False
             logger.info("[AGENTES] Propuesta %s: %s -> %s (%s)", proposal_id, current, new_state, decided_by)
             return True
 

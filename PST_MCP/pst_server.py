@@ -420,6 +420,20 @@ async def _tool_propose_change(args):
 
 
 async def _tool_sync_mt5_today(args):
+    """
+    ESCRIBE en la BBDD viva.
+
+    RIESGO LATENTE, hoy inactivo: `sync_mt5_history` cierra en BBDD los trades abiertos del
+    bot. La deteccion de cierre que dispara `cooldown_mgr.register_loss` y el aviso de
+    Telegram vive en orchestrator.py (~lineas 933-948) y depende de VER esa transicion.
+    Si un agente llama a esta tool antes que el sync del bot, la fila ya esta cerrada, el
+    bot no ve ninguna transicion, no hay register_loss y puede reentrar en el mismo simbolo
+    tras un SL. Es el mismo patron de la carrera de sync que ya costo un bug en su dia.
+
+    Hoy NO puede ocurrir porque el motor autonomo esta retirado (ver PST_API/main.py,
+    lifespan: start_v6 no se lanza) y `mt5_sync.py` no tiene logica de cooldown. **Si algun
+    dia se reactiva start_v6, hay que quitar esta tool o hacerla de solo lectura antes.**
+    """
     mt5 = _mt5()
     if not mt5 or not mt5.initialize():
         return {"error": "MT5 no disponible o desconectado"}

@@ -137,8 +137,31 @@ def _port_of(base_url: str) -> int:
 
 
 # ── Pieza 2: espejo para el iframe ───────────────────────────────────────────
+def _host_is_local(host: str | None) -> bool:
+    """¿El Host entrante es loopback? Sin puerto y en minusculas."""
+    if not host:
+        return False
+    name = host.rsplit(":", 1)[0].strip().lower().strip("[]")
+    return name == "localhost" or name.endswith(".localhost") or name == "::1" or name.startswith("127.")
+
+
 async def _mirror(request: Request) -> Response:
     """Reenvia cualquier peticion a habblaud quitando las cabeceras de framing."""
+    # GUARD ANTI-DNS-REBINDING. Imprescindible, y su ausencia era un agujero real:
+    # habblaud se protege del rebinding validando el Host entrante (guard.ts, hostAllowed),
+    # pero este espejo le manda SIEMPRE `Host: 127.0.0.1:4747`, asi que desde su punto de
+    # vista toda peticion es local y su guard queda anulado.
+    #
+    # Sin esta comprobacion: el usuario visita evil.example mientras PST corre; ese dominio
+    # resuelve primero a su IP real y, pasado el TTL, a 127.0.0.1. El navegador manda
+    # `Host: evil.example:4748`, el espejo lo traduce a loopback, y la pagina -ya
+    # same-origin con el espejo tras el rebinding, por lo que no necesita preflight- puede
+    # leer /api/snapshot y hacer POST contra la API de habblaud en la maquina que opera la
+    # cuenta. El guard lo corta en la puerta del espejo, que es donde habblaud ya no llega.
+    if not _host_is_local(request.headers.get("host")):
+        logger.warning("[HABBLAUD] Espejo: Host no loopback rechazado (%s)", request.headers.get("host"))
+        return Response(content=b"Forbidden", status_code=403, media_type="text/plain")
+
     path = request.url.path.lstrip("/")
     url = f"{HABBLAUD_URL}/{path}"
     if request.url.query:

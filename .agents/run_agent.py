@@ -140,24 +140,42 @@ async def persist(agent: str, model: str, effort: str, payload: dict,
     await db.initialize()
     run_id = await db.start_agent_run(agent, model=model, effort=effort)
 
+    # Todo lo que sigue va dentro de try/except: si add_proposal o finish_agent_run fallan a
+    # mitad (BBDD bloqueada mientras el bot escribe, un campo que se le escapó a validate),
+    # el run se quedaria en status='running' PARA SIEMPRE. Y eso no es solo un hueco de
+    # contabilidad: propose_change del MCP adopta "la ejecucion abierta mas reciente", asi
+    # que un run zombi se convierte en el padre de todas las propuestas posteriores.
     ids = []
-    for p in payload.get("proposals", []):
-        ids.append(await db.add_proposal(
-            agent_run_id=run_id,
-            kind=p["kind"],
-            target=p["target"],
-            current_json=json.dumps(p.get("current"), ensure_ascii=False) if p.get("current") else None,
-            proposed_json=json.dumps(p.get("proposed"), ensure_ascii=False) if p.get("proposed") else None,
-            evidence_json=json.dumps(p.get("evidence"), ensure_ascii=False),
-            judge_delta_eur=p.get("judge_delta_eur"),
-            rationale=p["rationale"],
-        ))
+    try:
+        for p in payload.get("proposals", []):
+            ids.append(await db.add_proposal(
+                agent_run_id=run_id,
+                kind=p["kind"],
+                target=p["target"],
+                current_json=json.dumps(p.get("current"), ensure_ascii=False) if p.get("current") else None,
+                proposed_json=json.dumps(p.get("proposed"), ensure_ascii=False) if p.get("proposed") else None,
+                evidence_json=json.dumps(p.get("evidence"), ensure_ascii=False),
+                judge_delta_eur=p.get("judge_delta_eur"),
+                rationale=p["rationale"],
+            ))
 
-    await db.finish_agent_run(
-        run_id, "ok", summary=payload.get("summary"), cost_tokens=tokens,
-        duration_s=round(duration, 1),
-        artifacts_json=json.dumps({"salida": str(out_file), "proposal_ids": ids}),
-    )
+        await db.finish_agent_run(
+            run_id, "ok", summary=payload.get("summary"), cost_tokens=tokens,
+            duration_s=round(duration, 1),
+            artifacts_json=json.dumps({"salida": str(out_file), "proposal_ids": ids}),
+        )
+    except Exception as e:  # noqa: BLE001 — cerrar el run importa mas que el tipo de fallo
+        try:
+            await db.finish_agent_run(
+                run_id, "error", summary=payload.get("summary"), cost_tokens=tokens,
+                duration_s=round(duration, 1), error=f"{type(e).__name__}: {e}"[:2000],
+                artifacts_json=json.dumps({"salida": str(out_file), "proposal_ids": ids}),
+            )
+        except Exception:
+            # Si ni siquiera se puede cerrar el run, al menos que no quede en silencio.
+            print(f"[{agent}] AVISO: el run #{run_id} queda abierto en agent_runs; ciérralo a mano")
+        raise
+
     return {"run_id": run_id, "proposal_ids": ids}
 
 
