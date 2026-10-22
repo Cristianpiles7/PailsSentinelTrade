@@ -219,6 +219,13 @@ def _desactivar(symbol, motivo, datos):
 
 
 def ciclo(mt5, reseleccion_permitida=False):
+    # Sin conexion, positions_get devuelve None y contaria 0 posiciones: desactivaria tambien los agentes
+    # con posicion abierta. Con el terminal caido no se rota nada.
+    ti = mt5.terminal_info()
+    if ti is None or not ti.connected:
+        raise RuntimeError("MT5 desconectado: no se rota")
+    if mt5.positions_get() is None:
+        raise RuntimeError(f"no se pueden leer las posiciones ({mt5.last_error()}): no se rota")
     e = _estado_dia()
     ref = mt5.symbol_info_tick(REF_BROKER)
     if ref is None:
