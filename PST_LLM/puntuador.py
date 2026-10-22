@@ -40,7 +40,8 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 NOMBRE = "Puntuador"                  # sala y directorio de trabajo propios (no es un agente de trading)
-REPO_ROOT = Path(__file__).resolve().parents[1]
+import rutas                                           # rutas de ejecucion: repo o exe (PST_LLM/rutas.py)
+REPO_ROOT = rutas.DATOS
 DATA_DIR = REPO_ROOT / ".agents" / "data"
 SALIDA = DATA_DIR / "puntuador.json"
 CONFIG_FILE = DATA_DIR / "puntuador_config.json"
@@ -252,7 +253,7 @@ def estado():
 # ---------------------------------------------------------------- ejecucion
 
 def _cuota_ok(cfg):
-    spec = importlib.util.spec_from_file_location("scheduler", REPO_ROOT / ".agents" / "scheduler.py")
+    spec = importlib.util.spec_from_file_location("scheduler", rutas.AGENTS_CODE_DIR / "scheduler.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     q = m.leer_cuota() or {}

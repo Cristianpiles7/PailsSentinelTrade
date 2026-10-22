@@ -43,7 +43,8 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-REPO_ROOT = Path(__file__).resolve().parents[1]     # este fichero vive en PST_LLM/, la raiz esta un nivel arriba
+import rutas                                           # rutas de ejecucion: repo o exe (PST_LLM/rutas.py)
+REPO_ROOT = rutas.DATOS
 DATA = REPO_ROOT / ".agents" / "data"
 DB_FILE = DATA / "llm_telegram.db"
 STOP_FILE = DATA / "llm_telegram.STOP"
@@ -51,7 +52,7 @@ REGISTRO = DATA / "llm_trader_flota.json"
 INICIAL = 10000.0                      # balance inicial de la cuenta (limites FTMO sobre este importe)
 LIMITE_DIA, LIMITE_TOTAL = 500.0, 1000.0
 
-_spec = importlib.util.spec_from_file_location("lt", Path(__file__).resolve().parent / "llm_trader.py")
+_spec = importlib.util.spec_from_file_location("lt", rutas.PST_LLM_DIR / "llm_trader.py")
 lt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lt)
 

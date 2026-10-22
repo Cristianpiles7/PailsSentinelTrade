@@ -47,6 +47,11 @@ jobs:
           --collect-all "PST_API" `
           --add-data "PST_Core/dashboard/templates;PST_Core/dashboard/templates" `
           --add-data "PST_Web/dist;PST_Web/dist" `
+          --add-data "PST_LLM;PST_LLM" `
+          --add-data "PST_Core;PST_Core" `
+          --add-data ".agents/run_agent.py;.agents" `
+          --add-data ".agents/scheduler.py;.agents" `
+          --paths "PST_LLM" `
           --hidden-import "pandas" `
           --hidden-import "pandas_ta" `
           --hidden-import "MetaTrader5" `

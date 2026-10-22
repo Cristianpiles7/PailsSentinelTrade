@@ -24,7 +24,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+import rutas                                           # rutas de ejecucion: repo o exe (PST_LLM/rutas.py)
+REPO_ROOT = rutas.DATOS
 DATA = REPO_ROOT / ".agents" / "data"
 CACHE = DATA / "calendario_ff.json"
 FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"

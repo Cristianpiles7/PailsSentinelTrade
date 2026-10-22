@@ -34,10 +34,11 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-REPO_ROOT = Path(__file__).resolve().parents[1]     # este fichero vive en PST_LLM/, la raiz esta un nivel arriba
+import rutas                                           # rutas de ejecucion: repo o exe (PST_LLM/rutas.py)
+REPO_ROOT = rutas.DATOS
 DATA = REPO_ROOT / ".agents" / "data"
 REGISTRO = DATA / "llm_trader_flota.json"
-SCRIPT = Path(__file__).resolve().parent / "llm_trader.py"
+SCRIPT = rutas.PST_LLM_DIR / "llm_trader.py"
 NOMBRE_DEFECTO = "Agente_LLM"      # el agente historico (BTC) conserva los nombres de fichero sin sufijo
 
 REGISTRO_INICIAL = [
@@ -76,7 +77,7 @@ def procesos_corriendo():
     return vivos
 
 
-REVISOR = Path(__file__).resolve().parent / "llm_revisor.py"
+REVISOR = rutas.PST_LLM_DIR / "llm_revisor.py"
 REVISOR_STOP = DATA / "llm_revisor.STOP"
 
 
@@ -87,7 +88,7 @@ def revisor_pid():
     return None
 
 
-BOT = Path(__file__).resolve().parent / "llm_telegram_bot.py"
+BOT = rutas.PST_LLM_DIR / "llm_telegram_bot.py"
 BOT_STOP = DATA / "llm_telegram.STOP"
 
 
@@ -106,7 +107,7 @@ def iniciar_bot():
     BOT_STOP.unlink(missing_ok=True)
     salida, error = open(DATA / "llm_telegram.log", "w", encoding="utf-8"), open(DATA / "llm_telegram.err", "w", encoding="utf-8")
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    p = subprocess.Popen([sys.executable, "-u", str(BOT)], cwd=str(REPO_ROOT), stdout=salida, stderr=error,
+    p = subprocess.Popen([rutas.python_exe(), "-u", str(BOT)], cwd=str(REPO_ROOT), stdout=salida, stderr=error,
                          stdin=subprocess.DEVNULL, creationflags=flags)
     print(f"  + Panel de Telegram arrancado, PID {p.pid}")
 
@@ -119,7 +120,7 @@ def iniciar_revisor():
     REVISOR_STOP.unlink(missing_ok=True)
     salida, error = open(DATA / "llm_revisor.log", "w", encoding="utf-8"), open(DATA / "llm_revisor.err", "w", encoding="utf-8")
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    p = subprocess.Popen([sys.executable, "-u", str(REVISOR)], cwd=str(REPO_ROOT), stdout=salida, stderr=error,
+    p = subprocess.Popen([rutas.python_exe(), "-u", str(REVISOR)], cwd=str(REPO_ROOT), stdout=salida, stderr=error,
                          stdin=subprocess.DEVNULL, creationflags=flags)
     print(f"  + Revisor de posiciones arrancado, PID {p.pid}")
 
@@ -143,7 +144,7 @@ def iniciar():
         if not f["config"].is_file():          # nunca se pisa una configuracion existente
             f["config"].write_text(json.dumps(config_por_defecto(a), indent=2), encoding="utf-8")
         f["stop"].unlink(missing_ok=True)
-        args = [sys.executable, "-u", str(SCRIPT)]
+        args = [rutas.python_exe(), "-u", str(SCRIPT)]
         if a["nombre"] != NOMBRE_DEFECTO:
             args += ["--nombre", a["nombre"]]
         args += ["--magic", str(a["magic"])]

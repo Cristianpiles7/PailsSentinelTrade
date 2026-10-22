@@ -50,7 +50,8 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-REPO_ROOT = Path(__file__).resolve().parents[1]     # este fichero vive en PST_LLM/, la raiz esta un nivel arriba
+import rutas                                           # rutas de ejecucion: repo o exe (PST_LLM/rutas.py)
+REPO_ROOT = rutas.DATOS
 DATA_DIR = REPO_ROOT / ".agents" / "data"
 DB_FILE = DATA_DIR / "llm_trader.db"
 STOP_FILE = DATA_DIR / "llm_trader.STOP"
@@ -411,14 +412,14 @@ def puerta(ind, hay_pos, sin_filtro):
 
 # ── Llamada al agente ────────────────────────────────────────────────────────
 def _resolve_claude():
-    spec = importlib.util.spec_from_file_location("run_agent", REPO_ROOT / ".agents" / "run_agent.py")
+    spec = importlib.util.spec_from_file_location("run_agent", rutas.AGENTS_CODE_DIR / "run_agent.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m.resolve_claude()
 
 
 def cuota_ok():
-    spec = importlib.util.spec_from_file_location("scheduler", REPO_ROOT / ".agents" / "scheduler.py")
+    spec = importlib.util.spec_from_file_location("scheduler", rutas.AGENTS_CODE_DIR / "scheduler.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     q = m.leer_cuota()

@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import registro                       # noqa: E402
 import universo                       # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+import rutas                                           # rutas de ejecucion: repo o exe (PST_LLM/rutas.py)
+REPO_ROOT = rutas.DATOS
 ESTADO = REPO_ROOT / ".agents" / "data" / "rotacion_estado.json"
 STOP = REPO_ROOT / ".agents" / "data" / "rotacion.STOP"     # crear este fichero para parar el bucle
 REF_BROKER = "BTCUSD"                 # cotiza 24/7: su ultimo tick marca la hora actual del broker

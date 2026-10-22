@@ -37,7 +37,10 @@ import logging
 from PST_Core.config import DB_PATH
 
 LLM_DIR = str(Path(__file__).resolve().parents[1] / "PST_LLM")
-PUNTUADOR_JSON = Path(__file__).resolve().parents[1] / ".agents" / "data" / "puntuador.json"
+if LLM_DIR not in sys.path:
+    sys.path.insert(0, LLM_DIR)
+import rutas  # noqa: E402  (PST_LLM/rutas.py: datos fuera de _MEIPASS en el exe)
+PUNTUADOR_JSON = rutas.AGENTS_DATA_DIR / "puntuador.json"
 
 # --- WEBSOCKET MANAGER (FASE 46) ---
 class ConnectionManager:
@@ -159,7 +162,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.16",
+    version="2.6.17",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )

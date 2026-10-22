@@ -20,13 +20,14 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+import rutas                                           # rutas de ejecucion: repo o exe (PST_LLM/rutas.py)
+REPO_ROOT = rutas.DATOS
 sys.path.insert(0, str(Path(__file__).resolve().parent))     # para importar universo y llm_trader_flota
 
 import universo                                               # noqa: E402
 
 DATA = REPO_ROOT / ".agents" / "data"
-SCRIPT = Path(__file__).resolve().parent / "llm_trader.py"
+SCRIPT = rutas.PST_LLM_DIR / "llm_trader.py"
 
 
 def _db_central_path():
@@ -182,7 +183,7 @@ def activar(symbol, live=False, origen="manual"):
         pid = vivos[nombre]
     else:
         f["stop"].unlink(missing_ok=True)
-        args = [sys.executable, "-u", str(SCRIPT), "--nombre", nombre, "--magic", str(s.magic)]
+        args = [rutas.python_exe(), "-u", str(SCRIPT), "--nombre", nombre, "--magic", str(s.magic)]
         salida, error = open(f["log"], "a", encoding="utf-8"), open(f["err"], "a", encoding="utf-8")
         flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         p = subprocess.Popen(args, cwd=str(REPO_ROOT), stdout=salida, stderr=error,
