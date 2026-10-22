@@ -56,9 +56,9 @@ function MetricCard({ icon: Icon, label, value, sub, color = 'text-white', borde
         <div className={`bg-[#0d0d0d] border ${border} rounded-2xl p-5 flex flex-col gap-1.5`}>
             <div className="flex items-center gap-2 text-zinc-500">
                 <Icon size={14} />
-                <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
+                <span className="text-xs font-bold uppercase tracking-widest">{label}</span>
             </div>
-            <span className={`text-2xl font-black ${color} leading-none`}>{value}</span>
+            <span className={`text-2xl font-bold ${color} leading-none`}>{value}</span>
             {sub && <span className="text-[11px] text-zinc-600 font-medium">{sub}</span>}
         </div>
     );
@@ -71,7 +71,7 @@ const CustomTooltip = ({ active, payload }) => {
     return (
         <div className="bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-xs shadow-2xl">
             <div className="text-zinc-400 mb-1">Trade #{d.trade} — {d.entry_time}</div>
-            <div className={`font-black text-base ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
+            <div className={`font-bold text-base ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {isPos ? '+' : ''}{d.equity_r.toFixed(2)}R acumulado
             </div>
             <div className={`text-[11px] mt-1 font-bold ${d.result === 'WIN' ? 'text-emerald-500' : 'text-rose-500'}`}>
@@ -162,15 +162,6 @@ export function StrategyLab({ symbols }) {
 
             {/* ── Header ── */}
             <div className="flex items-center justify-between shrink-0">
-                <div>
-                    <h2 className="text-2xl font-black text-white tracking-tight uppercase flex items-center gap-2.5">
-                        <FlaskConical className="text-indigo-500" size={22} />
-                        Strategy <span className="text-indigo-400">Lab</span>
-                    </h2>
-                    <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em] mt-0.5">
-                        Backtesting con datos reales de MT5
-                    </p>
-                </div>
                 {results && (
                     <div className="hidden sm:flex items-center gap-2 text-[11px] font-bold text-zinc-500 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2">
                         <Clock size={12} />
@@ -186,7 +177,7 @@ export function StrategyLab({ symbols }) {
 
                     {/* Selector de estrategia */}
                     <div className="bg-[#0d0d0d] border border-zinc-800 rounded-2xl p-4 flex flex-col gap-3">
-                        <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">Motor</span>
+                        <span className="text-xs font-bold uppercase tracking-[0.3em] text-zinc-500">Motor</span>
                         {STRATEGIES.map(st => {
                             const isSelected = selectedStrategy.id === st.id;
                             const Icon = st.icon;
@@ -208,10 +199,10 @@ export function StrategyLab({ symbols }) {
                                         <Icon size={15} style={{ color: isSelected ? st.color : '#52525b' }} />
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <div className={`text-xs font-black ${isSelected ? 'text-white' : 'text-zinc-400'}`}>
+                                        <div className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-zinc-400'}`}>
                                             {st.label}
                                         </div>
-                                        <div className="text-[10px] text-zinc-600 truncate">{st.desc}</div>
+                                        <div className="text-xs text-zinc-600 truncate">{st.desc}</div>
                                     </div>
                                     {isSelected && <ChevronRight size={14} style={{ color: st.color }} />}
                                 </button>
@@ -221,10 +212,10 @@ export function StrategyLab({ symbols }) {
 
                     {/* Parámetros */}
                     <div className="bg-[#0d0d0d] border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4">
-                        <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">Parámetros</span>
+                        <span className="text-xs font-bold uppercase tracking-[0.3em] text-zinc-500">Parámetros</span>
 
                         <div className="flex flex-col gap-1.5">
-                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Activo</label>
+                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Activo</label>
                             <select
                                 value={config.symbol}
                                 onChange={e => setConfig({ ...config, symbol: e.target.value })}
@@ -236,7 +227,7 @@ export function StrategyLab({ symbols }) {
 
                         <div className="grid grid-cols-2 gap-3">
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">TF Ref.</label>
+                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">TF Ref.</label>
                                 <select
                                     value={config.timeframe}
                                     onChange={e => setConfig({ ...config, timeframe: e.target.value })}
@@ -246,7 +237,7 @@ export function StrategyLab({ symbols }) {
                                 </select>
                             </div>
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Período</label>
+                                <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Período</label>
                                 <select
                                     value={config.days}
                                     onChange={e => setConfig({ ...config, days: parseInt(e.target.value) })}
@@ -262,7 +253,7 @@ export function StrategyLab({ symbols }) {
                     <button
                         onClick={handleRun}
                         disabled={isRunning}
-                        className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-sm flex items-center justify-center gap-2.5 transition-all shadow-xl ${
+                        className={`w-full py-4 rounded-2xl font-bold uppercase tracking-widest text-sm flex items-center justify-center gap-2.5 transition-all shadow-xl ${
                             isRunning
                                 ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
                                 : 'text-white shadow-indigo-500/20 hover:shadow-indigo-500/40 hover:scale-[1.02]'
@@ -348,17 +339,17 @@ export function StrategyLab({ symbols }) {
                                 <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs">
                                     <CheckCircle2 size={13} className="text-emerald-500" />
                                     <span className="text-zinc-400">Avg win</span>
-                                    <span className="font-black text-emerald-400">+{results.avg_win_r}R</span>
+                                    <span className="font-bold text-emerald-400">+{results.avg_win_r}R</span>
                                 </div>
                                 <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs">
                                     <XCircle size={13} className="text-rose-500" />
                                     <span className="text-zinc-400">Avg loss</span>
-                                    <span className="font-black text-rose-400">{results.avg_loss_r}R</span>
+                                    <span className="font-bold text-rose-400">{results.avg_loss_r}R</span>
                                 </div>
                                 <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs">
                                     <Activity size={13} className="text-indigo-400" />
                                     <span className="text-zinc-400">Sharpe Ratio</span>
-                                    <span className="font-black text-indigo-400">{results.sharpe}</span>
+                                    <span className="font-bold text-indigo-400">{results.sharpe}</span>
                                 </div>
                                 <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs">
                                     <Clock size={13} className="text-zinc-500" />
@@ -369,11 +360,11 @@ export function StrategyLab({ symbols }) {
                             {/* Equity Curve */}
                             <div className="flex-1 bg-[#0d0d0d] border border-zinc-800 rounded-2xl p-5 flex flex-col min-h-[240px]">
                                 <div className="flex items-center justify-between mb-4 shrink-0">
-                                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">
+                                    <span className="text-xs font-bold uppercase tracking-[0.3em] text-zinc-500">
                                         Equity Curve (R acumulado)
                                     </span>
                                     <div
-                                        className="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-lg"
+                                        className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-lg"
                                         style={{
                                             backgroundColor: selectedStrategy.color + '20',
                                             color: selectedStrategy.color
@@ -451,7 +442,7 @@ export function StrategyLab({ symbols }) {
                                 />
                             </div>
                             <div className="text-center">
-                                <p className="text-sm font-black text-white">{loadingStep}</p>
+                                <p className="text-sm font-bold text-white">{loadingStep}</p>
                                 <p className="text-xs text-zinc-600 mt-1">
                                     {selectedStrategy.label} · {config.symbol} · {config.days} días
                                 </p>

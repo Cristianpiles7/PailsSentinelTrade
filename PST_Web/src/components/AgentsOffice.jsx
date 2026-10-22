@@ -29,16 +29,17 @@ export function AgentsOffice() {
   }, [])
 
   return (
-    <div className="flex flex-col gap-4 h-full">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 max-w-md">
+    <div className="flex flex-col gap-2 h-full">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 items-start">
+        <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 max-w-sm">
           <AgentFleetWidget />
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => setReloadKey(k => k + 1)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-300 transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-300 transition-all"
             title="Recargar la oficina"
           >
             <RefreshCw size={14} /> Recargar
@@ -48,24 +49,25 @@ export function AgentsOffice() {
               href={mirrorUrl}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-cyan-400 transition-all"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-cyan-400 transition-all"
               title="Abrir en el navegador"
             >
               <ExternalLink size={14} /> Navegador
             </a>
           )}
         </div>
-      </div>
+        </div>
 
-      {/* La bandeja va ARRIBA de la oficina a proposito: es donde se toman las decisiones.
-          La vista pixel-art es contexto; esto es el trabajo. */}
-      <ProposalsTray />
+        {/* La bandeja va ARRIBA de la oficina a proposito: es donde se toman las decisiones.
+            La vista pixel-art es contexto; esto es el trabajo. */}
+        <ProposalsTray />
+      </div>
 
       <div className="flex-1 min-h-[600px] bg-[#090909] border border-zinc-800/60 rounded-2xl overflow-hidden relative">
         {error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-zinc-500">
             <AlertTriangle size={32} className="text-amber-500" />
-            <p className="text-[10px] font-black uppercase tracking-widest">{error}</p>
+            <p className="text-xs font-bold uppercase tracking-widest">{error}</p>
           </div>
         )}
         {!error && mirrorUrl && (

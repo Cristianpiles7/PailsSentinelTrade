@@ -26,13 +26,13 @@ const ESTADO_COLOR = {
 function Evidencia({ json }) {
   if (!json) return null
   let datos
-  try { datos = JSON.parse(json) } catch { return <p className="text-[10px] font-mono text-zinc-600">{json}</p> }
+  try { datos = JSON.parse(json) } catch { return <p className="text-xs font-mono text-zinc-600">{json}</p> }
   const filas = Object.entries(datos).filter(([, v]) => v !== null && v !== undefined)
   if (!filas.length) return null
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
       {filas.map(([k, v]) => (
-        <span key={k} className="text-[10px] font-mono text-zinc-500">
+        <span key={k} className="text-xs font-mono text-zinc-500">
           <span className="text-zinc-600">{k}:</span>{' '}
           <span className="text-zinc-300">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
         </span>
@@ -80,15 +80,15 @@ export function ProposalsTray({ pollMs = 20000 }) {
   }
 
   return (
-    <div className="bg-[#090909] border border-zinc-800/60 rounded-2xl p-5">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-[#090909] border border-zinc-800/60 rounded-2xl p-3">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           <div className="p-1.5 rounded-lg border text-amber-400 bg-amber-500/10 border-amber-500/20">
             <Inbox size={18} />
           </div>
           <div>
-            <p className="text-[7px] font-black text-zinc-500 uppercase tracking-widest">Bandeja de propuestas</p>
-            <p className="text-sm font-black italic tracking-tighter text-white">
+            <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Bandeja de propuestas</p>
+            <p className="text-sm font-bold  tracking-tighter text-white">
               {cargando ? '...' : `${props.length} ${soloPendientes ? 'pendiente(s)' : 'en total'}`}
             </p>
           </div>
@@ -96,7 +96,7 @@ export function ProposalsTray({ pollMs = 20000 }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSoloPendientes(v => !v)}
-            className="px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-300 transition-all"
+            className="px-3 py-1.5 rounded-xl text-[11px] font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-300 transition-all"
           >
             {soloPendientes ? 'Ver todas' : 'Sólo pendientes'}
           </button>
@@ -107,30 +107,30 @@ export function ProposalsTray({ pollMs = 20000 }) {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 mb-3 text-[10px] text-amber-400">
+        <div className="flex items-center gap-2 mb-3 text-xs text-amber-400">
           <AlertTriangle size={12} /> {error}
         </div>
       )}
 
       {!cargando && props.length === 0 && (
-        <p className="text-[10px] text-zinc-600 py-6 text-center">
+        <p className="text-xs text-zinc-600 py-2 text-center">
           Sin propuestas. Los agentes escriben aquí cuando encuentran algo con evidencia.
         </p>
       )}
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {props.map(p => (
-          <div key={p.id} className="border border-zinc-800/60 rounded-xl p-4 bg-black/30">
+          <div key={p.id} className="border border-zinc-800/60 rounded-xl p-3 bg-black/30">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`px-2 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-widest ${ESTADO_COLOR[p.state] || ESTADO_COLOR.rechazada}`}>
+                  <span className={`px-2 py-0.5 rounded-md border text-[11px] font-bold uppercase tracking-widest ${ESTADO_COLOR[p.state] || ESTADO_COLOR.rechazada}`}>
                     {p.state}
                   </span>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">{p.kind}</span>
-                  <span className="text-sm font-black italic tracking-tighter text-white">{p.target}</span>
+                  <span className="text-xs font-bold uppercase tracking-widest text-zinc-400">{p.kind}</span>
+                  <span className="text-sm font-bold  tracking-tighter text-white">{p.target}</span>
                   {p.judge_delta_eur !== null && p.judge_delta_eur !== undefined && (
-                    <span className={`text-[11px] font-black ${p.judge_delta_eur >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    <span className={`text-[11px] font-bold ${p.judge_delta_eur >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                       {p.judge_delta_eur >= 0 ? '+' : ''}{Number(p.judge_delta_eur).toFixed(2)} €
                     </span>
                   )}
@@ -151,7 +151,7 @@ export function ProposalsTray({ pollMs = 20000 }) {
               )}
             </div>
 
-            <p className="text-[9px] font-mono text-zinc-700 mt-3">
+            <p className="text-[11px] font-mono text-zinc-700 mt-3">
               #{p.id} · run {p.agent_run_id ?? '—'} · {p.created_at}
               {p.decided_by && ` · decidida por ${p.decided_by}`}
             </p>

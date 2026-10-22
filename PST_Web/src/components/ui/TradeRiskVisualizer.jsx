@@ -14,7 +14,7 @@ export function TradeRiskVisualizer({ trade }) {
   if (!hasSl && !hasTp) {
     return (
       <div className="flex flex-col gap-1 w-full bg-black/20 p-2 rounded-lg border border-white/5">
-        <div className="flex justify-between text-[7px] font-black text-zinc-500 uppercase tracking-widest">
+        <div className="flex justify-between text-[11px] font-bold text-zinc-500 uppercase tracking-widest">
           <span>{type}: {price_open.toFixed(5)}</span>
           <span className="text-indigo-400">NOW: {price_current.toFixed(5)}</span>
         </div>
@@ -24,7 +24,7 @@ export function TradeRiskVisualizer({ trade }) {
              style={{ width: `${Math.min(100, Math.max(0, (Math.abs(price_current - price_open) / price_open) * 1000))}%` }}
            />
         </div>
-        <span className="text-[6px] text-zinc-700 font-bold uppercase text-center italic">Sin SL/TP definidos</span>
+        <span className="text-[6px] text-zinc-700 font-bold uppercase text-center ">Sin SL/TP definidos</span>
       </div>
     )
   }
@@ -57,7 +57,7 @@ export function TradeRiskVisualizer({ trade }) {
 
   return (
     <div className="flex flex-col gap-2 w-full bg-black/60 p-3 rounded-xl border border-white/5 shadow-inner scale-[1.02] origin-left">
-      <div className="flex justify-between items-center text-[11px] font-black uppercase tracking-tight">
+      <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-tight">
         <span className="text-rose-500 flex items-center gap-1.5">
           {isBE ? 'SHIELD ON' : 'STOP LOSS'} <span className="text-zinc-400 font-bold bg-rose-500/10 px-1 rounded">[{hasSl ? sl.toFixed(5) : 'sin SL'}]</span>
         </span>
@@ -72,7 +72,7 @@ export function TradeRiskVisualizer({ trade }) {
 
         {/* Entry Point Marker */}
         <div
-          className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-white/60 z-10 shadow-[0_0_8px_rgba(255,255,255,0.4)]"
+          className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-white/60 z-10"
           style={{ left: `${Math.min(99, Math.max(1, type === 'BUY' ? entryPct : 100 - entryPct))}%` }}
           title={`Entry: ${price_open}`}
         />
@@ -106,9 +106,9 @@ export function TradeRiskVisualizer({ trade }) {
         )}
       </div>
 
-      <div className="flex justify-between items-baseline text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none">
+      <div className="flex justify-between items-baseline text-xs font-bold text-zinc-500 uppercase tracking-widest leading-none">
         <span className="flex items-baseline gap-1">
-          GUARD: <span className="text-zinc-200">{hasSl ? Math.abs(price_current - sl).toFixed(5) : '--'}</span> <span className="text-[7px] opacity-50">PIPS</span>
+          GUARD: <span className="text-zinc-200">{hasSl ? Math.abs(price_current - sl).toFixed(5) : '--'}</span> <span className="text-[11px] opacity-50">PIPS</span>
         </span>
         <span className={isProfit ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
           {isProfit ? 'PROFIT TRACKER' : 'RECOVERY MODE'}

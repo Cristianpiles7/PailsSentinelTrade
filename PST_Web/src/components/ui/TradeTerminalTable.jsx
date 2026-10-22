@@ -31,7 +31,7 @@ export function TradeTerminalTable({
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`px-4 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-widest border transition-all ${filter === f 
+                className={`px-4 py-1.5 rounded-xl text-[11px] font-bold uppercase tracking-widest border transition-all ${filter === f 
                   ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20' 
                   : 'bg-zinc-900/50 border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
               >
@@ -41,14 +41,14 @@ export function TradeTerminalTable({
           </div>
         </div>
         <div className="px-5 py-1.5 bg-zinc-900/50 border border-zinc-800 rounded-xl">
-          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Registros: </span>
-          <span className="text-xs font-black text-indigo-400 italic font-mono">{displayList.length}</span>
+          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Registros: </span>
+          <span className="text-xs font-bold text-indigo-400  font-mono">{displayList.length}</span>
         </div>
       </div>
 
       <div className="overflow-x-auto min-h-[300px]">
         <table className="w-full text-left">
-          <thead className="text-[9px] uppercase text-zinc-600 font-black tracking-[0.2em]">
+          <thead className="text-[11px] uppercase text-zinc-600 font-bold tracking-[0.2em]">
             <tr className="border-b border-zinc-800/30">
               <th className="px-10 py-5">Identificación de Activo</th>
               <th className="px-10 py-5">Tipo</th>
@@ -59,7 +59,7 @@ export function TradeTerminalTable({
           <tbody className="divide-y divide-zinc-800/20">
             {displayList.length === 0 ? (
               <tr>
-                <td colSpan="4" className="px-10 py-16 text-center text-zinc-700 font-black uppercase tracking-[0.5em] italic opacity-40 text-[10px]">
+                <td colSpan="4" className="px-10 py-16 text-center text-zinc-700 font-bold uppercase tracking-[0.5em]  opacity-40 text-xs">
                   Sin operaciones registradas
                 </td>
               </tr>
@@ -70,19 +70,19 @@ export function TradeTerminalTable({
                   onClick={() => onSymbolClick?.(trade.symbol)} 
                   className={`hover:bg-indigo-500/5 transition-all group cursor-pointer border-l-4 ${trade.status === 'OPEN' ? 'border-indigo-500' : 'border-transparent opacity-60'}`}
                 >
-                  <td className="px-10 py-5 text-lg font-black text-white uppercase italic tracking-tighter">
-                    {trade.symbol} <span className="text-[9px] text-zinc-600 ml-3 font-mono not-italic tracking-normal">#{trade.ticket}</span>
-                    {trade.status === 'CLOSED' && <span className="ml-2 text-[7px] text-zinc-500 uppercase bg-zinc-800 px-1 rounded">Past</span>}
+                  <td className="px-10 py-5 text-lg font-bold text-white uppercase  tracking-tighter">
+                    {trade.symbol} <span className="text-[11px] text-zinc-600 ml-3 font-mono not-italic tracking-normal">#{trade.ticket}</span>
+                    {trade.status === 'CLOSED' && <span className="ml-2 text-[11px] text-zinc-500 uppercase bg-zinc-800 px-1 rounded">Past</span>}
                   </td>
                   <td className="px-10 py-5">
-                    <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black tracking-[0.2em] border shadow-2xl ${trade.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-rose-500/10 text-rose-500 border-rose-500/20'}`}>
+                    <span className={`px-3 py-1.5 rounded-lg text-[11px] font-bold tracking-[0.2em] border shadow-2xl ${trade.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-rose-500/10 text-rose-500 border-rose-500/20'}`}>
                       {trade.type}
                     </span>
                   </td>
-                  <td className="px-10 py-5 font-mono text-zinc-400 font-bold italic text-xs">
+                  <td className="px-10 py-5 font-mono text-zinc-400 font-bold  text-xs">
                     {(trade.volume || 0).toFixed(2)} LOTS
                   </td>
-                  <td className={`px-10 py-5 text-right font-black text-2xl italic tracking-tighter ${trade.profit >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  <td className={`px-10 py-5 text-right font-bold text-2xl  tracking-tighter ${trade.profit >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                     {trade.profit >= 0 ? '+' : ''}{(trade.profit || 0).toFixed(2)}€
                   </td>
                 </tr>

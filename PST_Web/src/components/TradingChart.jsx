@@ -692,7 +692,7 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
                                     }}
                                 >
                                     <rect x="-35" y="-10" width="70" height="20" rx="4" fill="#18181b" stroke={lineColor} strokeWidth="1" />
-                                    <text x="0" y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold" className="uppercase italic">
+                                    <text x="0" y="4" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold" className="uppercase ">
                                         {line.mode || 'BOTH'}
                                     </text>
                                 </g>
@@ -750,7 +750,7 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
     }, []);
 
     return (
-        <div className="w-full h-full relative bg-[#050505] rounded-[2rem] border border-zinc-900/50 overflow-hidden shadow-2xl">
+        <div className="w-full h-full relative bg-[#050505] rounded-2xl border border-zinc-900/50 overflow-hidden shadow-2xl">
             <div ref={chartContainerRef} className="w-full h-full" />
             {renderSVGOverlay()}
             
@@ -758,16 +758,16 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-50">
                     <div className="flex flex-col items-center gap-3">
                         <RefreshCw className="animate-spin text-indigo-500" size={32} />
-                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.5em] italic">Synchronizing Fleet Telemetry...</span>
+                        <span className="text-xs font-bold text-zinc-500 uppercase tracking-[0.5em] ">Synchronizing Fleet Telemetry...</span>
                     </div>
                 </div>
             ) : null}
             <div className="absolute top-6 left-8 flex gap-4 pointer-events-none z-10">
                 <div className="flex items-center gap-2 bg-zinc-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-zinc-800 shadow-xl">
                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-[10px] font-black text-white uppercase italic tracking-widest">{symbol} CORE ANALYSIS</span>
+                    <span className="text-xs font-bold text-white uppercase  tracking-widest">{symbol} CORE ANALYSIS</span>
                 </div>
-                <div className="flex items-center gap-4 bg-zinc-900/50 backdrop-blur-md px-3 py-1.5 rounded-xl border border-zinc-800 text-[9px] font-bold text-zinc-500 uppercase tracking-tighter">
+                <div className="flex items-center gap-4 bg-zinc-900/50 backdrop-blur-md px-3 py-1.5 rounded-xl border border-zinc-800 text-[11px] font-bold text-zinc-500 uppercase tracking-tighter">
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#4ade80]" /> EMA 9</span>
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#f59e0b]" /> EMA 21</span>
                     <span className="flex items-center gap-1.5"><div className="w-2 h-0.5 bg-[#3b82f6]" /> EMA 50</span>

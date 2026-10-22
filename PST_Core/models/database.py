@@ -1016,11 +1016,12 @@ class PSTDatabase:
         try:
             from datetime import datetime, timedelta
             since = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            epoch_id = int(await self.get_config("account_epoch_first_trade_id", default="0"))
             async with aiosqlite.connect(self.db_path, timeout=10) as db:
                 async with db.execute(
                     "SELECT COALESCE(SUM(profit), 0) FROM trades "
-                    "WHERE strategy_name = ? AND time_out >= ?",
-                    (strategy_name, since),
+                    "WHERE strategy_name = ? AND time_out >= ? AND id >= ?",
+                    (strategy_name, since, epoch_id),
                 ) as cursor:
                     row = await cursor.fetchone()
                     return float(row[0]) if row else 0.0
@@ -1348,9 +1349,9 @@ class PSTDatabase:
                 db.row_factory = aiosqlite.Row
                 # Buscamos trades cerrados (price_out > 0) con time_out en las últimas 24h
                 async with db.execute("""
-                    SELECT symbol, SUM(profit) as total_profit 
-                    FROM trades 
-                    WHERE price_out > 0 AND time_out >= ? 
+                    SELECT symbol, SUM(profit) as total_profit
+                    FROM trades
+                    WHERE price_out > 0 AND time_out >= ?
                     GROUP BY symbol
                 """, (since,)) as cursor:
                     rows = await cursor.fetchall()
@@ -1374,9 +1375,9 @@ class PSTDatabase:
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
                 db.row_factory = aiosqlite.Row
                 async with db.execute("""
-                    SELECT symbol, SUM(profit) as total_profit 
-                    FROM trades 
-                    WHERE price_out > 0 
+                    SELECT symbol, SUM(profit) as total_profit
+                    FROM trades
+                    WHERE price_out > 0
                     GROUP BY symbol
                 """) as cursor:
                     rows = await cursor.fetchall()
@@ -1393,9 +1394,9 @@ class PSTDatabase:
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
                 db.row_factory = aiosqlite.Row
                 async with db.execute("""
-                    SELECT symbol, SUM(profit) as total_profit 
-                    FROM trades 
-                    WHERE price_out > 0 AND time_out >= ? 
+                    SELECT symbol, SUM(profit) as total_profit
+                    FROM trades
+                    WHERE price_out > 0 AND time_out >= ?
                     GROUP BY symbol
                 """, (today_str,)) as cursor:
                     rows = await cursor.fetchall()

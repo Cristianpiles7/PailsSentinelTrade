@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from typing import List
+from pathlib import Path
+import json
 import os
 import sys
 import MetaTrader5 as mt5
@@ -25,12 +27,17 @@ from PST_Core.portfolio.manager import PortfolioManager
 from PST_API.schemas import AccountStatus, Trade, SymbolStatus, APIResponse, OHLCBar, ConfigUpdate, ManualOrder, StrategyBreakdown, BotConfigUpdate, PerformanceMetrics, EquityPoint, StrategyPerformance, LoginRequest, RiskProfileRequest, TradeNoteUpdate
 from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_thread, ensure_habblaud_running, MIRROR_PORT
 from PST_API.agents_api import router as agents_router
+from PST_API.llm_api import router as llm_router
+from PST_API.puntuador_api import router as puntuador_router
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
 from dotenv import load_dotenv
 import logging
 from PST_Core.config import DB_PATH
+
+LLM_DIR = str(Path(__file__).resolve().parents[1] / "PST_LLM")
+PUNTUADOR_JSON = Path(__file__).resolve().parents[1] / ".agents" / "data" / "puntuador.json"
 
 # --- WEBSOCKET MANAGER (FASE 46) ---
 class ConnectionManager:
@@ -144,11 +151,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error starting monitor agent: {e}")
 
+    # Avisos por Telegram antes de cada bloqueo del calendario restringido (PST_API/llm_api.py)
+    from PST_API.llm_api import alertas_calendario
+    asyncio.create_task(alertas_calendario())
+
     yield
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.15",
+    version="2.6.16",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -181,6 +192,11 @@ async def auth_middleware(request: Request, call_next):
                 )
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized. Invalid or missing X-PST-Token."})
     return await call_next(request)
+
+@app.get("/api/auth/config", tags=["Auth"])
+async def auth_config():
+    """Dice al frontend si hace falta pedir contraseña. Sin autenticación, entra directo."""
+    return {"auth_enabled": os.getenv("AUTH_ENABLED", "false").lower() != "false"}
 
 @app.post("/api/auth/login", tags=["Auth"])
 async def login(req: LoginRequest):
@@ -480,6 +496,7 @@ async def get_symbols():
             open_count_map[sym_p] = open_count_map.get(sym_p, 0) + 1
 
     results = []
+    proximidad_map = _leer_proximidad()
     for s in symbols_cfg:
         sym = s['symbol']
 
@@ -514,6 +531,7 @@ async def get_symbols():
 
         results.append(SymbolStatus(
             symbol=sym,
+            type=(s.get('type') or ''),
             is_active=bool(s['is_active']),
             market_open=market_open,
             price=price,
@@ -526,6 +544,7 @@ async def get_symbols():
             daily_change_pct=daily_change,
             sparkline=spark_data,
             strategies=SYMBOL_EA_NAMES.get(sym, []),
+            proximidad=proximidad_map.get(sym),
         ))
 
     results.sort(key=lambda x: (not x.market_open, x.symbol))
@@ -1315,6 +1334,8 @@ react_dist_path = os.path.join(base_dir, "PST_Web", "dist")
 # catch-all queda tapado (por eso /api/backtest/run, mas abajo, solo funciona al ser POST).
 app.include_router(habblaud_router)
 app.include_router(agents_router)
+app.include_router(llm_router)
+app.include_router(puntuador_router)
 
 if os.path.isdir(react_dist_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_path, "assets")), name="assets")
@@ -1495,6 +1516,12 @@ def start_app():
     ensure_habblaud_running()
     start_mirror_in_thread()
 
+    # Agentes LLM que estaban activos al cerrar la app: se relanzan en segundo plano para no
+    # retrasar la ventana. Ver PST_LLM/registro.py (arrancar_activos / detener_todos).
+    threading.Thread(target=_arrancar_agentes_llm, daemon=True).start()
+    # Agente puntuador de la home (PST_LLM/puntuador.py): propio, no es de la flota de trading.
+    _arrancar_puntuador()
+
     # Lanzar ventana nativa única apuntando al puerto dinámico
     webview.create_window(
         f'Pails Sentinel Trade Bot - v{app.version}',
@@ -1511,6 +1538,55 @@ def start_app():
     storage_path = os.path.join(os.path.dirname(DB_PATH), "webview_storage")
     os.makedirs(storage_path, exist_ok=True)
     webview.start(private_mode=False, storage_path=storage_path)
+
+    # Ventana cerrada: los agentes paran (sin perder su marca de activo, se relanzan al abrir).
+    _detener_agentes_llm()
+    _parar_puntuador()
+
+
+def _arrancar_puntuador():
+    try:
+        if LLM_DIR not in sys.path:
+            sys.path.insert(0, LLM_DIR)
+        import puntuador
+        puntuador.arrancar()
+        logger.info("🎯 Agente puntuador de la home arrancado")
+    except Exception:
+        logger.exception("❌ No se pudo arrancar el agente puntuador")
+
+
+def _parar_puntuador():
+    try:
+        import puntuador
+        puntuador.parar()
+    except Exception:
+        logger.exception("❌ No se pudo parar el agente puntuador")
+
+
+def _leer_proximidad():
+    """Puntuaciones del agente puntuador (.agents/data/puntuador.json). Vacio si aun no hay datos."""
+    try:
+        return json.loads(PUNTUADOR_JSON.read_text(encoding="utf-8")).get("puntuaciones") or {}
+    except Exception:
+        return {}
+
+
+def _arrancar_agentes_llm():
+    try:
+        import registro       # PST_LLM/registro.py, ruta añadida por PST_API/llm_api.py
+        arrancados = registro.arrancar_activos()
+        logger.info(f"🤖 Agentes LLM relanzados al abrir la app: {arrancados or 'ninguno'}")
+    except Exception:
+        logger.exception("❌ No se pudieron relanzar los agentes LLM")
+
+
+def _detener_agentes_llm():
+    try:
+        import registro
+        registro.detener_todos()
+        logger.info("🤖 Agentes LLM parados al cerrar la app")
+    except Exception:
+        logger.exception("❌ No se pudieron parar los agentes LLM al cerrar")
 
 if __name__ == "__main__":
     start_app()

@@ -44,9 +44,9 @@ export function PerformanceCalendar({ trades = [] }) {
   // Map profit to Tailwind classes (Heatmap Logic)
   const getColor = (profit) => {
     if (profit === undefined) return 'bg-zinc-800/40 border-zinc-800'
-    if (profit > 50) return 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] border-emerald-400'
+    if (profit > 50) return 'bg-emerald-500 border-emerald-400'
     if (profit > 0) return 'bg-emerald-500/40 border-emerald-500/50'
-    if (profit < -50) return 'bg-rose-600 shadow-[0_0_10px_rgba(225,29,72,0.5)] border-rose-500'
+    if (profit < -50) return 'bg-rose-600 border-rose-500'
     if (profit < 0) return 'bg-rose-500/40 border-rose-500/50'
     return 'bg-zinc-700 border-zinc-600'
   }
@@ -58,22 +58,22 @@ export function PerformanceCalendar({ trades = [] }) {
   }
 
   return (
-    <div className="bg-[#050505] p-6 border border-zinc-800/80 rounded-[2rem] shadow-2xl relative overflow-hidden group">
+    <div className="bg-[#050505] p-6 border border-zinc-800/80 rounded-2xl shadow-2xl relative overflow-hidden group">
       <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 blur-3xl rounded-full" />
       
       <div className="flex justify-between items-end mb-6 relative z-10 px-2">
         <div>
-          <h3 className="text-sm font-black text-white italic tracking-tighter uppercase flex items-center gap-2 mb-1">
+          <h3 className="text-sm font-bold text-white  tracking-tighter uppercase flex items-center gap-2 mb-1">
             <Target size={16} className="text-amber-500" />
             Tactical PnL Map
           </h3>
-          <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest">
+          <p className="text-[11px] text-zinc-500 font-bold uppercase tracking-widest">
             84-Day Global Profit Realization Heatmap
           </p>
         </div>
         <div className="flex gap-4">
-          <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-rose-600 shadow-[0_0_8px_rgba(225,29,72,0.4)]"></div><span className="text-[8px] text-zinc-400 font-bold uppercase">Strong Loss</span></div>
-          <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"></div><span className="text-[8px] text-zinc-400 font-bold uppercase">Strong Win</span></div>
+          <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-rose-600"></div><span className="text-[11px] text-zinc-400 font-bold uppercase">Strong Loss</span></div>
+          <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-sm bg-emerald-500"></div><span className="text-[11px] text-zinc-400 font-bold uppercase">Strong Win</span></div>
         </div>
       </div>
       

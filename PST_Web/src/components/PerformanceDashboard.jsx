@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend
+  Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend, ReferenceLine
 } from 'recharts'
 import { TrendingUp, TrendingDown, Target, Activity, Clock, Wallet, ShieldAlert, BarChart3 } from 'lucide-react'
 import { PerformanceCalendar } from './ui/PerformanceCalendar'
@@ -21,14 +21,14 @@ function calcDrawdownSeries(equityCurve) {
 
 function StatKPI({ label, value, sub, color = 'text-white', icon: Icon }) {
   return (
-    <div className="bg-zinc-900/30 border border-white/5 rounded-[2rem] p-6 flex flex-col gap-3 hover:bg-zinc-900/50 transition-all">
+    <div className="bg-zinc-900/30 border border-white/5 rounded-2xl p-6 flex flex-col gap-3 hover:bg-zinc-900/50 transition-all">
       <div className={`p-3 rounded-2xl bg-white/5 w-fit ${color}`}>
         <Icon size={20} />
       </div>
       <div>
-        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">{label}</p>
-        <h3 className={`text-2xl font-black italic tracking-tighter ${color}`}>{value}</h3>
-        {sub && <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mt-1">{sub}</p>}
+        <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">{label}</p>
+        <h3 className={`text-2xl font-bold  tracking-tighter ${color}`}>{value}</h3>
+        {sub && <p className="text-[11px] text-zinc-600 font-bold uppercase tracking-widest mt-1">{sub}</p>}
       </div>
     </div>
   )
@@ -47,6 +47,28 @@ export function PerformanceDashboard({
   hourlyData = []
 }) {
   const ddSeries = useMemo(() => calcDrawdownSeries(equityCurve), [equityCurve])
+
+  // P&L acumulado desde el punto de inicio: 0 = sin ganar ni perder
+  const pnlSeries = useMemo(() => {
+    if (!equityCurve || equityCurve.length < 2) return []
+    const base = equityCurve[0]?.equity ?? 0
+    return equityCurve.map(pt => ({ time: pt.time, pnl: parseFloat((pt.equity - base).toFixed(2)) }))
+  }, [equityCurve])
+
+  // Dominio con el cero siempre dentro, y puntos de corte del degradado verde/rojo
+  const pnlScale = useMemo(() => {
+    const values = pnlSeries.map(d => d.pnl)
+    const dataMax = Math.max(0, ...values)
+    const dataMin = Math.min(0, ...values)
+    const span = dataMax - dataMin || 1
+    const pad = span * 0.1
+    const split = (hi, lo) => (hi === lo ? 0 : hi / (hi - lo))
+    return {
+      domain: [dataMin - pad, dataMax + pad],
+      fillSplit: split(dataMax, dataMin),
+      strokeSplit: split(Math.max(...values, 0), Math.min(...values, 0))
+    }
+  }, [pnlSeries])
   const maxDrawdown = useMemo(() => {
     if (!ddSeries.length) return 0
     return Math.min(...ddSeries.map(d => d.drawdown))
@@ -67,15 +89,7 @@ export function PerformanceDashboard({
   }, [stratPerf])
 
   return (
-    <div className="w-full px-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700 space-y-8">
-
-      {/* Header */}
-      <div className="px-4 pt-2">
-        <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase">Performance Dashboard</h2>
-        <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-[0.2em]">Sistema de Análisis de Rendimiento · FASE 4.1</p>
-      </div>
-
-      {/* KPI Cards */}
+    <div className="w-full px-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700 space-y-8">{/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 px-4">
         <StatKPI
           label="Net P&L"
@@ -118,34 +132,40 @@ export function PerformanceDashboard({
 
       {/* Equity Curve */}
       <div className="px-4">
-        <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
+        <div className="pst-card p-6">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-black text-white italic tracking-tighter uppercase">Equity Curve</h3>
+            <h3 className="pst-title">Equity Curve</h3>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
-              <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cumulative Balance</span>
+              <div className="w-3 h-3 bg-emerald-500 rounded-full" />
+              <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Cumulative P&amp;L</span>
             </div>
           </div>
           <div className="h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={equityCurve}>
+              <AreaChart data={pnlSeries}>
                 <defs>
-                  <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                  <linearGradient id="pnlFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset={pnlScale.fillSplit} stopColor="#10b981" stopOpacity={0.35} />
+                    <stop offset={pnlScale.fillSplit} stopColor="#f43f5e" stopOpacity={0.35} />
+                  </linearGradient>
+                  <linearGradient id="pnlStroke" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset={pnlScale.strokeSplit} stopColor="#10b981" />
+                    <stop offset={pnlScale.strokeSplit} stopColor="#f43f5e" />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
                 <XAxis dataKey="time" stroke="#ffffff15" fontSize={9}
                   tickFormatter={v => v === 'Start' ? 'INICIO' : v?.slice(0, 5) ?? ''} />
-                <YAxis stroke="#ffffff15" fontSize={9} tickFormatter={v => `${v}€`} width={55} />
+                <YAxis stroke="#ffffff15" fontSize={9} domain={pnlScale.domain} width={55}
+                  tickFormatter={v => `${v >= 0 ? '+' : ''}${Math.round(v)}€`} />
+                <ReferenceLine y={0} stroke="#ffffff30" strokeDasharray="4 4" />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #ffffff10', borderRadius: '1rem', fontSize: 12 }}
                   labelStyle={{ color: '#888', fontSize: 10 }}
-                  formatter={v => [`${v}€`, 'Balance']}
+                  formatter={v => [`${v >= 0 ? '+' : ''}${v.toFixed(2)}€`, 'P&L acumulado']}
                 />
-                <Area type="monotone" dataKey="equity" stroke="#6366f1" strokeWidth={2.5}
-                  fillOpacity={1} fill="url(#eqGrad)" dot={false} />
+                <Area type="monotone" dataKey="pnl" baseValue={0} stroke="url(#pnlStroke)" strokeWidth={2.5}
+                  fillOpacity={1} fill="url(#pnlFill)" dot={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -156,10 +176,10 @@ export function PerformanceDashboard({
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 px-4">
 
         {/* Drawdown Chart */}
-        <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
+        <div className="pst-card p-6">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-black text-white italic tracking-tighter uppercase">Drawdown</h3>
-            <span className={`text-sm font-black font-mono ${maxDrawdown < -5 ? 'text-rose-400' : 'text-amber-400'}`}>
+            <h3 className="pst-title">Drawdown</h3>
+            <span className={`text-sm font-bold font-mono ${maxDrawdown < -5 ? 'text-rose-400' : 'text-amber-400'}`}>
               Max: {maxDrawdown.toFixed(2)}%
             </span>
           </div>
@@ -188,8 +208,8 @@ export function PerformanceDashboard({
         </div>
 
         {/* Capital Buckets */}
-        <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
-          <h3 className="text-lg font-black text-white italic tracking-tighter uppercase mb-6">Capital Buckets</h3>
+        <div className="pst-card p-6">
+          <h3 className="pst-title">Capital Buckets</h3>
           <div className="flex items-center gap-6">
             <div className="w-[140px] h-[140px] flex-shrink-0">
               <ResponsiveContainer width="100%" height="100%">
@@ -211,12 +231,12 @@ export function PerformanceDashboard({
               {Object.entries(bucketWeights).map(([cat, pct]) => (
                 <div key={cat}>
                   <div className="flex justify-between items-center mb-1">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">{cat}</span>
+                    <span className="text-xs font-bold uppercase tracking-widest text-zinc-400">{cat}</span>
                     <div className="flex items-center gap-3">
-                      <span className={`text-[11px] font-black font-mono ${(bucketPnl[cat] ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <span className={`text-[11px] font-bold font-mono ${(bucketPnl[cat] ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {(bucketPnl[cat] ?? 0) >= 0 ? '+' : ''}{(bucketPnl[cat] ?? 0).toFixed(2)}€
                       </span>
-                      <span className="text-xs font-black text-white">{pct.toFixed(1)}%</span>
+                      <span className="text-xs font-bold text-white">{pct.toFixed(1)}%</span>
                     </div>
                   </div>
                   <div className="h-1.5 w-full bg-zinc-800/50 rounded-full overflow-hidden">
@@ -227,7 +247,7 @@ export function PerformanceDashboard({
                   </div>
                 </div>
               ))}
-              <p className="text-[8px] text-zinc-700 font-bold uppercase tracking-widest mt-2">
+              <p className="text-[11px] text-zinc-700 font-bold uppercase tracking-widest mt-2">
                 Rebalanceo mensual automático · Umbral 15%
               </p>
             </div>
@@ -238,14 +258,14 @@ export function PerformanceDashboard({
       {/* Strategy Comparison */}
       {stratRows.length > 0 && (
         <div className="px-4">
-          <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
-            <h3 className="text-lg font-black text-white italic tracking-tighter uppercase mb-6">Strategy Comparison</h3>
+          <div className="pst-card p-6">
+            <h3 className="pst-title">Strategy Comparison</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-white/5">
                     {['Strategy', 'Trades', 'PnL Total', 'Win Rate*'].map(h => (
-                      <th key={h} className="pb-3 px-4 text-[9px] font-black text-zinc-500 uppercase tracking-widest">{h}</th>
+                      <th key={h} className="pb-3 px-4 text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -262,14 +282,14 @@ export function PerformanceDashboard({
                                 s.strategy?.includes('Range') ? 'RANGE' : 'SCALPING'
                               ] ?? '#6366f1' }}
                             />
-                            <span className="text-sm font-black text-white italic">{s.strategy}</span>
+                            <span className="text-sm font-bold text-white ">{s.strategy}</span>
                           </div>
                         </td>
                         <td className="py-4 px-4">
-                          <span className="text-sm font-black text-zinc-300 font-mono">{s.trades_count ?? 0}</span>
+                          <span className="text-sm font-bold text-zinc-300 font-mono">{s.trades_count ?? 0}</span>
                         </td>
                         <td className="py-4 px-4">
-                          <span className={`text-sm font-black italic font-mono ${(s.profit ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className={`text-sm font-bold  font-mono ${(s.profit ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.profit ?? 0) >= 0 ? '+' : ''}{(s.profit ?? 0).toFixed(2)}€
                           </span>
                         </td>
@@ -282,12 +302,12 @@ export function PerformanceDashboard({
                                   style={{ width: `${winRate}%` }}
                                 />
                               </div>
-                              <span className={`text-[10px] font-black ${winRate >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              <span className={`text-xs font-bold ${winRate >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                 {winRate}%
                               </span>
                             </div>
                           ) : (
-                            <span className="text-[10px] text-zinc-600 font-bold">N/A</span>
+                            <span className="text-xs text-zinc-600 font-bold">N/A</span>
                           )}
                         </td>
                       </tr>
@@ -295,7 +315,7 @@ export function PerformanceDashboard({
                   })}
                 </tbody>
               </table>
-              <p className="text-[8px] text-zinc-700 font-bold uppercase tracking-widest mt-4 px-4">
+              <p className="text-[11px] text-zinc-700 font-bold uppercase tracking-widest mt-4 px-4">
                 * Win rate calculado sobre trades cerrados con datos disponibles
               </p>
             </div>
@@ -310,21 +330,21 @@ export function PerformanceDashboard({
 
       {/* Hourly Heatmap */}
       <div className="px-4">
-        <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
+        <div className="pst-card p-6">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="text-lg font-black text-white italic tracking-tighter uppercase">
+              <h3 className="pst-title">
                 Rendimiento por Hora
               </h3>
-              <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest mt-1">
+              <p className="text-[11px] text-zinc-500 font-bold uppercase tracking-widest mt-1">
                 PnL acumulado por hora del día · Hora local del broker
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-              <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Rentable</span>
-              <div className="w-3 h-3 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)] ml-3" />
-              <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Pérdida</span>
+              <div className="w-3 h-3 rounded-full bg-emerald-500" />
+              <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Rentable</span>
+              <div className="w-3 h-3 rounded-full bg-rose-500 ml-3" />
+              <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Pérdida</span>
             </div>
           </div>
           <HourlyHeatmap data={hourlyData} />

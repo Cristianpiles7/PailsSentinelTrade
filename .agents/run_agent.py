@@ -273,8 +273,10 @@ def main():
 
     started = time.time()
     try:
+        # Sin CREATE_NO_WINDOW, cada agente nocturno abre una consola negra en Windows.
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=args.timeout)
+                              encoding="utf-8", errors="replace", timeout=args.timeout,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         duration = time.time() - started
         asyncio.run(record_failure(args.agent, model, effort, duration, "timeout", out_file))

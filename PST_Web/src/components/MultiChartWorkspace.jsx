@@ -49,14 +49,6 @@ export function MultiChartWorkspace({ symbols, api }) {
     return (
         <div className="w-full h-full flex flex-col p-4 sm:p-6 gap-4 sm:gap-6 bg-[#0a0a0a]">
             {/* Header */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="flex flex-col">
-                    <h2 className="text-2xl font-black text-white tracking-tight uppercase flex items-center gap-2">
-                        <LayoutGrid className="text-indigo-500" /> Multi-Chart <span className="text-zinc-500 font-medium">Workspace</span>
-                    </h2>
-                    <p className="text-sm font-medium text-zinc-500 uppercase tracking-widest mt-1">Simultaneous Surveillance</p>
-                </div>
-            </div>
 
             {/* Grid 2x2 para Gráficos */}
             <div className="flex-1 grid grid-cols-1 md:grid-cols-2 grid-rows-2 gap-4">
@@ -69,7 +61,7 @@ export function MultiChartWorkspace({ symbols, api }) {
                                 <select
                                     value={slot.symbol}
                                     onChange={(e) => handleSymbolChange(slot.id, e.target.value)}
-                                    className="appearance-none bg-zinc-900/80 backdrop-blur-md border border-zinc-800 text-white font-black uppercase text-sm px-4 py-2 pr-10 rounded-xl cursor-pointer hover:border-indigo-500/50 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                    className="appearance-none bg-zinc-900/80 backdrop-blur-md border border-zinc-800 text-white font-bold uppercase text-sm px-4 py-2 pr-10 rounded-xl cursor-pointer hover:border-indigo-500/50 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                                 >
                                     <option value="">-- SELECT PAIR --</option>
                                     {activeSymbols.map(sym => (
@@ -85,7 +77,7 @@ export function MultiChartWorkspace({ symbols, api }) {
                             {slot.symbol && symbols.find(s => s.symbol.replace('.a', '') === slot.symbol) && (
                                 <div className="bg-zinc-900/80 backdrop-blur-md border border-zinc-800 px-3 py-1.5 rounded-xl flex items-center gap-2">
                                     <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                    <span className="text-[10px] font-black text-emerald-400 tracking-widest">
+                                    <span className="text-xs font-bold text-emerald-400 tracking-widest">
                                         SC: {symbols.find(s => s.symbol.replace('.a', '') === slot.symbol).score}
                                     </span>
                                 </div>
@@ -106,7 +98,7 @@ export function MultiChartWorkspace({ symbols, api }) {
                                     {slot.symbol ? (
                                         <div className="flex flex-col items-center gap-3">
                                             <RefreshCw className="animate-spin text-zinc-700" size={24} />
-                                            <span className="text-[10px] text-zinc-600 font-bold uppercase tracking-widest">Loading Telemetry</span>
+                                            <span className="text-xs text-zinc-600 font-bold uppercase tracking-widest">Loading Telemetry</span>
                                         </div>
                                     ) : (
                                         <span className="text-xs text-zinc-700 font-bold uppercase tracking-widest">Available Slot</span>

@@ -32,15 +32,15 @@ export function LiveConsole({ logs }) {
   }, [logs, cleared, smartFilter, levelFilter])
 
   return (
-    <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-6 shadow-2xl h-[400px] flex flex-col gap-4 overflow-hidden">
+    <div className="bg-[#050505] border border-zinc-800/80 rounded-2xl p-6 shadow-2xl h-[400px] flex flex-col gap-4 overflow-hidden">
       <div className="flex justify-between items-center shrink-0">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_10px_#6366f1] mr-2" />
+          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse mr-2" />
           {['ALL', 'ERROR', 'WARNING', 'INFO'].map(lvl => (
             <button
               key={lvl}
               onClick={() => { setLevelFilter(lvl); setSmartFilter(false); }}
-              className={`px-2 py-1 rounded-lg text-[7px] font-black uppercase tracking-tighter border transition-all ${levelFilter === lvl 
+              className={`px-2 py-1 rounded-lg text-[11px] font-bold uppercase tracking-tighter border transition-all ${levelFilter === lvl 
                 ? (lvl === 'ERROR' ? 'bg-rose-600/20 border-rose-500/40 text-rose-400' : 
                    lvl === 'WARNING' ? 'bg-amber-600/20 border-amber-500/40 text-amber-400' :
                    lvl === 'INFO' ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-400' :
@@ -55,25 +55,25 @@ export function LiveConsole({ logs }) {
           <button
             onClick={() => { setSmartFilter(!smartFilter); setLevelFilter('ALL'); }}
             title={smartFilter ? 'Ver todos los logs' : 'Solo eventos importantes'}
-            className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider border transition-all ${smartFilter ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-500 hover:text-zinc-300'}`}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border transition-all ${smartFilter ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-400' : 'bg-zinc-900 border-zinc-700 text-zinc-500 hover:text-zinc-300'}`}
           >
             {smartFilter ? 'Smart' : 'All'}
           </button>
           <button
             onClick={() => setCleared(logs.length)}
             title="Limpiar consola"
-            className="px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider border border-zinc-700 bg-zinc-900 text-zinc-500 hover:text-rose-400 hover:border-rose-500/40 transition-all"
+            className="px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border border-zinc-700 bg-zinc-900 text-zinc-500 hover:text-rose-400 hover:border-rose-500/40 transition-all"
           >
             Clear
           </button>
           <div className="px-3 py-1 bg-zinc-900 rounded-full border border-zinc-800">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">{visibleLogs.length} / {logs.length - cleared}</span>
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{visibleLogs.length} / {logs.length - cleared}</span>
           </div>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto font-mono text-[10px] space-y-1.5 no-scrollbar pr-2">
+      <div className="flex-1 overflow-y-auto font-mono text-xs space-y-1.5 no-scrollbar pr-2">
         {visibleLogs.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-zinc-800 italic uppercase tracking-widest text-[8px]">
+          <div className="h-full flex items-center justify-center text-zinc-800  uppercase tracking-widest text-[11px]">
             {smartFilter ? 'Sin eventos importantes...' : 'Waiting for telemetry uplink...'}
           </div>
         ) : (

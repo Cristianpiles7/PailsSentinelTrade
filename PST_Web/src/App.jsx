@@ -11,7 +11,7 @@ import {
   ArrowUpRight, RefreshCw, Power, Target, Clock, ShieldAlert, BookMarked,
   Image as ImageIcon, FileText, ChevronRight, Save, X, MoreVertical, LayoutDashboard,
   LayoutGrid, History, ShoppingCart, Zap, Trash2, ChevronUp, ChevronDown, Cpu,
-  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users
+  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, Gauge
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -27,7 +27,10 @@ import { MultiChartWorkspace } from './components/MultiChartWorkspace'
 import { StrategyLab } from './components/StrategyLab'
 import { PerformanceDashboard } from './components/PerformanceDashboard'
 import { NavItem } from './components/ui/NavItem'
+import { CalendarioRestringidoWidget } from './components/ui/CalendarioRestringidoWidget'
 import { Sparkline } from './components/ui/Sparkline'
+import { ProximityGauge } from './components/ui/ProximityGauge'
+import { PuntuadorPanel } from './components/PuntuadorPanel'
 import { Toast } from './components/ui/Toast'
 import { StatBox } from './components/ui/StatBox'
 import { LiveConsole } from './components/ui/LiveConsole'
@@ -37,6 +40,8 @@ import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
 import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
 import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 import { AgentsOffice } from './components/AgentsOffice'
+import { LlmFila, LlmDecisionesModal, LlmLimitesBar, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
+import { LlmSeguro } from './components/LlmOpinionCard'
 
 
 
@@ -74,6 +79,37 @@ const api = {
 
 
 
+const TITULOS_VISTA = {
+  home: ['Dashboard', 'Visión general de la cuenta'],
+  surveillance: null, // se resuelve con el simbolo activo
+  terminal: ['Terminal', 'Posiciones abiertas e historial'],
+  history: ['Historial', 'Operaciones cerradas y notas'],
+  performance: ['Performance', 'Rendimiento de la cuenta'],
+  analytics: ['Insights', 'Métricas por estrategia'],
+  heatmap: ['Market Heatmap', 'Escáner de volatilidad en tiempo real'],
+  multichart: ['Multi-Chart', 'Vigilancia simultánea'],
+  strategylab: ['Strategy Lab', 'Backtesting con datos reales de MT5'],
+  agents: ['Oficina de agentes', 'Flota LLM y habblaud'],
+  puntuador: ['Puntuador', 'Agente de cercanía a compra/venta de la home · configuración y gasto'],
+  config: ['Matriz de símbolos', 'Dashboard y agente LLM por símbolo · agrupados por clase'],
+}
+
+function tituloVista(vista, simbolo) {
+  if (vista === 'surveillance') return [simbolo, 'Análisis en tiempo real y ejecución']
+  return TITULOS_VISTA[vista] || ['', '']
+}
+
+// Spinner con texto para las esperas de arranque (comprobar auth y primera carga de la API).
+// Con overlay se pinta encima del dashboard, sin desmontarlo.
+function PantallaCargando({ texto, overlay = false }) {
+  return (
+    <div className={`${overlay ? 'fixed inset-0 z-[200] bg-[#030303]/90 backdrop-blur-sm' : 'min-h-screen bg-[#020202]'} flex flex-col items-center justify-center gap-5 font-sans`}>
+      <RefreshCw size={32} className="text-indigo-500 animate-spin" />
+      <p className="text-xs text-zinc-400 font-bold uppercase tracking-[0.3em] text-center px-4">{texto}</p>
+    </div>
+  )
+}
+
 function App() {
 
 
@@ -82,6 +118,15 @@ function App() {
 
   // FASE 39 AUTH
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('pst_token'))
+  // Hasta saber si el servidor pide contraseña no se pinta el login (evita el parpadeo con AUTH_ENABLED=false).
+  const [authChecked, setAuthChecked] = useState(false)
+  // Si el servidor no pide contraseña (AUTH_ENABLED=false en .env), no se muestra la pantalla de login.
+  useEffect(() => {
+    axios.get(`${API_BASE}/auth/config`, { timeout: 5000 })
+      .then(r => { if (!r.data.auth_enabled) setIsAuthenticated(true) })
+      .catch(() => {})
+      .finally(() => setAuthChecked(true))
+  }, [])
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'nano'
   const [activeTab, setActiveTab] = useState('all');
   const [isFocusMode, setIsFocusMode] = useState(false);
@@ -99,6 +144,10 @@ function App() {
   }, [trades]);
 
   const [symbols, setSymbols] = useState([])
+  const llm = useLlmAgentes(api, API_BASE, isAuthenticated)
+  const [filtroSimbolos, setFiltroSimbolos] = useState('todos')
+  const [filtroClase, setFiltroClase] = useState('todos')
+  const [llmDecisiones, setLlmDecisiones] = useState(null)
 
 
 
@@ -111,6 +160,13 @@ function App() {
 
 
   const [loading, setLoading] = useState(true)
+  // Si la primera carga tarda más de 15 s, el overlay lo dice en vez de parecer colgado.
+  const [cargaLenta, setCargaLenta] = useState(false)
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => setCargaLenta(true), 15000);
+    return () => clearTimeout(t);
+  }, [loading])
 
 
 
@@ -137,7 +193,6 @@ function App() {
 
 
 
-  const [time, setTime] = useState(new Date().toLocaleTimeString())
 
 
 
@@ -184,10 +239,7 @@ function App() {
 
 
 
-  useEffect(() => {
-    const timer = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000)
-    return () => clearInterval(timer)
-  }, [])
+  const [tituloPagina, subtituloPagina] = tituloVista(currentView, selectedSymbol)
 
   // ENGINE: Sincronización Automática (FASE 43)
   useEffect(() => {
@@ -429,9 +481,15 @@ function App() {
   }
 
   const toggleSymbolStatus = async (symbol, isActive) => {
+    const encender = !isActive
     try {
-      await api.post(`${API_BASE}/config/symbol`, { symbol, is_active: !isActive })
-      addToast(`${symbol} status updated`, 'success')
+      await api.post(`${API_BASE}/config/symbol`, { symbol, is_active: encender })
+      // El interruptor tambien activa (demo) o para el agente LLM si el simbolo tiene uno.
+      // Apagarlo a mano bloquea la rotacion para ese simbolo.
+      if (llm.agentes.some(a => a.symbol === symbol)) {
+        await llm.accion(symbol, encender ? 'activar' : 'desactivar', encender ? { live: true } : undefined)
+      }
+      addToast(`${symbol} ${encender ? 'activado' : 'desactivado'}`, 'success')
       fetchData()
     } catch (err) { addToast('Error updating status', 'error') }
   }
@@ -508,14 +566,18 @@ function App() {
       setLoginError('Invalid access protocol')
     }
   }
+  if (!isAuthenticated && !authChecked) {
+    return <PantallaCargando texto="Conectando con el motor..." />
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#020202] flex items-center justify-center p-4 selection:bg-indigo-500/30 font-sans">
-        <div className="w-full max-w-md bg-[#050505] border border-zinc-800/80 rounded-[3rem] p-10 shadow-[0_0_100px_rgba(0,0,0,0.8)] flex flex-col items-center">
-          <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mb-8 border border-indigo-500/20 shadow-[0_0_30px_rgba(99,102,241,0.2)]">
+        <div className="w-full max-w-md bg-[#050505] border border-zinc-800/80 rounded-3xl p-10 flex flex-col items-center">
+          <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mb-8 border border-indigo-500/20">
             <Lock className="text-indigo-500" size={36} />
           </div>
-          <h1 className="text-3xl font-black text-white tracking-widest uppercase italic mb-2 text-center">Restricted Area</h1>
+          <h1 className="text-3xl font-bold text-white tracking-widest uppercase  mb-2 text-center">Restricted Area</h1>
           <p className="text-xs text-zinc-500 font-bold uppercase tracking-[0.2em] mb-10 text-center">Pails Sentinel Trade Engine</p>
 
           <form onSubmit={handleLogin} className="w-full">
@@ -525,12 +587,12 @@ function App() {
                 value={passwordInput}
                 onChange={e => setPasswordInput(e.target.value)}
                 placeholder="ENTER ACCESS PROTOCOL"
-                className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl px-6 py-4 text-white text-sm font-black tracking-widest outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-center"
+                className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl px-6 py-4 text-white text-sm font-bold tracking-widest outline-none focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 transition-all text-center"
               />
             </div>
-            {loginError && <p className="text-rose-500 text-[10px] font-black uppercase tracking-widest text-center mb-6">{loginError}</p>}
+            {loginError && <p className="text-rose-500 text-xs font-bold uppercase tracking-widest text-center mb-6">{loginError}</p>}
 
-            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs tracking-[0.3em] uppercase py-4 rounded-2xl transition-all shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_30px_rgba(99,102,241,0.5)]">
+            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs tracking-[0.3em] uppercase py-4 rounded-2xl transition-all hover:">
               Authenticate
             </button>
           </form>
@@ -541,6 +603,8 @@ function App() {
 
   return (
     <div className="h-screen w-screen bg-[#030303] text-zinc-100 font-sans selection:bg-indigo-500/30 overflow-hidden relative">
+
+      {loading && <PantallaCargando texto={cargaLenta ? "El motor tarda en responder, sigue intentándolo..." : "Cargando datos del motor..."} overlay />}
 
 
 
@@ -593,6 +657,7 @@ function App() {
 
 
           <NavItem
+            showLabel
 
 
 
@@ -617,6 +682,7 @@ function App() {
 
 
           <NavItem
+            showLabel
 
 
 
@@ -632,7 +698,7 @@ function App() {
 
 
 
-            label="Live Detail"
+            label="Live"
 
 
 
@@ -641,6 +707,7 @@ function App() {
 
 
           <NavItem
+            showLabel
 
 
 
@@ -669,6 +736,7 @@ function App() {
 
 
           <NavItem
+            showLabel
 
 
 
@@ -693,6 +761,7 @@ function App() {
 
 
           <NavItem
+            showLabel
             icon={<TrendingUp size={24} />}
             active={currentView === 'performance'}
             onClick={() => { setCurrentView('performance'); fetchPerformance(); fetchHistory(); }}
@@ -700,6 +769,22 @@ function App() {
           />
 
           <NavItem
+            showLabel
+            icon={<Users size={24} />}
+            active={currentView === 'agents'}
+            onClick={() => setCurrentView('agents')}
+            label="Oficina"
+          />
+          <NavItem
+            showLabel
+            icon={<Gauge size={24} />}
+            active={currentView === 'puntuador'}
+            onClick={() => setCurrentView('puntuador')}
+            label="Punt."
+          />
+
+          <NavItem
+            showLabel
 
 
 
@@ -739,11 +824,15 @@ function App() {
 
 
 
-      <div className="fixed top-0 left-20 right-0 h-20 border-b border-white/5 bg-[#050505]/40 backdrop-blur-3xl z-40 flex items-center justify-between px-8 shadow-2xl">
+      <div className="fixed top-0 left-20 right-0 h-20 border-b border-white/5 bg-[#050505]/40 backdrop-blur-3xl z-40 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-6 px-8 shadow-2xl">
+        <div className="row-start-1 col-start-2 min-w-0 flex flex-col items-center text-center pointer-events-none select-none">
+          <span className="max-w-full truncate text-lg font-semibold text-white tracking-tight leading-tight">{tituloPagina}</span>
+          <span className="max-w-full truncate text-[11px] font-medium text-zinc-500 tracking-wide">{subtituloPagina}</span>
+        </div>
 
 
 
-        <div className="flex items-center gap-4 bg-white/[0.03] border border-white/10 px-6 py-2.5 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+        <div className="row-start-1 col-start-1 flex items-center gap-3 bg-white/[0.03] border border-white/10 px-4 py-2.5 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
 
 
 
@@ -751,11 +840,11 @@ function App() {
 
 
 
-            <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1">Core Balance</span>
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Core Balance</span>
 
 
 
-            <span className="text-lg font-black text-white italic tracking-tighter">{account?.balance?.toLocaleString() || '0.00'}€</span>
+            <span className="text-base font-bold text-white  tracking-tighter">{account?.balance?.toLocaleString() || '0.00'}€</span>
 
 
 
@@ -763,7 +852,7 @@ function App() {
 
 
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-2" />
+          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
 
 
 
@@ -771,11 +860,11 @@ function App() {
 
 
 
-            <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1">Active Equity</span>
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Active Equity</span>
 
 
 
-            <span className="text-lg font-black text-white italic tracking-tighter">{account?.equity?.toLocaleString() || '0.00'}€</span>
+            <span className="text-base font-bold text-white  tracking-tighter">{account?.equity?.toLocaleString() || '0.00'}€</span>
 
 
 
@@ -783,7 +872,7 @@ function App() {
 
 
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-2" />
+          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
 
 
 
@@ -791,11 +880,11 @@ function App() {
 
 
 
-            <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1">Active Fleet PnL</span>
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Active Fleet PnL</span>
 
 
 
-            <span className={`text-lg font-black italic tracking-tighter ${account?.active_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            <span className={`text-base font-bold  tracking-tighter ${account?.active_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
 
 
 
@@ -811,7 +900,7 @@ function App() {
 
 
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-2" />
+          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
 
 
 
@@ -823,11 +912,11 @@ function App() {
 
 
 
-              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none">Day Performance</span>
+              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none">Day Performance</span>
 
 
 
-              <div className={`w-1 h-1 rounded-full ${account?.daily_pnl >= 0 ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]'}`} />
+              <div className={`w-1 h-1 rounded-full ${account?.daily_pnl >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
 
 
 
@@ -835,7 +924,7 @@ function App() {
 
 
 
-            <span className={`text-lg font-black italic tracking-tighter ${account?.daily_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            <span className={`text-base font-bold  tracking-tighter ${account?.daily_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
 
 
 
@@ -851,125 +940,45 @@ function App() {
 
 
 
-        </div>        <div className="flex items-center gap-2 bg-zinc-900/50 p-1 rounded-2xl border border-zinc-800/50">
-          <button
-            onClick={() => { setActiveView('home'); setCurrentView('home'); }}
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
-              ${activeView === 'home' && currentView === 'home'
-                ? 'bg-indigo-500/20 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.3)]'
-                : 'text-zinc-500 hover:text-indigo-400 hover:bg-zinc-800/50'}`}
-          >
-            <Activity size={24} />
-            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-              Dashboard
-            </div>
-          </button>
+          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
 
-          <button
-            onClick={() => { setActiveView('heatmap'); setCurrentView('heatmap'); }}
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
-              ${activeView === 'heatmap'
-                ? 'bg-amber-500/20 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
-                : 'text-zinc-500 hover:text-amber-400 hover:bg-zinc-800/50'}`}
-          >
-            <LayoutGrid size={24} />
-            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-              Market Heatmap
-            </div>
-          </button>
+          <div className="flex flex-col" title="Coste acumulado de la flota LLM a precio de API (no es lo que se paga con la suscripción)">
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">LLM · coste API</span>
+            <span className="text-base font-bold text-white  tracking-tighter">
+              {llm.costeTotal != null ? `$${llm.costeTotal.toFixed(2)}` : '—'}
+            </span>
+          </div>
 
-          <button
-            onClick={() => { setActiveView('multichart'); setCurrentView('multichart'); }}
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
-              ${activeView === 'multichart'
-                ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]'
-                : 'text-zinc-500 hover:text-emerald-400 hover:bg-zinc-800/50'}`}
-          >
-            <LayoutDashboard size={24} />
-            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-              Multi-Chart Workspace
-            </div>
-          </button>
+          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
 
-          <button
-            onClick={() => { setActiveView('strategylab'); setCurrentView('strategylab'); }}
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
-              ${activeView === 'strategylab'
-                ? 'bg-purple-500/20 text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.3)]'
-                : 'text-zinc-500 hover:text-purple-400 hover:bg-zinc-800/50'}`}
-          >
-            <FlaskConical size={24} />
-            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-              Strategy Lab Sim
-            </div>
-          </button>
+          <div className="flex flex-col" title={llm.cuota?.disponible ? `Ventana 5h reinicia ${new Date(llm.cuota.cinco_h_reset * 1000).toLocaleString()} · semanal reinicia ${new Date(llm.cuota.semanal_reset * 1000).toLocaleString()}` : 'Sin dato de cuota (habblaud)'}>
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Cuota Claude 5h / sem</span>
+            <span className={`text-base font-bold  tracking-tighter ${llm.cuota?.cinco_h >= 60 || llm.cuota?.semanal >= 70 ? 'text-rose-500' : 'text-white'}`}>
+              {llm.cuota?.disponible ? `${llm.cuota.cinco_h ?? '—'}% / ${llm.cuota.semanal ?? '—'}%` : '—'}
+            </span>
+          </div>
 
-          <button
-            onClick={() => { setActiveView('agents'); setCurrentView('agents'); }}
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 relative group
-              ${activeView === 'agents'
-                ? 'bg-cyan-500/20 text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.3)]'
-                : 'text-zinc-500 hover:text-cyan-400 hover:bg-zinc-800/50'}`}
-          >
-            <Users size={24} />
-            <div className="absolute left-14 bg-zinc-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
-              Oficina de Agentes
-            </div>
-          </button>
-
-          <button
-            onClick={() => {
-              setCurrentView('history')
-              fetchHistory()
-            }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${currentView === 'history' ? 'bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)]' : 'text-zinc-500 hover:text-zinc-300'}`}
-          >
-            <BookMarked size={14} />
-            History
-          </button>
-          <button
-            onClick={() => {
-              setCurrentView('analytics')
-              fetchAnalytics()
-            }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${currentView === 'analytics' ? 'bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.3)]' : 'text-zinc-500 hover:text-zinc-300'}`}
-          >
-            <BarChart3 size={14} />
-            Insights
-          </button>
         </div>
 
-        <div className="flex items-center gap-8">
+        <div className="row-start-1 col-start-3 justify-self-end flex items-center gap-8">
 
 
 
-          <div className="flex items-center gap-4 bg-zinc-900/50 px-6 py-2.5 rounded-2xl border border-zinc-800/50 min-w-[140px] justify-center">
-
-
-
-            <Clock size={16} className="text-indigo-500" />
-
-
-
-            <span className="text-sm font-black font-mono text-zinc-300 tracking-tighter">{time}</span>
-
-
-
-          </div>
+          <CalendarioRestringidoWidget url={`${API_BASE}/calendario/proximo`} />
 
           {/* News Guard Segment (Fase 50) */}
           {upcomingNews.length > 0 && (
-            <div className={`flex items-center gap-4 bg-zinc-900/50 px-5 py-2.5 rounded-2xl border transition-all duration-500 ${isNewsBlocked ? 'border-rose-500/40 bg-rose-500/5 shadow-[0_0_20px_rgba(244,63,94,0.1)]' : 'border-zinc-800/50'}`}>
+            <div className={`flex items-center gap-4 bg-zinc-900/50 px-5 py-2.5 rounded-2xl border transition-all duration-500 ${isNewsBlocked ? 'border-rose-500/40 bg-rose-500/5' : 'border-zinc-800/50'}`}>
               <ShieldAlert size={16} className={isNewsBlocked ? 'text-rose-400 animate-pulse' : 'text-zinc-500'} />
               <div className="flex flex-col">
-                <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1">
+                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">
                   {isNewsBlocked ? 'NEWS BLOCK ACTIVE' : 'UPCOMING NEWS'}
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className={`text-[10px] font-black ${isNewsBlocked ? 'text-rose-400' : 'text-zinc-300'} truncate max-w-[150px]`}>
+                  <span className={`text-xs font-bold ${isNewsBlocked ? 'text-rose-400' : 'text-zinc-300'} truncate max-w-[150px]`}>
                     {upcomingNews[0].country} {upcomingNews[0].title}
                   </span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-zinc-800 border border-white/5 ${isNewsBlocked ? 'text-rose-300' : 'text-indigo-400'}`}>
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md bg-zinc-800 border border-white/5 ${isNewsBlocked ? 'text-rose-300' : 'text-indigo-400'}`}>
                     {getNewsCountdown(upcomingNews[0].time_utc)}
                   </span>
                 </div>
@@ -984,10 +993,10 @@ function App() {
             {/* Modo solo-monitorizacion: el motor de trading autonomo esta retirado (ver
                 PST_API/main.py, lifespan()), ya no hay AUTO/MANUAL que alternar. */}
             <div className="flex flex-col items-end mr-2">
-              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] leading-none mb-1.5">Modo</span>
+              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-[0.2em] leading-none mb-1.5">Modo</span>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-sky-500/10 border-sky-500/30 text-sky-400">
                 <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />
-                <span className="text-[10px] font-black uppercase tracking-widest">Monitor</span>
+                <span className="text-xs font-bold uppercase tracking-widest">Monitor</span>
               </div>
             </div>
 
@@ -1001,9 +1010,9 @@ function App() {
 
 
 
-              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] leading-none mb-1">Engine Load</span>
+              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-[0.2em] leading-none mb-1">Engine Load</span>
 
-              <span className="text-[10px] font-black text-indigo-400 italic">OPTIMAL</span>
+              <span className="text-xs font-bold text-indigo-400 ">OPTIMAL</span>
             </div>
 
             {/* Mute Toggle */}
@@ -1049,75 +1058,7 @@ function App() {
 
 
 
-        {currentView !== 'home' && currentView !== 'surveillance' && currentView !== 'terminal' && (
-
-
-
-          <header className="w-full flex justify-between items-center mb-6 px-6">
-
-
-
-            <div>
-
-
-
-              <h1 className="text-3xl font-black tracking-tighter text-white mb-1 uppercase italic">
-
-
-
-                {currentView === 'surveillance' && `${selectedSymbol} Analysis`}
-
-
-
-                {currentView === 'config' && 'Permissions Matrix'}
-
-
-
-              </h1>
-
-
-
-              <div className="flex items-center gap-3">
-
-
-
-                <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">PST-CORE: V2.6.15 SMC</span>
-
-
-
-                <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
-
-
-
-                <span className="text-zinc-500 font-bold font-mono text-[9px] tracking-widest uppercase text-indigo-400/80">
-
-
-
-                  {currentView === 'surveillance' && 'Real-time Charting & Execution Hub'}
-
-
-
-                  {currentView === 'config' && 'Asset Configuration & Global Toggles'}
-
-
-
-                </span>
-
-
-
-              </div>
-
-
-
-            </div>
-
-
-
-          </header>
-
-
-
-        )}
+        
 
 
 
@@ -1147,25 +1088,25 @@ function App() {
                 { label: 'Max Win Streak', value: analyticsData?.metrics?.max_win_streak || 0, icon: TrendingUp, color: 'text-emerald-500' },
                 { label: 'Realized PnL', value: `${(analyticsData?.metrics?.gross_profit - analyticsData?.metrics?.gross_loss || 0).toFixed(2)}€`, icon: Wallet, color: 'text-white' },
               ].map((kpi, idx) => (
-                <div key={idx} className="bg-zinc-900/30 border border-white/5 rounded-[2rem] p-6 hover:bg-zinc-900/50 transition-all">
+                <div key={idx} className="bg-zinc-900/30 border border-white/5 rounded-2xl p-6 hover:bg-zinc-900/50 transition-all">
                   <div className="flex items-center justify-between mb-4">
                     <div className={`p-3 rounded-2xl bg-white/5 ${kpi.color}`}>
                       <kpi.icon size={20} />
                     </div>
                   </div>
-                  <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">{kpi.label}</p>
-                  <h3 className={`text-3xl font-black italic tracking-tighter ${kpi.color}`}>{kpi.value}</h3>
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1">{kpi.label}</p>
+                  <h3 className={`text-3xl font-bold  tracking-tighter ${kpi.color}`}>{kpi.value}</h3>
                 </div>
               ))}
             </div>
 
             <div className="px-4">
-              <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl overflow-hidden">
+              <div className="pst-card p-6 overflow-hidden">
                 <div className="flex items-center justify-between mb-8">
-                  <h3 className="text-xl font-black text-white italic tracking-tighter uppercase">Equity Curve Surveillance</h3>
+                  <h3 className="pst-title">Equity Curve Surveillance</h3>
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
-                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Cumulative Growth</span>
+                    <div className="w-3 h-3 bg-indigo-500 rounded-full" />
+                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Cumulative Growth</span>
                   </div>
                 </div>
                 <div className="h-[400px] w-full">
@@ -1196,21 +1137,21 @@ function App() {
             </div>
 
             <div className="px-4 mt-8">
-              <div className="bg-[#050505] border border-white/5 rounded-[3rem] p-8 shadow-2xl">
-                <h3 className="text-xl font-black text-white italic tracking-tighter uppercase mb-8">Intelligence Breakdown: Strategy Win Rates</h3>
+              <div className="pst-card p-6">
+                <h3 className="pst-title">Intelligence Breakdown: Strategy Win Rates</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                   {analyticsData?.metrics?.by_strategy && Object.entries(analyticsData.metrics.by_strategy).map(([name, data]) => (
                     <div key={name} className="bg-zinc-900/30 border border-white/5 rounded-3xl p-6 hover:bg-zinc-900/50 transition-all group">
                       <div className="flex justify-between items-start mb-4">
                         <div>
-                          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] mb-1">Tactical System</p>
-                          <h4 className="text-lg font-black text-white italic tracking-tighter uppercase">{name}</h4>
+                          <p className="text-xs font-bold text-zinc-500 uppercase tracking-[0.2em] mb-1">Tactical System</p>
+                          <h4 className="text-lg font-bold text-white  tracking-tighter uppercase">{name}</h4>
                         </div>
                         <div className="text-right">
-                          <div className={`px-3 py-1 rounded-full text-[10px] font-black mb-2 ${data.win_rate >= 50 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                          <div className={`px-3 py-1 rounded-full text-xs font-bold mb-2 ${data.win_rate >= 50 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
                             {data.win_rate}% WR
                           </div>
-                          <div className={`text-xs font-black font-mono block ${data.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <div className={`text-xs font-bold font-mono block ${data.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {data.profit >= 0 ? '+' : ''}{data.profit.toFixed(2)} $
                           </div>
                         </div>
@@ -1218,17 +1159,17 @@ function App() {
                       <div className="space-y-3">
                         <div className="flex justify-between items-center text-[11px]">
                           <span className="text-zinc-500 font-bold uppercase tracking-widest">Total Engagements</span>
-                          <span className="text-white font-black font-mono">{data.total}</span>
+                          <span className="text-white font-bold font-mono">{data.total}</span>
                         </div>
                         <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                           <div
-                            className={`h-full transition-all duration-1000 ${data.win_rate >= 50 ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]'}`}
+                            className={`h-full transition-all duration-1000 ${data.win_rate >= 50 ? 'bg-emerald-500' : 'bg-rose-500'}`}
                             style={{ width: `${data.win_rate}%` }}
                           />
                         </div>
                         <div className="flex justify-between items-center text-[11px]">
                           <span className="text-zinc-500 font-bold uppercase tracking-widest">Confirmed Wins</span>
-                          <span className="text-emerald-400 font-black font-mono">{data.wins}</span>
+                          <span className="text-emerald-400 font-bold font-mono">{data.wins}</span>
                         </div>
                       </div>
                     </div>
@@ -1243,14 +1184,14 @@ function App() {
           <div className="w-full px-4 animate-in fade-in slide-in-from-bottom-2 duration-700">
             <div className="mb-4" />
 
-            <div className="bg-[#050505] border border-white/5 rounded-[3rem] overflow-hidden shadow-2xl transition-all">
+            <div className="bg-[#050505] border border-white/5 rounded-3xl overflow-hidden shadow-2xl transition-all">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-white/5">
-                    <th className="px-6 py-5 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Trade Info</th>
-                    <th className="px-6 py-5 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-center">Outcome</th>
-                    <th className="px-6 py-5 text-[10px] font-black text-zinc-500 uppercase tracking-widest">Journal & Snapshot</th>
-                    <th className="px-6 py-5 text-[10px] font-black text-zinc-500 uppercase tracking-widest text-right">Execute</th>
+                    <th className="px-6 py-5 text-xs font-bold text-zinc-500 uppercase tracking-widest">Trade Info</th>
+                    <th className="px-6 py-5 text-xs font-bold text-zinc-500 uppercase tracking-widest text-center">Outcome</th>
+                    <th className="px-6 py-5 text-xs font-bold text-zinc-500 uppercase tracking-widest">Journal & Snapshot</th>
+                    <th className="px-6 py-5 text-xs font-bold text-zinc-500 uppercase tracking-widest text-right">Execute</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/[0.03]">
@@ -1259,7 +1200,7 @@ function App() {
                       <td colSpan="4" className="py-20 text-center">
                         <div className="flex flex-col items-center gap-4 opacity-20">
                           <BookMarked size={48} />
-                          <p className="text-xs font-black uppercase tracking-[0.4em]">Historical Nodes Empty</p>
+                          <p className="text-xs font-bold uppercase tracking-[0.4em]">Historical Nodes Empty</p>
                         </div>
                       </td>
                     </tr>
@@ -1268,23 +1209,23 @@ function App() {
                       <tr key={t.ticket} className="hover:bg-white/[0.01] transition-colors group">
                         <td className="px-6 py-6">
                           <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black italic text-sm ${t.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold  text-sm ${t.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
                               {t.type[0]}
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
-                                <h4 className="text-base font-black text-white italic tracking-tighter">{t.symbol}</h4>
-                                <span className="text-[10px] font-bold text-zinc-600 uppercase">#{t.ticket}</span>
+                                <h4 className="text-base font-bold text-white  tracking-tighter">{t.symbol}</h4>
+                                <span className="text-xs font-bold text-zinc-600 uppercase">#{t.ticket}</span>
                               </div>
-                              <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{t.strategy}</p>
+                              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{t.strategy}</p>
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-6 text-center">
-                          <div className={`text-lg font-black italic tracking-tighter ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <div className={`text-lg font-bold  tracking-tighter ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {t.profit >= 0 ? '+' : ''}{t.profit.toFixed(2)}€
                           </div>
-                          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Realized PnL</p>
+                          <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest">Realized PnL</p>
                         </td>
                         <td className="px-6 py-6">
                           <div className="flex items-center gap-3">
@@ -1293,7 +1234,7 @@ function App() {
                               className="p-3 bg-zinc-900 border border-white/5 rounded-xl text-zinc-400 hover:text-white hover:border-indigo-500/50 transition-all flex items-center gap-2"
                             >
                               <ImageIcon size={16} />
-                              <span className="text-[9px] font-black uppercase tracking-widest">Snapshot</span>
+                              <span className="text-[11px] font-bold uppercase tracking-widest">Snapshot</span>
                             </button>
                             <div className="flex-1 min-w-[200px]">
                               <input
@@ -1354,6 +1295,12 @@ function App() {
           </div>
         )}
 
+        {currentView === 'puntuador' && (
+          <div className="w-full h-full pt-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <PuntuadorPanel />
+          </div>
+        )}
+
         {activeView === 'home' && currentView === 'home' && (
           <div className="w-full px-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
             {/* Home Header with Focus Mode Toggle */}
@@ -1379,8 +1326,8 @@ function App() {
               {/* Focus Mode Toggle */}
               <div className="flex items-center gap-4 bg-black/40 backdrop-blur-xl p-2 rounded-2xl border border-white/5">
                 <div className="flex flex-col items-end px-2">
-                  <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Opportunity Rank</span>
-                  <span className={`text-[10px] font-bold ${isFocusMode ? 'text-indigo-400' : 'text-zinc-600'}`}>{isFocusMode ? 'ACTIVE' : 'STANDBY'}</span>
+                  <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Opportunity Rank</span>
+                  <span className={`text-xs font-bold ${isFocusMode ? 'text-indigo-400' : 'text-zinc-600'}`}>{isFocusMode ? 'ACTIVE' : 'STANDBY'}</span>
                 </div>
                 <button
                   onClick={() => setIsFocusMode(!isFocusMode)}
@@ -1401,8 +1348,8 @@ function App() {
                     <Zap className="text-indigo-500 animate-pulse" size={18} />
                   </div>
                   <div>
-                    <h3 className="text-sm font-black text-white italic tracking-[0.2em] uppercase">Active Fleet Intelligence</h3>
-                    <p className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">Live Monitoring & Quick Tactical Exit</p>
+                    <h3 className="text-sm font-bold text-white  tracking-[0.2em] uppercase">Active Fleet Intelligence</h3>
+                    <p className="text-[11px] text-zinc-500 font-bold uppercase tracking-widest">Live Monitoring & Quick Tactical Exit</p>
                   </div>
                 </div>
 
@@ -1415,24 +1362,24 @@ function App() {
                     >
                       <div className="flex justify-between items-start">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black italic text-[10px] ${t.type === 'BUY' ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]'}`}>
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold  text-xs ${t.type === 'BUY' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
                             {t.type[0]}
                           </div>
                           <div>
-                            <h4 className="text-white font-black italic text-sm leading-none">{t.symbol}</h4>
+                            <h4 className="text-white font-bold  text-sm leading-none">{t.symbol}</h4>
                             <div className="flex flex-col mt-1">
-                                <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
-                                <span className="text-[11px] font-black text-indigo-400 uppercase tracking-widest mt-0.5">
+                                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-tighter">TIC: {t.ticket}</span>
+                                <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mt-0.5">
                                     {t.price_current?.toFixed((t.symbol.includes('EURUSD') || t.symbol.includes('GBPUSD')) ? 5 : (t.symbol.includes('JPY') || t.symbol.includes('XAU')) ? 3 : 2)}
                                 </span>
                             </div>
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className={`text-base font-black italic tracking-tighter ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className={`text-base font-bold  tracking-tighter ${t.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {t.profit >= 0 ? '+' : ''}{t.profit.toFixed(2)}€
                           </span>
-                          <div className="text-[7px] font-black text-zinc-600 uppercase">Yield</div>
+                          <div className="text-[11px] font-bold text-zinc-600 uppercase">Yield</div>
                         </div>
                       </div>
 
@@ -1440,8 +1387,8 @@ function App() {
 
                       <div className="flex items-center justify-between gap-2 border-t border-white/5 pt-3 mt-1">
                         <div className="flex flex-col">
-                          <span className="text-[8px] font-black text-zinc-600 uppercase">Strategy</span>
-                          <span className="text-[11px] font-black text-indigo-400 uppercase truncate max-w-[120px]">{t.strategy}</span>
+                          <span className="text-[11px] font-bold text-zinc-600 uppercase">Strategy</span>
+                          <span className="text-[11px] font-bold text-indigo-400 uppercase truncate max-w-[120px]">{t.strategy}</span>
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -1452,7 +1399,7 @@ function App() {
                           </button>
                           <button
                             onClick={() => handleCloseTrade(t.ticket)}
-                            className="px-3 py-1 bg-rose-600/20 border border-rose-500/40 text-rose-400 rounded-lg text-[9px] font-black uppercase hover:bg-rose-600/40 transition-all"
+                            className="px-3 py-1 bg-rose-600/20 border border-rose-500/40 text-rose-400 rounded-lg text-[11px] font-bold uppercase hover:bg-rose-600/40 transition-all"
                           >
                             EXIT
                           </button>
@@ -1496,14 +1443,14 @@ function App() {
                 let heatGlow = '';
 
                 if (hasProfit) {
-                  heatClass = 'border-emerald-500/60 shadow-[0_0_20px_rgba(16,185,129,0.1)]';
+                  heatClass = 'border-emerald-500/60';
                   heatGlow = 'bg-emerald-500/5';
                 } else if (hasLoss) {
-                  heatClass = 'border-rose-500/60 shadow-[0_0_20px_rgba(244,63,94,0.1)]';
+                  heatClass = 'border-rose-500/60';
                   heatGlow = 'bg-rose-500/5';
                 }
 
-                const glowClass = (hasOpenPosition && !isClosed) ? 'shadow-[0_0_40px_rgba(99,102,241,0.15)]' : '';
+                const glowClass = (hasOpenPosition && !isClosed) ? '' : '';
                 const closedClass = isClosed ? 'opacity-40 grayscale-[0.8]' : 'opacity-100';
 
                 if (viewMode === 'nano') {
@@ -1518,17 +1465,17 @@ function App() {
                           <ShieldCheck size={14} className={colorClass} />
                         </div>
                         <div>
-                          <h3 className="text-white text-[11px] font-black uppercase tracking-widest leading-none">{s.symbol}</h3>
-                          <span className="text-[7px] font-bold text-zinc-500 tracking-tighter uppercase">{(s.strategies || []).length} EA{(s.strategies || []).length === 1 ? '' : 's'}</span>
+                          <h3 className="text-white text-[11px] font-bold uppercase tracking-widest leading-none">{s.symbol}</h3>
+                          <span className="text-[11px] font-bold text-zinc-500 tracking-tighter uppercase">{(s.strategies || []).length} EA{(s.strategies || []).length === 1 ? '' : 's'}</span>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-4 flex-1">
                         <div className="flex flex-col items-center min-w-[70px]">
-                          <span className="text-base font-black text-white italic tracking-tighter leading-none">
+                          <span className="text-base font-bold text-white  tracking-tighter leading-none">
                             {s.price?.toFixed((s.symbol.includes('EURUSD') || s.symbol.includes('GBPUSD')) ? 5 : s.symbol.includes('JPY') ? 3 : 2)}
                           </span>
-                          <span className={`text-[9px] font-black italic ${s.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className={`text-[11px] font-bold  ${s.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {s.daily_change_pct >= 0 ? '+' : ''}{s.daily_change_pct?.toFixed(2)}%
                           </span>
                         </div>
@@ -1537,7 +1484,7 @@ function App() {
                         </div>
                         <div className="flex flex-col items-center min-w-[60px] border-l border-white/5 pl-4">
                           <span className="text-[6px] font-bold text-zinc-600 mb-0.5 uppercase tracking-tighter">Day PNL</span>
-                          <span className={`text-[10px] font-black ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className={`text-xs font-bold ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                           </span>
                         </div>
@@ -1547,7 +1494,7 @@ function App() {
                         <div className="flex flex-col items-end mr-2">
                           <div className="flex items-center gap-1.5">
                             {hasOpenPosition && <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />}
-                            <span className={`text-[10px] font-black ${colorClass}`}>{openCount > 0 ? `${openCount} ABIERTA${openCount === 1 ? '' : 'S'}` : '--'}</span>
+                            <span className={`text-xs font-bold ${colorClass}`}>{openCount > 0 ? `${openCount} ABIERTA${openCount === 1 ? '' : 'S'}` : '--'}</span>
                           </div>
                         </div>
                       </div>
@@ -1559,7 +1506,7 @@ function App() {
                   <div
                     key={s.symbol}
                     onClick={() => navigateToSurveillance(s.symbol)}
-                    className={`glass-card ${heatClass} rounded-[2rem] p-6 hover:bg-zinc-900/60 transition-all duration-500 group cursor-pointer relative overflow-hidden shadow-2xl ${glowClass} ${closedClass} flex flex-col gap-5 min-h[420px]`}
+                    className={`glass-card ${heatClass} rounded-2xl p-6 hover:bg-zinc-900/60 transition-all duration-500 group cursor-pointer relative overflow-hidden shadow-2xl ${glowClass} ${closedClass} flex flex-col gap-5 min-h[420px]`}
                   >
                     {heatGlow && <div className={`absolute inset-0 ${heatGlow} animate-pulse duration-[4000ms] pointer-events-none`} />}
                     {/* Header: Title & Status */}
@@ -1569,11 +1516,10 @@ function App() {
                           <ShieldCheck size={18} className={colorClass} />
                         </div>
                         <div>
-                          <h3 className="text-white text-sm font-black uppercase tracking-widest leading-none">{s.symbol}</h3>
-                          <span className="text-[8px] font-bold text-zinc-500 tracking-[0.2em]">{(s.strategies || []).length} EA{(s.strategies || []).length === 1 ? '' : 's'} configurada{(s.strategies || []).length === 1 ? '' : 's'}</span>
+                          <h3 className="text-white text-sm font-bold uppercase tracking-widest leading-none">{s.symbol}</h3>
                         </div>
                       </div>
-                      <div className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase border ${bgClass}/10 ${colorClass} ${borderClass} backdrop-blur-md`}>
+                      <div className={`px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase border ${bgClass}/10 ${colorClass} ${borderClass} backdrop-blur-md`}>
                         {statusLabel}
                       </div>
                     </div>
@@ -1581,15 +1527,15 @@ function App() {
                     {/* Price & Change */}
                     <div className="flex justify-between items-end relative z-10 px-1">
                       <div>
-                        <span className="text-3xl font-black text-white italic tracking-tighter block leading-none mb-1">
+                        <span className="text-3xl font-bold text-white  tracking-tighter block leading-none mb-1">
                           {s.price?.toFixed((s.symbol.includes('EURUSD') || s.symbol.includes('GBPUSD')) ? 5 : s.symbol.includes('JPY') ? 3 : 2)}
                         </span>
                         <div className="flex items-center gap-2">
-                          <span className={`text-xs font-black italic ${s.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span className={`text-xs font-bold  ${s.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {s.daily_change_pct >= 0 ? '+' : ''}{s.daily_change_pct?.toFixed(2)}%
                           </span>
                           {(s.floating_pnl !== undefined) && (
-                            <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase ${s.floating_pnl > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : s.floating_pnl < 0 ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
+                            <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold uppercase ${s.floating_pnl > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : s.floating_pnl < 0 ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}>
                               Live: {s.floating_pnl > 0 ? '+' : ''}{s.floating_pnl.toFixed(2)}€
                             </span>
                           )}
@@ -1600,38 +1546,44 @@ function App() {
                       </div>
                     </div>
 
+                    {/* Puntuación de cercanía a compra/venta (agente puntuador, solo visual) */}
+                    <div className="relative z-10 px-1">
+                      <ProximityGauge proximidad={s.proximidad} />
+                    </div>
+
                     {/* PnL — el detalle RSI/ADX por timeframe vive en Live Detail (clic en la
                         tarjeta), no aquí: pedirlo para las 12 tarjetas a la vez en cada sondeo
                         de 3s sería caro y bloquearía el resto de la API (calculo sincrono). */}
                     <div className="flex justify-around items-center gap-2 bg-black/20 p-3 rounded-2xl border border-white/5 relative z-10">
                       <div className="flex flex-col items-center">
-                        <span className="text-[7px] font-black text-zinc-600 uppercase">PNL 24H</span>
-                        <span className={`text-[13px] font-black leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <span className="text-[11px] font-bold text-zinc-600 uppercase">PNL 24H</span>
+                        <span className={`text-[13px] font-bold leading-none ${(s.daily_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {(s.daily_pnl || 0) >= 0 ? '+' : ''}{(s.daily_pnl || 0).toFixed(2)}€
                         </span>
                       </div>
                       <div className="flex flex-col items-center border-l border-white/5 pl-6">
-                        <span className="text-[7px] font-black text-zinc-600 uppercase">TOTAL PNL</span>
-                        <span className={`text-[13px] font-black leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <span className="text-[11px] font-bold text-zinc-600 uppercase">TOTAL PNL</span>
+                        <span className={`text-[13px] font-bold leading-none ${(s.total_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {(s.total_pnl || 0) >= 0 ? '+' : ''}{(s.total_pnl || 0).toFixed(2)}€
                         </span>
                       </div>
                     </div>
 
-                    {/* EAs configurados + Spread + Posiciones abiertas */}
+                    {/* Spread + Posiciones abiertas + coste API */}
                     <div className="flex flex-col gap-2 px-3 py-2 bg-black/40 rounded-xl border border-white/5 relative z-10">
-                      <div className="flex flex-wrap gap-1">
-                        {(s.strategies && s.strategies.length > 0) ? s.strategies.map(name => (
-                          <span key={name} className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[7px] font-black uppercase tracking-wide">
-                            {name.replace('PST_', '')}
+                      <div className="flex flex-col gap-1 text-[11px] font-bold uppercase tracking-widest text-zinc-500 border-t border-white/5 pt-1.5">
+                        <div className="flex justify-between items-center gap-2 whitespace-nowrap">
+                          <span>Spread: <span className="text-zinc-300">{s.spread ? s.spread.toFixed(5) : '--'}</span></span>
+                          <span className={hasOpenPosition ? 'text-indigo-400' : 'text-zinc-600'}>
+                            {openCount} posición{openCount === 1 ? '' : 'es'} abierta{openCount === 1 ? '' : 's'}
                           </span>
-                        )) : <span className="text-[7px] font-bold text-zinc-600 uppercase italic">Sin EA asignado</span>}
-                      </div>
-                      <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-widest text-zinc-500 border-t border-white/5 pt-1.5">
-                        <span>Spread: <span className="text-zinc-300">{s.spread ? s.spread.toFixed(5) : '--'}</span></span>
-                        <span className={hasOpenPosition ? 'text-indigo-400' : 'text-zinc-600'}>
-                          {openCount} posición{openCount === 1 ? '' : 'es'} abierta{openCount === 1 ? '' : 's'}
-                        </span>
+                        </div>
+                        {llm.agentes.some(a => a.symbol === s.symbol) && (
+                          <div className="whitespace-nowrap" title="Coste acumulado de este agente a precio de API (no es lo que se paga con la suscripción)">
+                            API <span className="text-zinc-300">${(llm.agentes.find(a => a.symbol === s.symbol).coste_usd || 0).toFixed(2)}</span>
+                            <span className="text-indigo-300"> · {llm.agentes.find(a => a.symbol === s.symbol).modelo}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1643,7 +1595,7 @@ function App() {
 
 
 
-                <div className="col-span-full py-24 flex flex-col items-center justify-center bg-zinc-900/10 border-2 border-dashed border-zinc-800 rounded-[3rem] opacity-50 grayscale">
+                <div className="col-span-full py-24 flex flex-col items-center justify-center bg-zinc-900/10 border-2 border-dashed border-zinc-800 rounded-3xl opacity-50 grayscale">
 
 
 
@@ -1651,11 +1603,11 @@ function App() {
 
 
 
-                  <p className="text-xl font-black text-zinc-600 uppercase tracking-widest">No Authorized Assets Detected</p>
+                  <p className="text-xl font-bold text-zinc-600 uppercase tracking-widest">No Authorized Assets Detected</p>
 
 
 
-                  <p className="text-sm font-bold text-zinc-800 mt-2 uppercase italic tracking-tighter">Use permissions matrix to activate symbols</p>
+                  <p className="text-sm font-bold text-zinc-800 mt-2 uppercase  tracking-tighter">Use permissions matrix to activate symbols</p>
 
 
 
@@ -1707,7 +1659,7 @@ function App() {
 
 
 
-              <div className="flex-1 bg-zinc-900/20 border border-zinc-800/50 rounded-[2rem] overflow-hidden shadow-2xl flex flex-col">
+              <div className="flex-1 bg-zinc-900/20 border border-zinc-800/50 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
 
 
 
@@ -1750,7 +1702,7 @@ function App() {
 
 
 
-                          className={`px-3 py-1 rounded-lg text-[10px] font-black transition-all ${selectedTimeframe === tf
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${selectedTimeframe === tf
 
 
 
@@ -1798,7 +1750,7 @@ function App() {
 
 
 
-                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest border ${sym.signal_direction === 'BUY' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' :
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-widest border ${sym.signal_direction === 'BUY' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' :
 
 
 
@@ -1826,7 +1778,7 @@ function App() {
 
 
 
-                  <button onClick={() => setCurrentView('home')} className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-[9px] font-black uppercase tracking-widest text-zinc-500 transition-all">
+                  <button onClick={() => setCurrentView('home')} className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-[11px] font-bold uppercase tracking-widest text-zinc-500 transition-all">
 
 
 
@@ -1875,7 +1827,7 @@ function App() {
 
 
 
-              <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-6 shadow-2xl flex flex-col gap-5 overflow-visible transition-all duration-500" style={{ height: '320px' }}>
+              <div className="bg-[#050505] border border-zinc-800/80 rounded-2xl p-6 shadow-2xl flex flex-col gap-5 overflow-visible transition-all duration-500" style={{ height: '320px' }}>
 
 
 
@@ -1887,7 +1839,7 @@ function App() {
 
 
 
-                    <div className="w-1.5 h-5 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+                    <div className="w-1.5 h-5 bg-indigo-500 rounded-full" />
 
 
 
@@ -1972,7 +1924,7 @@ function App() {
 
 
 
-                            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2.5 whitespace-nowrap border ${isActive
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-2.5 whitespace-nowrap border ${isActive
 
 
 
@@ -1996,7 +1948,7 @@ function App() {
 
 
 
-                            <div className={`px-1.5 py-0.5 rounded-lg text-[9px] font-black border ${isActive ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5'}`}>
+                            <div className={`px-1.5 py-0.5 rounded-lg text-[11px] font-bold border ${isActive ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5'}`}>
 
 
 
@@ -2097,25 +2049,7 @@ function App() {
 
 
                         return (
-
-
-
-                          <div className="col-span-full py-8 flex flex-col items-center justify-center gap-2 opacity-20 grayscale">
-
-
-
-                            <Activity size={24} className="animate-pulse" />
-
-
-
-                            <p className="text-[8px] font-black uppercase tracking-[0.4em] italic">Intelligence Standby</p>
-
-
-
-                          </div>
-
-
-
+                          <LlmSeguro api={api} API_BASE={API_BASE} symbol={selectedSymbol} onHistorial={() => setLlmDecisiones(selectedSymbol)} />
                         );
 
 
@@ -2126,22 +2060,22 @@ function App() {
                         <div key={i} className="bg-zinc-900/40 border border-zinc-800/40 rounded-xl p-2.5 flex flex-col justify-between hover:bg-zinc-800/20 transition-all group relative hover:z-50">
                           <div className="flex justify-between items-start mb-0.5">
                             <div className="flex items-center gap-1.5 relative group/tooltip">
-                              <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest leading-none">{f.k}</span>
+                              <span className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest leading-none">{f.k}</span>
                               {f.desc && (
                                 <>
                                   <Info size={10} className="text-indigo-500/50 cursor-help hover:text-indigo-400 transition-colors" />
-                                  <div className={`absolute ${i < 5 ? 'top-full mt-2' : 'bottom-full mb-2'} left-0 w-64 p-3 bg-[#080808] border border-indigo-500/30 rounded-xl text-[10px] text-zinc-300 opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-all duration-300 z-[100] shadow-2xl translate-y-1 group-hover/tooltip:translate-y-0 backdrop-blur-xl`}>
-                                    <div className="text-indigo-400 font-black mb-1.5 uppercase tracking-widest text-[8px] border-b border-indigo-500/10 pb-1">{f.k}</div>
+                                  <div className={`absolute ${i < 5 ? 'top-full mt-2' : 'bottom-full mb-2'} left-0 w-64 p-3 bg-[#080808] border border-indigo-500/30 rounded-xl text-xs text-zinc-300 opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-all duration-300 z-[100] shadow-2xl translate-y-1 group-hover/tooltip:translate-y-0 backdrop-blur-xl`}>
+                                    <div className="text-indigo-400 font-bold mb-1.5 uppercase tracking-widest text-[11px] border-b border-indigo-500/10 pb-1">{f.k}</div>
                                     <div className="leading-relaxed">{f.desc}</div>
                                   </div>
                                 </>
                               )}
                             </div>
-                            <span className={`text-[9px] font-black italic tracking-tighter ${f.score > 0 ? 'text-emerald-500' : f.score < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
+                            <span className={`text-[11px] font-bold  tracking-tighter ${f.score > 0 ? 'text-emerald-500' : f.score < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
                               {f.score > 0 ? '+' : ''}{f.score.toFixed(0)}
                             </span>
                           </div>
-                          <p className="text-[10px] font-black text-zinc-300 tracking-tighter uppercase line-clamp-1" title={f.v}>{f.v}</p>
+                          <p className="text-xs font-bold text-zinc-300 tracking-tighter uppercase line-clamp-1" title={f.v}>{f.v}</p>
                         </div>
                       ));
                     })()}
@@ -2252,7 +2186,7 @@ function App() {
 
 
 
-                    <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-4 shadow-2xl space-y-4 flex-shrink-0">
+                    <div className="bg-[#050505] border border-zinc-800/80 rounded-2xl p-4 shadow-2xl space-y-4 flex-shrink-0">
 
 
 
@@ -2264,11 +2198,11 @@ function App() {
 
 
 
-                          <p className="text-[9px] font-black text-zinc-600 uppercase tracking-[0.3em]">Sentinel Intel</p>
+                          <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.3em]">Sentinel Intel</p>
 
 
 
-                          <h3 className="text-base font-black text-white italic tracking-tighter mt-0.5">{selectedSymbol}</h3>
+                          <h3 className="text-base font-bold text-white  tracking-tighter mt-0.5">{selectedSymbol}</h3>
 
 
 
@@ -2276,7 +2210,7 @@ function App() {
 
 
 
-                        <div className={`px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-widest border ${hasSignal ? (isBuy ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' : 'bg-rose-500/15 border-rose-500/40 text-rose-400') : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'}`}>
+                        <div className={`px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-widest border ${hasSignal ? (isBuy ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' : 'bg-rose-500/15 border-rose-500/40 text-rose-400') : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'}`}>
 
 
 
@@ -2320,11 +2254,11 @@ function App() {
 
 
 
-                            <span className="text-sm font-black text-white leading-none">{Math.round(score)}</span>
+                            <span className="text-sm font-bold text-white leading-none">{Math.round(score)}</span>
 
 
 
-                            <span className="text-[7px] font-bold text-zinc-600 uppercase">score</span>
+                            <span className="text-[11px] font-bold text-zinc-600 uppercase">score</span>
 
 
 
@@ -2340,7 +2274,7 @@ function App() {
 
 
 
-                          <p className="text-base font-black text-white italic tracking-tighter leading-none truncate">
+                          <p className="text-base font-bold text-white  tracking-tighter leading-none truncate">
 
 
 
@@ -2352,7 +2286,7 @@ function App() {
 
 
 
-                          <p className={`text-sm font-black mt-1 ${sym.daily_change_pct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                          <p className={`text-sm font-bold mt-1 ${sym.daily_change_pct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
 
 
 
@@ -2364,7 +2298,7 @@ function App() {
 
 
 
-                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-widest border ${regimeClass}`}>{sym.regime || 'SCAN'}</span>
+                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-widest border ${regimeClass}`}>{sym.regime || 'SCAN'}</span>
 
 
 
@@ -2388,11 +2322,11 @@ function App() {
 
 
 
-                            <p className="text-[7px] font-black text-zinc-600 uppercase tracking-widest">Active PnL</p>
+                            <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest">Active PnL</p>
 
 
 
-                            <p className={`text-sm font-black italic mt-0.5 ${activeTrade.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{activeTrade.profit >= 0 ? '+' : ''}{activeTrade.profit?.toFixed(2)}€</p>
+                            <p className={`text-sm font-bold  mt-0.5 ${activeTrade.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{activeTrade.profit >= 0 ? '+' : ''}{activeTrade.profit?.toFixed(2)}€</p>
 
 
 
@@ -2404,11 +2338,11 @@ function App() {
 
 
 
-                            <p className="text-[7px] font-black text-zinc-600 uppercase tracking-widest">Vol</p>
+                            <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest">Vol</p>
 
 
 
-                            <p className="text-sm font-black text-white">{activeTrade.volume}L</p>
+                            <p className="text-sm font-bold text-white">{activeTrade.volume}L</p>
 
 
 
@@ -2416,7 +2350,7 @@ function App() {
                           <button
                             onClick={(e) => { e.stopPropagation(); handleCloseTrade(activeTrade.ticket) }}
                             title="Cerrar posición"
-                            className="ml-1 px-2 py-1.5 rounded-lg bg-rose-600/20 border border-rose-500/40 text-rose-400 text-[9px] font-black uppercase tracking-wide hover:bg-rose-600/40 hover:text-rose-300 transition-all active:scale-95"
+                            className="ml-1 px-2 py-1.5 rounded-lg bg-rose-600/20 border border-rose-500/40 text-rose-400 text-[11px] font-bold uppercase tracking-wide hover:bg-rose-600/40 hover:text-rose-300 transition-all active:scale-95"
                           >
                             × Close
                           </button>
@@ -2470,7 +2404,7 @@ function App() {
 
 
 
-                  <div className="bg-[#050505] border border-zinc-800/80 rounded-[2rem] p-4 shadow-2xl flex-shrink-0">
+                  <div className="bg-[#050505] border border-zinc-800/80 rounded-2xl p-4 shadow-2xl flex-shrink-0">
 
 
 
@@ -2482,7 +2416,7 @@ function App() {
 
 
 
-                      <p className="text-[8px] font-black text-zinc-600 uppercase tracking-[0.25em]">Multi-TF Radar</p>
+                      <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Multi-TF Radar</p>
 
 
 
@@ -2526,7 +2460,7 @@ function App() {
 
 
 
-                            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{tf}</span>
+                            <span className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest">{tf}</span>
 
 
 
@@ -2534,11 +2468,11 @@ function App() {
 
 
 
-                              <p className="text-[7px] font-bold text-zinc-700 uppercase">RSI</p>
+                              <p className="text-[11px] font-bold text-zinc-700 uppercase">RSI</p>
 
 
 
-                              <p className={`text-sm font-black ${rsiColor}`}>{rsi !== null ? rsi : '€'}</p>
+                              <p className={`text-sm font-bold ${rsiColor}`}>{rsi !== null ? rsi : '€'}</p>
 
 
 
@@ -2550,11 +2484,11 @@ function App() {
 
 
 
-                              <p className="text-[7px] font-bold text-zinc-700 uppercase">ADX</p>
+                              <p className="text-[11px] font-bold text-zinc-700 uppercase">ADX</p>
 
 
 
-                              <p className={`text-sm font-black ${adxColor}`}>{adx !== null ? adx : '€'}</p>
+                              <p className={`text-sm font-bold ${adxColor}`}>{adx !== null ? adx : '€'}</p>
 
 
 
@@ -2653,64 +2587,116 @@ function App() {
 
           currentView === 'config' && (
             <div className="w-full px-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-              {/* Header */}
-              <div className="flex items-center gap-6 mb-8">
-                <div className="w-16 h-16 bg-indigo-500/10 rounded-[1.5rem] flex items-center justify-center border border-indigo-500/20 shadow-[0_0_40px_rgba(99,102,241,0.15)]">
-                  <Settings className="text-indigo-500" size={32} />
-                </div>
-                <div>
-                  <h2 className="text-3xl font-black text-white tracking-widest uppercase italic leading-none">Símbolos</h2>
-                  <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-[0.35em] mt-1.5">Activa o desactiva qué símbolos ver en el dashboard</p>
-                </div>
-              </div>
+              {llm.error && <p className="text-[11px] text-rose-400 mb-4">{llm.error}</p>}
 
-              {/* Symbol Cards Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
-                {symbols.map(s => (
-                  <div
-                    key={s.symbol}
-                    onClick={() => toggleSymbolStatus(s.symbol, s.is_active)}
-                    className={`group bg-[#050505] border rounded-[1.5rem] p-4 flex flex-col gap-3 cursor-pointer transition-all duration-300 hover:border-indigo-500/60 hover:shadow-[0_0_30px_rgba(99,102,241,0.15)] ${s.is_active ? 'border-indigo-500/40' : 'border-zinc-800/40 opacity-60'}`}
-                  >
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-2">
-                        <Activity size={16} className={s.is_active ? 'text-indigo-400 animate-pulse' : 'text-zinc-600'} />
-                        <h3 className="text-base font-black text-white italic tracking-tighter">{s.symbol}</h3>
-                        {s.type ? <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest px-1.5 py-0.5 bg-white/5 rounded">{s.type}</span> : null}
-                      </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleSymbolStatus(s.symbol, s.is_active); }}
-                        className={`w-9 h-4.5 rounded-full relative transition-all ${s.is_active ? 'bg-indigo-600' : 'bg-zinc-800'}`}
-                      >
-                        <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${s.is_active ? 'right-0.5' : 'left-0.5'}`} />
-                      </button>
-                    </div>
+              {/* Topes de la rotacion de la flota LLM */}
+              <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
+                activosAhora={llm.agentes.filter(a => a.activo).length} />
 
-                    {/* EAs configurados en MT5 para este símbolo (informativo, no editable aquí) */}
-                    <div className="flex flex-wrap gap-1">
-                      {(s.strategies && s.strategies.length > 0) ? s.strategies.map(name => (
-                        <span key={name} className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[8px] font-black uppercase tracking-wide">
-                          {name.replace('PST_', '')}
-                        </span>
-                      )) : <span className="text-[8px] font-bold text-zinc-600 uppercase italic">Sin EA asignado</span>}
-                    </div>
-
-                    <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-zinc-500 border-t border-white/5 pt-2 mt-auto">
-                      <span>Spread: <span className="text-zinc-300">{s.spread ? s.spread.toFixed(5) : '--'}</span></span>
-                      <span className={(s.open_positions || 0) > 0 ? 'text-indigo-400' : 'text-zinc-600'}>
-                        {s.open_positions || 0} abierta{(s.open_positions || 0) === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                  </div>
+              {/* Filtro: todos los simbolos, solo los que tienen agente LLM, o solo los que lo tienen activo */}
+              <div className="flex items-center gap-2 mb-6">
+                {[['todos', 'Todos'], ['llm', 'Con agente LLM'], ['activos', 'Activos LLM']].map(([v, t]) => (
+                  <button key={v} onClick={() => setFiltroSimbolos(v)}
+                    className={`text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl border transition-all ${filtroSimbolos === v ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+                    {t}
+                  </button>
                 ))}
               </div>
+
+              {/* Filtro por clase de mercado */}
+              <div className="flex flex-wrap items-center gap-2 mb-6">
+                {['todos', ...ORDEN_GRUPOS].map(g => (
+                  <button key={g} onClick={() => setFiltroClase(g)}
+                    className={`text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border transition-all ${filtroClase === g ? 'bg-zinc-100/10 border-zinc-400/50 text-white' : 'border-zinc-800 text-zinc-600 hover:text-zinc-300'}`}>
+                    {g === 'todos' ? 'Todas las clases' : g}
+                  </button>
+                ))}
+              </div>
+
+              {/* Grupos por clase de mercado (orden fijo); dentro de cada grupo, alfabetico */}
+              {agruparTarjetas(symbols, llm.agentes, filtroSimbolos, filtroClase).map(({ grupo, items }) => (
+                <section key={grupo} className="mb-8">
+                  <div className="flex items-center gap-3 mb-4">
+                    <p className="text-xs text-zinc-500 font-bold uppercase tracking-[0.25em]">{grupo}</p>
+                    <span className="text-[11px] text-zinc-700 font-bold">{items.length}</span>
+                    <div className="flex-1 h-px bg-zinc-800/60" />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
+                    {items.map(s => {
+                      const agente = llm.agentes.find(a => a.symbol === s.symbol)
+                      return (
+                        <div
+                          key={s.symbol}
+                          onClick={s.soloLlm ? undefined : () => toggleSymbolStatus(s.symbol, s.is_active)}
+                          className={`group bg-[#050505] border rounded-2xl p-4 flex flex-col gap-3 transition-all duration-300 ${s.soloLlm ? 'border-zinc-800/40' : `cursor-pointer hover:border-indigo-500/60 hover: ${s.is_active ? 'border-indigo-500/40' : 'border-zinc-800/40 opacity-60'}`}`}
+                        >
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              {s.soloLlm
+                                ? <Bot size={16} className="text-zinc-600" />
+                                : <Activity size={16} className={s.is_active ? 'text-indigo-400 animate-pulse' : 'text-zinc-600'} />}
+                              <h3 className="text-base font-bold text-white  tracking-tighter">{s.symbol}</h3>
+                              {s.type ? <span className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest px-1.5 py-0.5 bg-white/5 rounded">{s.type}</span> : null}
+                            </div>
+                            {!s.soloLlm && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleSymbolStatus(s.symbol, s.is_active); }}
+                                className={`w-9 h-4.5 rounded-full relative transition-all ${s.is_active ? 'bg-indigo-600' : 'bg-zinc-800'}`}
+                              >
+                                <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${s.is_active ? 'right-0.5' : 'left-0.5'}`} />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* EAs configurados en MT5 para este símbolo (informativo, no editable aquí) */}
+                          {!s.soloLlm && (
+                            <div className="flex flex-wrap gap-1">
+                              {(s.strategies && s.strategies.length > 0) ? s.strategies.map(name => (
+                                <span key={name} className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[11px] font-bold uppercase tracking-wide">
+                                  {name.replace('PST_', '')}
+                                </span>
+                              )) : <span className="text-[11px] font-bold text-zinc-600 uppercase ">Sin EA asignado</span>}
+                            </div>
+                          )}
+
+                          {/* Agente LLM del simbolo (si tiene): fila compacta, sus clicks no tocan la tarjeta */}
+                          {agente && (
+                            <LlmFila
+                              agente={agente}
+                              ocupado={!!llm.ocupado[s.symbol]}
+                              onAccion={llm.accion}
+                              onModelo={llm.cambiarModelo}
+                              onTimeframe={llm.cambiarTimeframe}
+                              onDecisiones={setLlmDecisiones}
+                            />
+                          )}
+
+                          {!s.soloLlm && (
+                            <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-widest text-zinc-500 border-t border-white/5 pt-2 mt-auto">
+                              <span>Spread: <span className="text-zinc-300">{s.spread ? s.spread.toFixed(5) : '--'}</span></span>
+                              <span className={(s.open_positions || 0) > 0 ? 'text-indigo-400' : 'text-zinc-600'}>
+                                {s.open_positions || 0} abierta{(s.open_positions || 0) === 1 ? '' : 's'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
+
+              {llmDecisiones && (
+                <LlmDecisionesModal symbol={llmDecisiones} api={api} API_BASE={API_BASE} onCerrar={() => setLlmDecisiones(null)} />
+              )}
 
               {/* Footer Info */}
               <div className="mt-8 p-4 bg-zinc-900/30 border border-zinc-800/50 rounded-2xl flex items-start gap-3">
                 <div className="p-1.5 bg-indigo-500/10 rounded-lg mt-0.5"><Info size={14} className="text-indigo-400" /></div>
                 <div>
-                  <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Este toggle solo controla qué se muestra en el dashboard</p>
-                  <p className="text-[8px] text-zinc-600 font-bold uppercase tracking-wider mt-0.5">Los 9 EAs MQL5 operan de forma independiente directamente en MT5 -- desactivar un símbolo aquí no los para ni los afecta, solo lo oculta de esta vista.</p>
+                  <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">Este toggle solo controla qué se muestra en el dashboard</p>
+                  <p className="text-[11px] text-zinc-600 font-bold uppercase tracking-wider mt-0.5">Los 9 EAs MQL5 operan de forma independiente directamente en MT5 -- desactivar un símbolo aquí no los para ni los afecta, solo lo oculta de esta vista.</p>
                 </div>
               </div>
             </div>
@@ -2747,18 +2733,18 @@ function App() {
                 initial={{ scale: 0.9, opacity: 0, y: 30 }}
                 animate={{ scale: 1, opacity: 1, y: 0 }}
                 exit={{ scale: 0.9, opacity: 0, y: 30 }}
-                className="w-full max-w-5xl bg-[#050505] border border-white/10 rounded-[3rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[90vh]"
+                className="w-full max-w-5xl bg-[#050505] border border-white/10 rounded-3xl overflow-hidden flex flex-col max-h-[90vh]"
               >
                 {/* Modal Header */}
                 <div className="px-10 py-8 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
                   <div>
-                    <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-1">
+                    <h2 className="text-2xl font-bold text-white  tracking-tighter uppercase mb-1">
                       Tactical Snapshot: {journalSnapshot.symbol} #{journalSnapshot.ticket}
                     </h2>
                     <div className="flex items-center gap-3">
-                      <span className="text-zinc-600 font-black font-mono text-[9px] tracking-[0.3em] uppercase">Entry Surveillance Archive</span>
+                      <span className="text-zinc-600 font-bold font-mono text-[11px] tracking-[0.3em] uppercase">Entry Surveillance Archive</span>
                       <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
-                      <span className="text-zinc-500 font-bold font-mono text-[9px] tracking-widest uppercase">{journalSnapshot.timestamp}</span>
+                      <span className="text-zinc-500 font-bold font-mono text-[11px] tracking-widest uppercase">{journalSnapshot.timestamp}</span>
                     </div>
                   </div>
                   <button
@@ -2771,8 +2757,8 @@ function App() {
 
                 {/* Modal Content - Chart */}
                 <div className="flex-1 p-10 overflow-y-auto">
-                  <div className="bg-black/40 border border-white/5 rounded-[2rem] p-6 mb-8 h-[450px]">
-                    <h3 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-6 px-4">Entry M15 Context (50 Bars)</h3>
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-6 mb-8 h-[450px]">
+                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-6 px-4">Entry M15 Context (50 Bars)</h3>
                     <ResponsiveContainer width="100%" height="90%">
                       <AreaChart data={journalSnapshot.ohlc}>
                         <defs>
@@ -2802,8 +2788,8 @@ function App() {
 
                   <div className="grid grid-cols-3 gap-6">
                     <div className="bg-white/[0.02] border border-white/5 p-6 rounded-3xl">
-                      <p className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] mb-3">Snapshot Security</p>
-                      <p className="text-[11px] font-medium text-zinc-400 leading-relaxed uppercase italic">
+                      <p className="text-xs font-bold text-zinc-600 uppercase tracking-[0.2em] mb-3">Snapshot Security</p>
+                      <p className="text-[11px] font-medium text-zinc-400 leading-relaxed uppercase ">
                         The integrity of this data node is verified. Entry context stored at the exact moment of execution on decentralized Sentinel engine.
                       </p>
                     </div>
@@ -2812,8 +2798,8 @@ function App() {
                         <ShieldCheck size={32} />
                       </div>
                       <div>
-                        <h4 className="text-sm font-black text-white uppercase tracking-widest mb-1 italic">Surveillance Verified</h4>
-                        <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-wider opacity-60">Verified by PST-Core surveillance module.</p>
+                        <h4 className="text-sm font-bold text-white uppercase tracking-widest mb-1 ">Surveillance Verified</h4>
+                        <p className="text-xs text-indigo-300 font-bold uppercase tracking-wider opacity-60">Verified by PST-Core surveillance module.</p>
                       </div>
                     </div>
                   </div>

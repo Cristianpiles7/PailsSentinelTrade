@@ -259,9 +259,19 @@ def _days_clause(days, column="time_out"):
     return f" AND {column} >= datetime('now', ?)", (f"-{int(days)} days",)
 
 
+def _account_epoch_id() -> int:
+    """Primer id de trades de la cuenta MT5 actual (bot_config.account_epoch_first_trade_id).
+    0 = sin época: se cuentan todas las operaciones de la BBDD."""
+    rows = query_db("SELECT value FROM bot_config WHERE key = 'account_epoch_first_trade_id'")
+    if rows and "error" not in rows[0]:
+        return int(rows[0]["value"])
+    return 0
+
+
 async def _tool_get_trading_stats(args):
     limit = int(args.get("limit", 100))
-    trades = query_db("SELECT profit, time_out FROM trades ORDER BY id DESC LIMIT ?", (limit,))
+    epoch_id = _account_epoch_id()
+    trades = query_db("SELECT profit, time_out FROM trades WHERE id >= ? ORDER BY id DESC LIMIT ?", (epoch_id, limit))
     if trades and "error" in trades[0]:
         return trades[0]
     closed = [t for t in trades if t["time_out"]]
@@ -270,7 +280,8 @@ async def _tool_get_trading_stats(args):
         "operaciones_cerradas": len(closed),
         "operaciones_abiertas": len(trades) - len(closed),
         "cuenta_mt5_viva": get_live_account_info() or "MT5 desconectado",
-        "nota": "El realizado sale de la BBDD; el flotante solo existe en MT5 y oscila.",
+        "epoca_desde_trade_id": epoch_id,
+        "nota": "El realizado sale de la BBDD, solo de la cuenta actual (desde epoca_desde_trade_id); el flotante solo existe en MT5 y oscila.",
     }
 
 
@@ -283,10 +294,10 @@ async def _tool_get_drawdown_report(args):
                ROUND(100.0 * SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) AS win_rate_pct,
                ROUND(AVG(profit), 2)                                        AS profit_medio
           FROM trades
-         WHERE time_out IS NOT NULL AND time_out != ''{clause}
+         WHERE time_out IS NOT NULL AND time_out != '' AND id >= ?{clause}
          GROUP BY symbol
          ORDER BY profit_total ASC
-    """, params)
+    """, (_account_epoch_id(),) + params)
 
 
 async def _tool_get_symbol_matrix(args):

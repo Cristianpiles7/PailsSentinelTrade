@@ -115,3 +115,16 @@ body {
 .shadow-glow {
   box-shadow: 0 0 15px currentColor;
 }
+/* --- SISTEMA VISUAL --- */
+.pst-card {
+  background: #0b0b0d;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 1.5rem;
+}
+
+.pst-title {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f4f4f5;
+}

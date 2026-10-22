@@ -18,9 +18,9 @@ export function StatBox({ title, value, icon, color, positive }) {
         <div className={`p-1.5 rounded-lg border ${currentBoxColor}`}>
           {icon}
         </div>
-        <span className="text-[7px] font-black text-zinc-500 uppercase tracking-widest">{title}</span>
+        <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{title}</span>
       </div>
-      <p className={`text-2xl font-black italic tracking-tighter mt-4 relative z-10 ${positive !== undefined ? (positive ? 'text-emerald-500' : 'text-rose-500') : 'text-white'}`}>
+      <p className={`text-2xl font-bold  tracking-tighter mt-4 relative z-10 ${positive !== undefined ? (positive ? 'text-emerald-500' : 'text-rose-500') : 'text-white'}`}>
         {value}
       </p>
     </div>

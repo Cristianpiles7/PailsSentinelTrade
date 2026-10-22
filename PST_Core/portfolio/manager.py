@@ -65,7 +65,10 @@ class PortfolioManager:
         closed_pnl = 0.0
         try:
             async with aiosqlite.connect(self.db.db_path) as conn:
-                async with conn.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ?", (today_start,)) as cursor:
+                async with conn.execute("SELECT value FROM bot_config WHERE key = 'account_epoch_first_trade_id'") as cursor:
+                    row = await cursor.fetchone()
+                    epoch_id = int(row[0]) if row else 0
+                async with conn.execute("SELECT SUM(profit) FROM trades WHERE time_out >= ? AND id >= ?", (today_start, epoch_id)) as cursor:
                     row = await cursor.fetchone()
                     closed_pnl = row[0] if row and row[0] else 0.0
         except Exception as e:

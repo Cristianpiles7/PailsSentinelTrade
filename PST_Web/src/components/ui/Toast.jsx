@@ -8,15 +8,15 @@ export function Toast({ message, type, id, onClose }) {
   };
 
   const colors = {
-    success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.1)]',
-    error: 'border-rose-500/30 bg-rose-500/10 text-rose-400 shadow-[0_0_30px_rgba(244,63,94,0.1)]',
-    info: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400 shadow-[0_0_30px_rgba(99,102,241,0.1)]'
+    success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+    error: 'border-rose-500/30 bg-rose-500/10 text-rose-400',
+    info: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
   };
 
   return (
     <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl border backdrop-blur-xl animate-in slide-in-from-right-8 fade-in duration-500 pointer-events-auto relative group ${colors[type]}`}>
       <div className="p-2 bg-black/20 rounded-lg">{icons[type]}</div>
-      <p className="text-xs font-black uppercase tracking-widest italic flex-1 pr-6">{message}</p>
+      <p className="text-xs font-bold uppercase tracking-widest  flex-1 pr-6">{message}</p>
       
       <button 
         onClick={() => onClose && onClose(id)}

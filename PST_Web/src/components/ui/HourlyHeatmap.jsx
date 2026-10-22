@@ -56,7 +56,7 @@ export function HourlyHeatmap({ data = [] }) {
 
   if (!hasData) {
     return (
-      <div className="h-full flex items-center justify-center text-zinc-600 text-[11px] font-black uppercase tracking-widest italic">
+      <div className="h-full flex items-center justify-center text-zinc-600 text-[11px] font-bold uppercase tracking-widest ">
         Sin datos históricos suficientes
       </div>
     )
@@ -69,24 +69,24 @@ export function HourlyHeatmap({ data = [] }) {
       <div className="flex gap-3 flex-wrap">
         {totals.bestHour.hour !== null && (
           <div className="flex-1 min-w-[120px] bg-emerald-500/10 border border-emerald-500/25 rounded-2xl px-4 py-3">
-            <p className="text-[9px] font-black text-emerald-500/70 uppercase tracking-widest mb-1">Mejor hora</p>
-            <p className="text-xl font-black text-emerald-400 font-mono">{String(totals.bestHour.hour).padStart(2,'0')}:00</p>
-            <p className="text-[10px] text-emerald-500/70 font-bold">+{totals.bestHour.pnl.toFixed(2)}€</p>
+            <p className="text-[11px] font-bold text-emerald-500/70 uppercase tracking-widest mb-1">Mejor hora</p>
+            <p className="text-xl font-bold text-emerald-400 font-mono">{String(totals.bestHour.hour).padStart(2,'0')}:00</p>
+            <p className="text-xs text-emerald-500/70 font-bold">+{totals.bestHour.pnl.toFixed(2)}€</p>
           </div>
         )}
         {totals.worstHour.hour !== null && (
           <div className="flex-1 min-w-[120px] bg-rose-500/10 border border-rose-500/25 rounded-2xl px-4 py-3">
-            <p className="text-[9px] font-black text-rose-400/70 uppercase tracking-widest mb-1">Peor hora</p>
-            <p className="text-xl font-black text-rose-400 font-mono">{String(totals.worstHour.hour).padStart(2,'0')}:00</p>
-            <p className="text-[10px] text-rose-400/70 font-bold">{totals.worstHour.pnl.toFixed(2)}€</p>
+            <p className="text-[11px] font-bold text-rose-400/70 uppercase tracking-widest mb-1">Peor hora</p>
+            <p className="text-xl font-bold text-rose-400 font-mono">{String(totals.worstHour.hour).padStart(2,'0')}:00</p>
+            <p className="text-xs text-rose-400/70 font-bold">{totals.worstHour.pnl.toFixed(2)}€</p>
           </div>
         )}
         <div className="flex-1 min-w-[120px] bg-zinc-800/40 border border-zinc-700/30 rounded-2xl px-4 py-3">
-          <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">PnL Total</p>
-          <p className={`text-xl font-black font-mono ${totals.totalPnl >= 0 ? 'text-white' : 'text-rose-400'}`}>
+          <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-1">PnL Total</p>
+          <p className={`text-xl font-bold font-mono ${totals.totalPnl >= 0 ? 'text-white' : 'text-rose-400'}`}>
             {totals.totalPnl >= 0 ? '+' : ''}{totals.totalPnl.toFixed(2)}€
           </p>
-          <p className="text-[10px] text-zinc-500 font-bold">{data.reduce((s,d) => s + d.trades, 0)} trades</p>
+          <p className="text-xs text-zinc-500 font-bold">{data.reduce((s,d) => s + d.trades, 0)} trades</p>
         </div>
       </div>
 
@@ -109,12 +109,12 @@ export function HourlyHeatmap({ data = [] }) {
               className="rounded-xl p-2.5 cursor-default transition-transform hover:scale-105"
             >
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[9px] font-black text-zinc-400 font-mono">
+                <span className="text-[11px] font-bold text-zinc-400 font-mono">
                   {String(d.hour).padStart(2,'0')}h
                 </span>
                 {d.trades > 0 && (
                   <span
-                    className="text-[7px] font-black rounded px-1"
+                    className="text-[11px] font-bold rounded px-1"
                     style={{ color: sessionColor, backgroundColor: `${sessionColor}20` }}
                   >
                     {session.slice(0, 2).toUpperCase()}
@@ -123,13 +123,13 @@ export function HourlyHeatmap({ data = [] }) {
               </div>
               {d.trades > 0 ? (
                 <>
-                  <p style={{ color: colors.text }} className="text-[10px] font-black font-mono leading-none">
+                  <p style={{ color: colors.text }} className="text-xs font-bold font-mono leading-none">
                     {d.pnl >= 0 ? '+' : ''}{d.pnl.toFixed(1)}€
                   </p>
-                  <p className="text-[8px] text-zinc-500 font-bold mt-0.5">{d.win_rate}% WR</p>
+                  <p className="text-[11px] text-zinc-500 font-bold mt-0.5">{d.win_rate}% WR</p>
                 </>
               ) : (
-                <p className="text-[9px] text-zinc-700 font-bold mt-1">—</p>
+                <p className="text-[11px] text-zinc-700 font-bold mt-1">—</p>
               )}
             </div>
           )
@@ -141,7 +141,7 @@ export function HourlyHeatmap({ data = [] }) {
         {Object.entries(SESSION_COLORS).map(([sess, color]) => (
           <div key={sess} className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-            <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">{sess}</span>
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{sess}</span>
           </div>
         ))}
       </div>

@@ -212,6 +212,23 @@ def lanzar(agente: str) -> int:
     return r.returncode
 
 
+def actualizar_doc_estrategias():
+    """
+    Regenera manual_docs/ESTRATEGIAS_ACTIVAS.md. NO es un agente LLM a proposito: son
+    estadisticas del historial de MT5, no consumen cuota y no pasan por las puertas.
+    Un fallo aqui no debe impedir que corran los agentes.
+    """
+    script = REPO_ROOT / "Tools" / "update_active_strategies.py"
+    try:
+        r = subprocess.run([sys.executable, str(script)], cwd=str(REPO_ROOT),
+                           capture_output=True, text=True, timeout=120,
+                           stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace")
+        print(f"  ✓ doc de estrategias: {(r.stdout or '').strip()}" if r.returncode == 0
+              else f"  ! doc de estrategias falló: {(r.stderr or '').strip()[-300:]}")
+    except Exception as e:
+        print(f"  ! doc de estrategias falló: {e}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Planificador de la flota PST")
     ap.add_argument("--dry-run", action="store_true", help="Evalúa las puertas sin lanzar nada")
@@ -220,6 +237,12 @@ def main():
     args = ap.parse_args()
 
     print(f"[scheduler] {datetime.now():%Y-%m-%d %H:%M}")
+
+    # Antes del freno de cuota: no gasta ninguna.
+    if args.dry_run:
+        print("  ✓ doc de estrategias: se actualizaría (sin LLM)")
+    elif not args.force:
+        actualizar_doc_estrategias()
 
     cuota = leer_cuota()
     if cuota:

@@ -32,7 +32,7 @@ export function Sparkline({ data, color }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         points={points}
-        className="drop-shadow-[0_0_8px_rgba(0,0,0,0.5)]"
+        className="drop-"
       />
       <polygon
         points={`0,${height} ${points} ${width},${height}`}

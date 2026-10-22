@@ -47,6 +47,7 @@ class StrategyBreakdown(BaseModel):
 
 class SymbolStatus(BaseModel):
     symbol: str
+    type: Optional[str] = ""
     is_active: bool
     market_open: Optional[bool] = True
     regime: Optional[str] = "UNKNOWN"
@@ -66,6 +67,8 @@ class SymbolStatus(BaseModel):
     spread: Optional[float] = 0.0
     open_positions: Optional[int] = 0
     strategies: Optional[List[str]] = []
+    # Puntuacion de cercania a compra/venta (agente puntuador, solo visual): {puntuacion, anterior, frase, mercado_abierto}
+    proximidad: Optional[Dict] = None
 
 class OHLCBar(BaseModel):
     time: int

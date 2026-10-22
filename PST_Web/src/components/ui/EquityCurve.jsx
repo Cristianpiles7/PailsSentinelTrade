@@ -2,7 +2,7 @@ import React from 'react'
 
 export function EquityCurve({ data }) {
   if (!data || data.length < 2) return (
-    <div className="h-full flex items-center justify-center text-zinc-700 font-black uppercase text-[10px] italic">
+    <div className="h-full flex items-center justify-center text-zinc-700 font-bold uppercase text-xs ">
       Insufficient Data for Curve Analysis
     </div>
   );
@@ -24,7 +24,7 @@ export function EquityCurve({ data }) {
 
   return (
     <div className="w-full h-full p-4">
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full drop-shadow-[0_0_15px_rgba(99,102,241,0.3)]">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full drop-">
         <defs>
           <linearGradient id="curveGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.5" />
