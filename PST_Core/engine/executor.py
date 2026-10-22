@@ -1,7 +1,7 @@
 import logging
 import MetaTrader5 as mt5
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import pandas as pd
 import pandas_ta as ta
 from .mt5_async import send_order_async, sym_info_async, get_positions_async, modify_position_async, fetch_rates_async, close_position_async
@@ -13,6 +13,19 @@ from ..utils.tech_utils import get_asset_class
 from ..utils.cooldown_manager import cooldown_mgr
 
 logger = logging.getLogger("PST-Executor")
+
+def _ventana_cierre_acciones(now_utc):
+    """
+    True desde el margen previo al cierre de NYSE hasta el cierre, en dias laborables.
+    Usa el mismo calculo que market_schedule (16:00 de Nueva York con horario de verano), no una hora fija:
+    una hora local fija cae 55 min tarde cuando EE.UU. y la UE cambian de hora en fechas distintas.
+    """
+    from .market_schedule import _us_stock_close_utc_minutes, CLOSE_MARGIN_MINUTES
+    if now_utc.weekday() > 4:
+        return False
+    cierre = _us_stock_close_utc_minutes(now_utc)
+    actual = now_utc.hour * 60 + now_utc.minute
+    return cierre - CLOSE_MARGIN_MINUTES <= actual <= cierre
 
 class PSTExecutor:
     def __init__(self, db: PSTDatabase, portfolio: PortfolioManager):
@@ -729,8 +742,9 @@ class PSTExecutor:
             # seguridad NUNCA se disparó para ninguna acción, dejándolas expuestas a gaps
             # overnight. get_asset_class ya mantiene la lista completa de tickers de acción
             # (incl. la expansión v2.6.4-6); no hace falta duplicarla aquí.
+            # v2.6.22: la hora de cierre sale de NYSE (ver _ventana_cierre_acciones), no de STOCK_CLOSE_TIME.
             if a_class == "EQUITIES":
-                if current_time_str >= SESSION_PROTECTION["STOCK_CLOSE_TIME"]:
+                if _ventana_cierre_acciones(datetime.now(timezone.utc)):
                     should_close = True
                     reason = "EOD Stock Protection"
             

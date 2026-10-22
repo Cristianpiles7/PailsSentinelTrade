@@ -154,6 +154,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error starting monitor agent: {e}")
 
+    # Protección de cierre por horario (acciones antes de NYSE, todo antes del fin de semana). Vivía en
+    # global_trade_management, que solo lanza el orquestador retirado: sin esta tarea no se cerraba nada.
+    try:
+        from PST_Core.engine.executor import PSTExecutor
+        session_executor = PSTExecutor(db=db, portfolio=portfolio)
+
+        async def _session_protection_loop():
+            while True:
+                try:
+                    await session_executor.run_session_protection()
+                except Exception as e:
+                    logger.error(f"Error en protección de sesión: {e}")
+                await asyncio.sleep(10)
+
+        asyncio.create_task(_session_protection_loop())
+        logger.info("✅ [SESSION] Protección de cierre por horario iniciada.")
+    except Exception as e:
+        logger.error(f"Error starting session protection: {e}")
+
     # Avisos por Telegram antes de cada bloqueo del calendario restringido (PST_API/llm_api.py)
     from PST_API.llm_api import alertas_calendario
     asyncio.create_task(alertas_calendario())
@@ -162,7 +181,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.21",
+    version="2.6.22",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
