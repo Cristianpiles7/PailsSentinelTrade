@@ -29,6 +29,14 @@ if CONGELADO:
     # misma raiz de datos y encuentren PST_Core (empaquetado como fuente, ver build-release.yml).
     os.environ["PST_DATA_ROOT"] = str(DATOS)
     os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (str(RECURSOS), os.environ.get("PYTHONPATH", "")) if p)
+    # PyInstaller antepone _MEIPASS al PATH: el python312.dll del exe choca con el Python del sistema
+    # que usan los hijos (ImportError en sqlite3). Se quita de su entorno, junto con las variables _PYI_.
+    _mei = os.path.normcase(os.path.abspath(sys._MEIPASS))
+    os.environ["PATH"] = os.pathsep.join(
+        p for p in os.environ.get("PATH", "").split(os.pathsep)
+        if p and not os.path.normcase(os.path.abspath(p)).startswith(_mei))
+    for _k in [k for k in os.environ if k.startswith("_PYI_") or k == "_MEIPASS2"]:
+        del os.environ[_k]
 else:
     RECURSOS = Path(__file__).resolve().parents[1]
     DATOS = Path(os.environ["PST_DATA_ROOT"]) if os.environ.get("PST_DATA_ROOT") else RECURSOS
