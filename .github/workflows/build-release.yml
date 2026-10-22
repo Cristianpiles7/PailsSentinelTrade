@@ -63,6 +63,7 @@ jobs:
           --hidden-import "webview" `
           --hidden-import "clr" `
           --hidden-import "aiohttp" `
+          --hidden-import "psutil" `
           PST_MASTER.py
 
       - name: Inject distribution token for PST_LAUNCHER

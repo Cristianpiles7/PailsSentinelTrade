@@ -19,3 +19,4 @@ aiohttp
 scikit-learn
 lightgbm
 joblib
+psutil
