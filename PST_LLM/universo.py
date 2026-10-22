@@ -17,7 +17,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Simbolo:
     symbol: str          # nombre exacto en el broker (verificado en Market Watch 2026-10-22)
-    clase: str           # indice | accion_eeuu | accion_eu
+    clase: str           # indice | accion_eeuu | accion_eu | cripto | materias
     magic: int
     modelo: str          # sonnet | haiku
 
@@ -59,6 +59,29 @@ UNIVERSO = [
     Simbolo("RTX", "accion_eeuu", 109032, "haiku"),
     Simbolo("FDX", "accion_eeuu", 109033, "haiku"),
     Simbolo("ASML", "accion_eeuu", 109034, "haiku"),
+    # Cripto (24/7; los que tienen precio visible en el broker). El coste (spread frente al stop) lo puntua rotacion.py.
+    Simbolo("BTCUSD", "cripto", 109036, "haiku"),
+    Simbolo("ETHUSD", "cripto", 109037, "haiku"),
+    Simbolo("SOLUSD", "cripto", 109038, "haiku"),
+    Simbolo("LTCUSD", "cripto", 109039, "haiku"),
+    Simbolo("ADAUSD", "cripto", 109040, "haiku"),
+    Simbolo("DOTUSD", "cripto", 109041, "haiku"),
+    Simbolo("LNKUSD", "cripto", 109042, "haiku"),
+    Simbolo("XRPUSD", "cripto", 109043, "haiku"),
+    Simbolo("XLMUSD", "cripto", 109044, "haiku"),
+    Simbolo("UNIUSD", "cripto", 109045, "haiku"),
+    # Materias primas
+    Simbolo("XAUUSD", "materias", 109046, "haiku"),
+    Simbolo("XAGUSD", "materias", 109047, "haiku"),
+    Simbolo("USOIL.cash", "materias", 109048, "haiku"),
+    Simbolo("NATGAS.cash", "materias", 109049, "haiku"),
+    # Forex: pares mayores con spread bajo. EURUSD (magic 109004) es un magic antiguo, no se reutiliza.
+    Simbolo("EURUSD", "forex", 109050, "haiku"),
+    Simbolo("GBPUSD", "forex", 109051, "haiku"),
+    Simbolo("USDJPY", "forex", 109052, "haiku"),
+    Simbolo("AUDUSD", "forex", 109053, "haiku"),
+    Simbolo("USDCAD", "forex", 109054, "haiku"),
+    Simbolo("USDCHF", "forex", 109055, "haiku"),
 ]
 
 

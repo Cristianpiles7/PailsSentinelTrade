@@ -50,6 +50,12 @@ DIVISAS = {
     "TSLA": {"USD"}, "NVDA": {"USD"}, "AAPL": {"USD"}, "RTX": {"USD"}, "FDX": {"USD"}, "ASML": {"USD"},
     "FRA40.cash": {"EUR"},
     "EURUSD": {"EUR", "USD"}, "XAUUSD": {"USD"},
+    # Cripto, plata, petroleo y gas: se cotizan en USD, asi que los eventos de USD los restringen.
+    "BTCUSD": {"USD"}, "ETHUSD": {"USD"}, "SOLUSD": {"USD"}, "LTCUSD": {"USD"}, "ADAUSD": {"USD"},
+    "DOTUSD": {"USD"}, "LNKUSD": {"USD"}, "XRPUSD": {"USD"}, "XLMUSD": {"USD"}, "UNIUSD": {"USD"},
+    "XAGUSD": {"USD"}, "USOIL.cash": {"USD"}, "NATGAS.cash": {"USD"},
+    "GBPUSD": {"GBP", "USD"}, "USDJPY": {"USD", "JPY"}, "AUDUSD": {"AUD", "USD"},
+    "USDCAD": {"USD", "CAD"}, "USDCHF": {"USD", "CHF"},
 }
 
 
