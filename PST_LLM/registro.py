@@ -263,6 +263,11 @@ def arrancar_activos():
     """
     restaurar_intencion()
     sincronizar_home()
+    F = _ficheros(None)
+    # Un STOP global que sobrevive a un cierre cortado (parar() no llego a borrarlo) hacia salir a todos
+    # los agentes nada mas arrancar, y activar() solo borra el STOP propio de cada agente. Al abrir la app
+    # la intencion es la de la BBDD (activo), no ese fichero.
+    (F.DATA / "llm_trader.STOP").unlink(missing_ok=True)
     con = central()
     filas = con.execute("SELECT symbol, live, origen FROM llm_agentes WHERE activo=1 AND bloqueado=0").fetchall()
     con.close()
@@ -273,7 +278,6 @@ def arrancar_activos():
         activar(symbol, live=bool(live), origen=origen or "manual")
         arrancados.append(symbol)
     if arrancados:
-        F = _ficheros(None)
         F.iniciar_revisor()                 # el revisor vigila las posiciones de estos agentes
         F.iniciar_bot()
     return arrancados
