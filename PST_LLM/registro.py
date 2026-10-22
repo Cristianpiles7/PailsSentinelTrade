@@ -183,7 +183,7 @@ def activar(symbol, live=False, origen="manual"):
         pid = vivos[nombre]
     else:
         f["stop"].unlink(missing_ok=True)
-        args = [rutas.python_exe(), "-u", str(SCRIPT), "--nombre", nombre, "--magic", str(s.magic)]
+        args = rutas.comando_python(SCRIPT, "--nombre", nombre, "--magic", str(s.magic))
         salida, error = open(f["log"], "a", encoding="utf-8"), open(f["err"], "a", encoding="utf-8")
         flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         p = subprocess.Popen(args, cwd=str(REPO_ROOT), stdout=salida, stderr=error,

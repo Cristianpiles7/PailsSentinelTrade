@@ -25,10 +25,10 @@ if CONGELADO:
         pass
     RECURSOS = Path(sys._MEIPASS)
     DATOS = Path(os.environ.get("PST_DATA_ROOT") or _EXE_DIR)
-    # Los agentes se lanzan como procesos Python normales (python llm_trader.py): que hereden la
-    # misma raiz de datos y encuentren PST_Core (empaquetado como fuente, ver build-release.yml).
+    # Los agentes heredan la misma raiz de datos. NO se pone PYTHONPATH con la raiz del bundle: contiene
+    # _sqlite3.pyd (compilado para python312) y, delante de la libreria estandar, el hijo (python 3.13 del
+    # sistema) lo cargaba y fallaba en sqlite3. Los hijos reciben sus rutas por comando_python().
     os.environ["PST_DATA_ROOT"] = str(DATOS)
-    os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (str(RECURSOS), os.environ.get("PYTHONPATH", "")) if p)
     # PyInstaller antepone _MEIPASS al PATH: el python312.dll del exe choca con el Python del sistema
     # que usan los hijos (ImportError en sqlite3). Se quita de su entorno, junto con las variables _PYI_.
     _mei = os.path.normcase(os.path.abspath(sys._MEIPASS))
@@ -46,8 +46,22 @@ AGENTS_CODE_DIR = RECURSOS / ".agents"
 AGENTS_DATA_DIR = DATOS / ".agents" / "data"
 
 
-def python_exe():
-    """Interprete para lanzar los agentes. En el exe sys.executable es el propio exe, asi que no sirve."""
+_ARRANQUE = (
+    "import runpy, sys; r, d, s = sys.argv[1:4]; sys.argv = sys.argv[3:]; "
+    "sys.path.extend([r, d]); runpy.run_path(s, run_name='__main__')"
+)
+
+
+def comando_python(script, *args):
+    """
+    Comando para lanzar un script de la flota como proceso Python independiente.
+
+    En el exe sys.executable es el propio exe, asi que se usa el python del sistema con -E (ignora
+    PYTHONPATH y PYTHON*, pero conserva el user site donde estan psutil y MetaTrader5) y un arranque que
+    AÑADE al final de sys.path la raiz del bundle (PST_Core) y PST_LLM. Añadir al final es lo que evita
+    que se cargue el _sqlite3.pyd empaquetado.
+    """
     if not CONGELADO:
-        return sys.executable
-    return shutil.which("python") or shutil.which("py") or "python"
+        return [sys.executable, "-u", str(script), *args]
+    python = shutil.which("python") or shutil.which("py") or "python"
+    return [python, "-E", "-u", "-c", _ARRANQUE, str(RECURSOS), str(PST_LLM_DIR), str(script), *args]

@@ -107,7 +107,7 @@ def iniciar_bot():
     BOT_STOP.unlink(missing_ok=True)
     salida, error = open(DATA / "llm_telegram.log", "w", encoding="utf-8"), open(DATA / "llm_telegram.err", "w", encoding="utf-8")
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    p = subprocess.Popen([rutas.python_exe(), "-u", str(BOT)], cwd=str(REPO_ROOT), stdout=salida, stderr=error,
+    p = subprocess.Popen(rutas.comando_python(BOT), cwd=str(REPO_ROOT), stdout=salida, stderr=error,
                          stdin=subprocess.DEVNULL, creationflags=flags)
     print(f"  + Panel de Telegram arrancado, PID {p.pid}")
 
@@ -120,7 +120,7 @@ def iniciar_revisor():
     REVISOR_STOP.unlink(missing_ok=True)
     salida, error = open(DATA / "llm_revisor.log", "w", encoding="utf-8"), open(DATA / "llm_revisor.err", "w", encoding="utf-8")
     flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    p = subprocess.Popen([rutas.python_exe(), "-u", str(REVISOR)], cwd=str(REPO_ROOT), stdout=salida, stderr=error,
+    p = subprocess.Popen(rutas.comando_python(REVISOR), cwd=str(REPO_ROOT), stdout=salida, stderr=error,
                          stdin=subprocess.DEVNULL, creationflags=flags)
     print(f"  + Revisor de posiciones arrancado, PID {p.pid}")
 
@@ -144,7 +144,7 @@ def iniciar():
         if not f["config"].is_file():          # nunca se pisa una configuracion existente
             f["config"].write_text(json.dumps(config_por_defecto(a), indent=2), encoding="utf-8")
         f["stop"].unlink(missing_ok=True)
-        args = [rutas.python_exe(), "-u", str(SCRIPT)]
+        args = rutas.comando_python(SCRIPT)
         if a["nombre"] != NOMBRE_DEFECTO:
             args += ["--nombre", a["nombre"]]
         args += ["--magic", str(a["magic"])]
