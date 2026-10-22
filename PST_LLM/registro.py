@@ -164,12 +164,12 @@ def activar(symbol, live=False, origen="manual"):
     nombre = nombre_agente(symbol)
     registro = F.cargar_registro()
     if not any(a["nombre"] == nombre for a in registro):
-        registro.append({"nombre": nombre, "symbol": symbol, "timeframe": "M5", "magic": s.magic,
+        registro.append({"nombre": nombre, "symbol": symbol, "timeframe": "M1", "magic": s.magic,
                          "sin_filtro": False, "clase": s.clase, "modelo": s.modelo})
         F.REGISTRO.write_text(json.dumps(registro, indent=2), encoding="utf-8")
     f = F.ficheros(nombre)
-    cfg = F.config_por_defecto({"symbol": symbol, "timeframe": "M5", "sin_filtro": False})
-    cfg.update({"model": s.modelo, "live": bool(live), "timeframe": "M5"})
+    cfg = F.config_por_defecto({"symbol": symbol, "timeframe": "M1", "sin_filtro": False})
+    cfg.update({"model": s.modelo, "live": bool(live), "timeframe": "M1"})
     if f["config"].is_file():
         # Si ya existia (agente reactivado), se conserva lo que el usuario haya tocado a mano
         # salvo el modo, que lo pide la app explicitamente.
@@ -342,7 +342,7 @@ def estado():
         live = bool(fila[2]) if fila else _live_de_config(nombre)
         out.append({
             "symbol": s.symbol, "clase": s.clase, "modelo": _modelo_de_config(nombre, s.modelo),
-            "timeframe": _config_de(nombre, "timeframe", "M5"), "magic": s.magic, "nombre": nombre,
+            "timeframe": _config_de(nombre, "timeframe", "M1"), "magic": s.magic, "nombre": nombre,
             "activo": activo, "live": live,
             "vivo": vivo, "pid": vivos.get(nombre), "actualizado": fila[3] if fila else None,
             "origen": (fila[4] if fila and fila[4] else "manual"), "bloqueado": bool(fila and fila[5]),

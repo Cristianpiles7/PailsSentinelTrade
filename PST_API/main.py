@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.25",
+    version="2.6.26",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
