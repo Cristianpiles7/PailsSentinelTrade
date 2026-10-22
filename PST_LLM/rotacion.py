@@ -330,10 +330,22 @@ def main():
     if args.ciclo:
         print(f"activos tras la pasada: {ciclo(mt5, reseleccion_permitida=True)}")
         return
+    bucle()
+
+
+def bucle():
+    """
+    Una pasada cada CICLO_S hasta que aparezca rotacion.STOP. La usan --loop y la app (hilo de fondo al
+    arrancar). Tras cada pasada con algun agente activo, arranca revisor y Telegram si no corren (idempotente).
+    """
     STOP.unlink(missing_ok=True)
     while not STOP.exists():
         try:
-            ciclo(mt5, reseleccion_permitida=True)
+            mt5 = _mt5()
+            if ciclo(mt5, reseleccion_permitida=True):
+                F = registro._ficheros(None)
+                F.iniciar_revisor()
+                F.iniciar_bot()
         except Exception as e:
             print(f"[rotacion] error en la pasada: {e}", flush=True)
         for _ in range(CICLO_S // 5):

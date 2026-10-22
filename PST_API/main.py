@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.23",
+    version="2.6.24",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -1600,6 +1600,13 @@ def _arrancar_agentes_llm():
         logger.info(f"🤖 Agentes LLM relanzados al abrir la app: {arrancados or 'ninguno'}")
     except Exception:
         logger.exception("❌ No se pudieron relanzar los agentes LLM")
+    # Rotación de la flota: cada 5 min pone los mejores símbolos abiertos y quita los cerrados sin posición.
+    # Bloquea este hilo hasta que se cierra la app (es daemon).
+    try:
+        import rotacion      # PST_LLM/rotacion.py
+        rotacion.bucle()
+    except Exception:
+        logger.exception("❌ La rotación de agentes se ha parado")
 
 
 def _detener_agentes_llm():
