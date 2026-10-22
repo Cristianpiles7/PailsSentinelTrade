@@ -80,7 +80,8 @@ REV_SCHEMA = {
 # confianza_minima 0.85 y min_cierre_min 30 desde el 2026-10-22: su unico cierre de la primera noche
 # (US500, a los 5 min, -32 EUR) habria dado +104 EUR de haberlo dejado (ver `llm_trader_flota.py --resultados`).
 CONFIG_DEFECTO = {"enabled": True, "intervalo_min": 5, "model": "haiku", "effort": "low", "cerrar": True,
-                  "confianza_minima": 0.85, "min_cierre_min": 30, "telegram": True, "reiniciar_cada": 6}
+                  "confianza_minima": 0.85, "min_cierre_min": 30, "telegram": True, "reiniciar_cada": 6,
+                  "tick_espera_s": 15}
 # DEAL_REASON de MT5: quien cerro la posicion
 RAZON_CIERRE = {4: "Stop loss", 5: "Take profit", 6: "Stop-out del broker", 0: "Manual", 1: "Móvil", 2: "Web"}
 
@@ -136,7 +137,24 @@ def tesis_original(agentes, magic, ticket):
             "original_reason": f[4], "sl_atr_mult": f[5], "tp_r": f[6]}
 
 
+def tick_vivo(mt5, symbol, espera_s):
+    """
+    False si el simbolo no ha cambiado de precio en `espera_s` segundos: mercado cerrado o feed parado.
+    Compara dos lecturas con la hora local, asi que no necesita el reloj del broker (su tick.time va en
+    hora de servidor y no sirve para medir antigüedad). Si no hay precio, tampoco se revisa.
+    """
+    t0 = mt5.symbol_info_tick(symbol)
+    if t0 is None:
+        return False
+    time.sleep(espera_s)
+    t1 = mt5.symbol_info_tick(symbol)
+    return t1 is not None and t1.time_msc != t0.time_msc
+
+
 def estado_posicion(mt5, p, tesis, cfg):
+    if not tick_vivo(mt5, p.symbol, cfg.get("tick_espera_s", 15)):
+        print(f"[revisor] {p.symbol}: sin cambios de precio, mercado cerrado o feed parado: no se revisa", flush=True)
+        return None
     snap = lt.snapshot(mt5, p.symbol, "M5", lt.TF_ANALISIS_DEFECTO)
     if snap is None:
         return None
