@@ -110,11 +110,15 @@ async def cuota_visible():
 class RotacionRequest(BaseModel):
     max_activos: int | None = None            # cuantos agentes LLM pueden estar activos a la vez
     max_por_clase: int | None = None          # cuantos por clase de mercado (indice, accion_eeuu...)
-    ciclo_min: int | None = None              # cada cuantos minutos corre la rotacion
-    horas_reseleccion: list[int] | None = None  # horas (0-23) en las que se permite cambiar un activo por otro
+    ciclo_min: int | None = None              # cada cuantos minutos se vigilan perdidas y cierres
+    cadencia_ranking_min: int | None = None   # cada cuantos minutos se recalculan las propuestas de cambio
+    ventana_aprobacion_min: int | None = None  # minutos para responder una propuesta antes de su accion por defecto
     margen_cambio: float | None = None        # cuanto debe puntuar el candidato por encima del peor activo
     max_sustituciones_dia: int | None = None  # sustituciones por perdidas al dia
     penalizacion_cripto: float | None = None  # puntos que pierde cripto en el ranking (menos prioridad para quedarse)
+    penalizacion_quitar: float | None = None  # puntos que resta un simbolo que quitaste (baja con el tiempo)
+    penalizacion_dias: int | None = None      # dias hasta que la penalizacion de quitar llega a cero
+    inactividad_min: int | None = None        # minutos sin llamadas al modelo tras los que un agente activo puede salir
 
 
 @router.get("/api/llm/rotacion")
@@ -172,11 +176,34 @@ async def activar_agente(symbol: str, body: ActivarRequest = ActivarRequest()):
 
 @router.post("/api/llm/agentes/{symbol}/desactivar")
 async def desactivar_agente(symbol: str):
+    """Excluir: para el agente y lo bloquea. La rotacion no lo vuelve a poner hasta que lo actives a mano."""
     _validar(symbol)
     try:
         return await asyncio.to_thread(registro.desactivar, symbol)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"no se pudo desactivar {symbol}: {e}")
+
+
+@router.post("/api/llm/agentes/{symbol}/quitar")
+async def quitar_agente(symbol: str):
+    """Quitar: saca el agente del grupo sin bloquearlo; le resta puntos un tiempo para que no vuelva enseguida."""
+    _validar(symbol)
+    import rotacion       # noqa: E402
+    try:
+        return {"mensaje": await asyncio.to_thread(rotacion.quitar_simbolo, symbol, "app")}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/api/llm/agentes/{symbol}/poner")
+async def poner_agente(symbol: str):
+    """Poner: propone meter este simbolo en el grupo; lo apruebas en la bandeja."""
+    _validar(symbol)
+    import rotacion       # noqa: E402
+    try:
+        return {"mensaje": await asyncio.to_thread(rotacion.poner_simbolo, symbol, "app")}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/api/llm/agentes/{symbol}/decisiones")

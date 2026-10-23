@@ -12,41 +12,38 @@ cartera, 2,5 % por grupo correlacionado, pérdida diaria máx. 500 €, pérdida
 ## Estadísticas (automático)
 
 <!-- AUTO:START -->
-_Actualizado: **2026-10-22 03:00** · cuenta `1515029407` (FTMO-Demo) · balance 9933.95 EUR · equity 9935.33_  
-_Historial disponible desde 2026-10-20. Con pocas operaciones el WR no significa nada: mirar la columna N antes de fiarse._
+_Actualizado: **2026-10-23 03:00** · cuenta `1515057736` (FTMO-Demo) · balance 9956.00 EUR · equity 9906.68_  
+_Historial disponible desde 2026-10-22. Con pocas operaciones el WR no significa nada: mirar la columna N antes de fiarse._
 
 | Estrategia | Magic | Símbolos | TF | N cerradas | WR % | Neto € | PF | Medio €/op | N 7d | Neto 7d € | Abiertas | Flotante € | Última op |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| H5 Bollinger+RSI | 100500 | EURGBP/AUDCAD/GBPUSD/GBPAUD | H4 | 1 | 0.0 | -1.63 | 0.00 | -1.63 | 1 | -1.63 | 2 | -22.33 | 2026-10-20 |
+| H5 Bollinger+RSI | 100500 | EURGBP/AUDCAD/GBPUSD/GBPAUD | H4 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H12 GapFill | 100700 | JP225.cash | D1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H20 RelativeStrength | 101000 | AAPL/MSFT/TSLA | H1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H25 VWAP+ADX | 101100 | UK100.cash | H1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H28b MACD Momentum | 101300 | GER40.cash | H1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
-| H21 LiquiditySweep (ventana A) | 101800 | EURUSD | M5 | 1 | 0.0 | -124.36 | 0.00 | -124.36 | 1 | -124.36 | 0 | +0.00 | 2026-10-21 |
-| H21 LiquiditySweep (ventana B) | 101801 | EURUSD | M5 | 1 | 100.0 | +26.60 | — | +26.60 | 1 | +26.60 | 0 | +0.00 | 2026-10-21 |
+| H21 LiquiditySweep (ventana A) | 101800 | EURUSD | M5 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
+| H21 LiquiditySweep (ventana B) | 101801 | EURUSD | M5 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H41 Donchian+Volumen (AAPL) | 101900 | AAPL | H1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H41 Donchian+Volumen (TSLA) | 101901 | TSLA | H1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H42 GapAndGo | 101902 | AAPL | H1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H45 Ichimoku (GER40) | 102001 | GER40.cash | H1 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | H45 Ichimoku (CADJPY) | 102003 | CADJPY | H4 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
-| Experimento: agente LLM BTCUSD (PST_LLM/llm_trader.py) | 109001 | BTCUSD | M5 | 1 | 0.0 | -18.09 | 0.00 | -18.09 | 1 | -18.09 | 0 | +0.00 | 2026-10-22 |
-| Experimento: agente LLM ETHUSD (PST_LLM/llm_trader.py) | 109002 | ETHUSD | M5 | 2 | 50.0 | -7.81 | 0.60 | -3.90 | 2 | -7.81 | 1 | +6.69 | 2026-10-22 |
-| Experimento: agente LLM XAUUSD (PST_LLM/llm_trader.py) | 109003 | XAUUSD | M15 | 1 | 100.0 | +95.30 | — | +95.30 | 1 | +95.30 | 0 | +0.00 | 2026-10-22 |
+| Experimento: agente LLM BTCUSD (PST_LLM/llm_trader.py) | 109001 | BTCUSD | M5 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
+| Experimento: agente LLM ETHUSD (PST_LLM/llm_trader.py) | 109002 | ETHUSD | M5 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
+| Experimento: agente LLM XAUUSD (PST_LLM/llm_trader.py) | 109003 | XAUUSD | M15 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
 | Experimento: agente LLM EURUSD (PST_LLM/llm_trader.py) | 109004 | EURUSD | M15 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
-| Experimento: agente LLM US500.cash (PST_LLM/llm_trader.py) | 109005 | US500.cash | M15 | 1 | 0.0 | -32.00 | 0.00 | -32.00 | 1 | -32.00 | 1 | +25.91 | 2026-10-22 |
-| **TOTAL** | | | | **8** | | **-61.99** | | | | | 4 | +10.27 | |
+| Experimento: agente LLM US500.cash (PST_LLM/llm_trader.py) | 109005 | US500.cash | M15 | 0 | — | +0.00 | — | — | 0 | +0.00 | 0 | +0.00 | — |
+| ⚠ magic desconocido | 109019 | — | — | 1 | 100.0 | +53.86 | — | — | — | — | — | — | — |
+| ⚠ magic desconocido | 109006 | — | — | 2 | 50.0 | -18.80 | — | — | — | — | — | — | — |
+| ⚠ magic desconocido | 109013 | — | — | 1 | 0.0 | -12.60 | — | — | — | — | — | — | — |
+| ⚠ magic desconocido | 109009 | — | — | 1 | 0.0 | -62.03 | — | — | — | — | — | — | — |
+| **TOTAL** | | | | **5** | | **-39.57** | | | | | 4 | -46.68 | |
 
 **Desglose por símbolo**
 
 | Estrategia | Símbolo | N | WR % | Neto € |
 |---|---|---:|---:|---:|
-| H5 Bollinger+RSI | GBPAUD | 1 | 0.0 | -1.63 |
-| H21 LiquiditySweep (ventana A) | EURUSD | 1 | 0.0 | -124.36 |
-| H21 LiquiditySweep (ventana B) | EURUSD | 1 | 100.0 | +26.60 |
-| Experimento: agente LLM BTCUSD (PST_LLM/llm_trader.py) | BTCUSD | 1 | 0.0 | -18.09 |
-| Experimento: agente LLM ETHUSD (PST_LLM/llm_trader.py) | ETHUSD | 2 | 50.0 | -7.81 |
-| Experimento: agente LLM XAUUSD (PST_LLM/llm_trader.py) | XAUUSD | 1 | 100.0 | +95.30 |
-| Experimento: agente LLM US500.cash (PST_LLM/llm_trader.py) | US500.cash | 1 | 0.0 | -32.00 |
 <!-- AUTO:END -->
 
 ## Estado de los gráficos en MT5

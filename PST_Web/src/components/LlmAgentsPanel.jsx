@@ -54,6 +54,7 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
   const [costeTotal, setCosteTotal] = useState(null)
   const [cuota, setCuota] = useState(null)
   const [error, setError] = useState('')
+  const [aviso, setAviso] = useState('')
   const [ocupado, setOcupado] = useState({})
 
   const recargar = useCallback(async () => {
@@ -78,8 +79,10 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
 
   const accion = async (symbol, tipo, body) => {
     setOcupado(o => ({ ...o, [symbol]: true }))
+    setAviso('')
     try {
-      await api.post(`${API_BASE}/llm/agentes/${encodeURIComponent(symbol)}/${tipo}`, body || {})
+      const r = await api.post(`${API_BASE}/llm/agentes/${encodeURIComponent(symbol)}/${tipo}`, body || {})
+      if (r.data?.mensaje) setAviso(r.data.mensaje)
       await recargar()
     } catch (e) {
       setError(`${symbol}: ${e?.response?.data?.detail || 'error'}`)
@@ -137,7 +140,7 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     }
   }
 
-  return { agentes, costeTotal, cuota, error, ocupado, accion, cambiarModelo, cambiarTimeframe, recargar, limites, guardarLimites }
+  return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, recargar, limites, guardarLimites }
 }
 
 // Barra de topes de la flota: cuantos agentes LLM pueden estar activos a la vez y por clase.
@@ -146,10 +149,14 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
   const [maxActivos, setMaxActivos] = useState('')
   const [maxClase, setMaxClase] = useState('')
   const [cicloMin, setCicloMin] = useState('')
-  const [horas, setHoras] = useState('')
+  const [cadenciaMin, setCadenciaMin] = useState('')
+  const [plazoMin, setPlazoMin] = useState('')
   const [margen, setMargen] = useState('')
   const [sustituciones, setSustituciones] = useState('')
   const [penalCripto, setPenalCripto] = useState('')
+  const [penalQuitar, setPenalQuitar] = useState('')
+  const [penalDias, setPenalDias] = useState('')
+  const [inactividad, setInactividad] = useState('')
   const [aviso, setAviso] = useState('')
 
   useEffect(() => {
@@ -157,10 +164,14 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
       setMaxActivos(String(limites.max_activos))
       setMaxClase(String(limites.max_por_clase))
       setCicloMin(String(limites.ciclo_min))
-      setHoras(limites.horas_reseleccion.join(','))
+      setCadenciaMin(String(limites.cadencia_ranking_min))
+      setPlazoMin(String(limites.ventana_aprobacion_min))
       setMargen(String(limites.margen_cambio))
       setSustituciones(String(limites.max_sustituciones_dia))
       setPenalCripto(String(limites.penalizacion_cripto))
+      setPenalQuitar(String(limites.penalizacion_quitar))
+      setPenalDias(String(limites.penalizacion_dias))
+      setInactividad(String(limites.inactividad_min))
     }
   }, [limites])
 
@@ -171,65 +182,70 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
       max_activos: Number(maxActivos),
       max_por_clase: Number(maxClase),
       ciclo_min: Number(cicloMin),
-      horas_reseleccion: horas.split(',').map(h => h.trim()).filter(h => h !== '').map(Number),
+      cadencia_ranking_min: Number(cadenciaMin),
+      ventana_aprobacion_min: Number(plazoMin),
       margen_cambio: Number(margen),
       max_sustituciones_dia: Number(sustituciones),
+      inactividad_min: Number(inactividad),
       penalizacion_cripto: Number(penalCripto),
+      penalizacion_quitar: Number(penalQuitar),
+      penalizacion_dias: Number(penalDias),
     })
     setAviso(error || 'Guardado')
   }
 
-  const campo = 'w-16 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500/60'
-  const etiqueta = 'flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-500'
+  // Un campo por ajuste. title explica lo que hace en el momento de pasar el raton.
+  const campos = [
+    { etiqueta: 'Máx. activos', valor: maxActivos, set: setMaxActivos, min: 1, max: limites.universo,
+      title: 'Cuántos agentes LLM pueden estar activos a la vez' },
+    { etiqueta: 'Máx. por clase', valor: maxClase, set: setMaxClase, min: 1,
+      title: 'Cuántos agentes por clase de mercado (índice, acción EEUU...)' },
+    { etiqueta: 'Riesgo cada (min)', valor: cicloMin, set: setCicloMin, min: 1, max: 60,
+      title: 'Cada cuántos minutos se vigilan pérdidas y cierres' },
+    { etiqueta: 'Propuestas cada (min)', valor: cadenciaMin, set: setCadenciaMin, min: 5, max: 240,
+      title: 'Cada cuántos minutos se recalculan las propuestas de cambio' },
+    { etiqueta: 'Plazo respuesta (min)', valor: plazoMin, set: setPlazoMin, min: 5, max: 720,
+      title: 'Minutos para responder una propuesta antes de su acción por defecto' },
+    { etiqueta: 'Margen cambio', valor: margen, set: setMargen, min: 0, max: 1, step: 0.01,
+      title: 'Cuánto debe puntuar el candidato por encima del peor activo' },
+    { etiqueta: 'Sustituciones/día', valor: sustituciones, set: setSustituciones, min: 0, max: 10,
+      title: 'Sustituciones automáticas por pérdidas al día' },
+    { etiqueta: 'Inactividad (min)', valor: inactividad, set: setInactividad, min: 30, max: 1440,
+      title: 'Minutos sin llamar al modelo tras los que un agente activo puede salir del grupo (sin posición)' },
+    { etiqueta: 'Penal. cripto', valor: penalCripto, set: setPenalCripto, min: 0, max: 0.5, step: 0.01,
+      title: 'Puntos que pierde cripto en el ranking' },
+    { etiqueta: 'Pen. quitar', valor: penalQuitar, set: setPenalQuitar, min: 0, max: 0.5, step: 0.01,
+      title: 'Puntos que resta un símbolo que quitaste' },
+    { etiqueta: 'Días pen.', valor: penalDias, set: setPenalDias, min: 1, max: 30,
+      title: 'Días hasta que la penalización de quitar llega a cero' },
+  ]
+
+  const campo = 'w-full text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500/60'
 
   return (
-    <div className="flex flex-wrap items-center gap-3 mb-6 p-3 bg-zinc-900/30 border border-zinc-800/50 rounded-2xl">
-      <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">Rotación</p>
-      <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-500">
-        Máx. activos
-        <input type="number" min={1} max={limites.universo} value={maxActivos}
-          onChange={e => setMaxActivos(e.target.value)}
-          className="w-16 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500/60" />
-      </label>
-      <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-500">
-        Máx. por clase
-        <input type="number" min={1} value={maxClase}
-          onChange={e => setMaxClase(e.target.value)}
-          className="w-16 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500/60" />
-      </label>
-      <label className={etiqueta}>
-        Cada (min)
-        <input type="number" min={1} max={60} value={cicloMin}
-          onChange={e => setCicloMin(e.target.value)} className={campo} />
-      </label>
-      <label className={etiqueta}>
-        Horas reselección
-        <input type="text" placeholder="8,16" value={horas}
-          onChange={e => setHoras(e.target.value)} className="w-24 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500/60" />
-      </label>
-      <label className={etiqueta}>
-        Margen cambio
-        <input type="number" min={0} max={1} step={0.01} value={margen}
-          onChange={e => setMargen(e.target.value)} className={campo} />
-      </label>
-      <label className={etiqueta}>
-        Sustituciones/día
-        <input type="number" min={0} max={10} value={sustituciones}
-          onChange={e => setSustituciones(e.target.value)} className={campo} />
-      </label>
-      <label className={etiqueta}>
-        Penal. cripto
-        <input type="number" min={0} max={0.5} step={0.01} value={penalCripto}
-          onChange={e => setPenalCripto(e.target.value)} className={campo} />
-      </label>
-      <button onClick={guardarAhora}
-        className="text-[11px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-200 hover:bg-indigo-600/20 transition-colors">
-        Guardar
-      </button>
-      <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-600">
-        {activosAhora} activos ahora · universo {limites.universo}
-      </span>
-      {aviso && <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-500">{aviso}</span>}
+    <div className="glass-card rounded-2xl p-5 border border-zinc-800/80 flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">Topes y tiempos de la rotación</p>
+        <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-600">
+          {activosAhora} activos ahora · universo {limites.universo}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
+        {campos.map(c => (
+          <label key={c.etiqueta} title={c.title} className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{c.etiqueta}</span>
+            <input type="number" min={c.min} max={c.max} step={c.step} value={c.valor}
+              onChange={e => c.set(e.target.value)} className={campo} />
+          </label>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={guardarAhora}
+          className="text-[11px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-200 hover:bg-indigo-600/20 transition-colors">
+          Guardar
+        </button>
+        {aviso && <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-500">{aviso}</span>}
+      </div>
     </div>
   )
 }
@@ -283,12 +299,25 @@ export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onT
 
       <div className="flex items-center gap-2">
         {agente.activo ? (
-          <button disabled={ocupado} onClick={() => onAccion(agente.symbol, 'desactivar')}
-            className={`${BOTON} border-zinc-700 text-zinc-300 hover:bg-zinc-800`}>
-            <Power size={11} /> Parar
-          </button>
+          <>
+            <button disabled={ocupado} onClick={() => onAccion(agente.symbol, 'quitar')}
+              title="Lo saca del grupo sin bloquearlo: le resta puntos un tiempo y puede volver si es el mejor"
+              className={`${BOTON} border-amber-500/40 text-amber-300 hover:bg-amber-500/10`}>
+              Quitar
+            </button>
+            <button disabled={ocupado} onClick={() => onAccion(agente.symbol, 'desactivar')}
+              title="Lo para y lo excluye: la rotacion no lo vuelve a poner hasta que lo actives a mano"
+              className={`${BOTON} border-zinc-700 text-zinc-300 hover:bg-zinc-800`}>
+              <Power size={11} /> Excluir
+            </button>
+          </>
         ) : (
           <>
+            <button disabled={ocupado} onClick={() => onAccion(agente.symbol, 'poner')}
+              title="Propone meterlo en el grupo; lo apruebas en la bandeja o en Telegram"
+              className={`${BOTON} border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10`}>
+              Poner
+            </button>
             <button disabled={ocupado} onClick={() => onAccion(agente.symbol, 'activar', { live: false })}
               className={`${BOTON} border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10`}>
               Simular

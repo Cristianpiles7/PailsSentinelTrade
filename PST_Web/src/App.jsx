@@ -11,7 +11,7 @@ import {
   ArrowUpRight, RefreshCw, Power, Target, Clock, ShieldAlert, BookMarked,
   Image as ImageIcon, FileText, ChevronRight, Save, X, MoreVertical, LayoutDashboard,
   LayoutGrid, History, ShoppingCart, Zap, Trash2, ChevronUp, ChevronDown, Cpu,
-  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, Gauge
+  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, SlidersHorizontal
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -90,7 +90,7 @@ const TITULOS_VISTA = {
   multichart: ['Multi-Chart', 'Vigilancia simultánea'],
   strategylab: ['Strategy Lab', 'Backtesting con datos reales de MT5'],
   agents: ['Oficina de agentes', 'Flota LLM y habblaud'],
-  puntuador: ['Puntuador', 'Agente de cercanía a compra/venta de la home · configuración y gasto'],
+  ajustes: ['Ajustes', 'Rotación de la flota LLM y agente puntuador de la home'],
   config: ['Matriz de símbolos', 'Dashboard y agente LLM por símbolo · agrupados por clase'],
 }
 
@@ -777,10 +777,10 @@ function App() {
           />
           <NavItem
             showLabel
-            icon={<Gauge size={24} />}
-            active={currentView === 'puntuador'}
-            onClick={() => setCurrentView('puntuador')}
-            label="Punt."
+            icon={<SlidersHorizontal size={24} />}
+            active={currentView === 'ajustes'}
+            onClick={() => setCurrentView('ajustes')}
+            label="Ajustes"
           />
 
           <NavItem
@@ -1295,9 +1295,19 @@ function App() {
           </div>
         )}
 
-        {currentView === 'puntuador' && (
-          <div className="w-full h-full pt-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
-            <PuntuadorPanel />
+        {currentView === 'ajustes' && (
+          <div className="w-full h-full overflow-y-auto px-4 md:px-8 pt-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <div className="max-w-5xl mx-auto flex flex-col gap-8">
+              <section className="flex flex-col gap-3">
+                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Flota LLM</h2>
+                <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
+                  activosAhora={llm.agentes.filter(a => a.activo).length} />
+              </section>
+              <section className="flex flex-col gap-3">
+                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Home</h2>
+                <PuntuadorPanel />
+              </section>
+            </div>
           </div>
         )}
 
@@ -2588,10 +2598,7 @@ function App() {
           currentView === 'config' && (
             <div className="w-full px-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
               {llm.error && <p className="text-[11px] text-rose-400 mb-4">{llm.error}</p>}
-
-              {/* Topes de la rotacion de la flota LLM */}
-              <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
-                activosAhora={llm.agentes.filter(a => a.activo).length} />
+              {llm.aviso && <p className="text-[11px] text-zinc-400 mb-4">{llm.aviso}</p>}
 
               {/* Filtro: todos los simbolos, solo los que tienen agente LLM, o solo los que lo tienen activo */}
               <div className="flex items-center gap-2 mb-6">

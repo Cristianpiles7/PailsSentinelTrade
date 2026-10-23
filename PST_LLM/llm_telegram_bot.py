@@ -450,16 +450,35 @@ def vigilar_cierres(ctx, con):
 
 
 # ── Bucle ────────────────────────────────────────────────────────────────────
+def _rotacion_decidir(q, d, chat_ok):
+    """Pulsacion 'rot:a:<id>' (aprobar) o 'rot:r:<id>' (rechazar). Quita los botones del aviso y responde."""
+    import rotacion
+    try:
+        _, accion, pid = d.split(":")
+        texto = rotacion.decidir_propuesta(int(pid), accion == "a", por="telegram")
+    except (ValueError, RuntimeError) as e:
+        texto = f"error: {type(e).__name__}"
+    try:
+        api("answerCallbackQuery", callback_query_id=q["id"], text=texto[:200])
+        api("editMessageReplyMarkup", chat_id=chat_ok, message_id=q["message"]["message_id"],
+            reply_markup={"inline_keyboard": []})
+    except RuntimeError as e:
+        print(f"[bot] error al responder la propuesta: {e}", flush=True)
+
+
 def procesar(ctx, u, chat_ok):
     if "callback_query" in u:
         q = u["callback_query"]
         if str(q["message"]["chat"]["id"]) != str(chat_ok):
             return
+        d = q.get("data", "")
+        if d.startswith("rot:"):                   # propuesta de rotacion: aprobar o rechazar (ver rotacion.py)
+            _rotacion_decidir(q, d, chat_ok)
+            return
         try:
             api("answerCallbackQuery", callback_query_id=q["id"])
         except RuntimeError:
             pass
-        d = q.get("data", "")
         if d.startswith("r:") and d[2:] in GENERADORES:
             try:
                 api("editMessageText", chat_id=chat_ok, message_id=q["message"]["message_id"], text=informe(ctx, d[2:])[:4000],
@@ -474,6 +493,27 @@ def procesar(ctx, u, chat_ok):
     t = (m.get("text") or "").strip()
     if t in ("/start", "/menu", "/ayuda", "/help"):
         enviar(AYUDA, teclado_fijo=True)
+    elif t.lower().split(" ")[0] in ("/quitar", "quitar", "/poner", "poner", "/excluir", "excluir"):
+        partes = t.split()
+        orden = partes[0].lstrip("/").lower()
+        if len(partes) != 2:
+            enviar(f"Uso: /{orden} SIMBOLO (ej. /{orden} EURUSD).\n"
+                   "quitar: lo saca con penalizacion (no bloquea). poner: propone meterlo. "
+                   "excluir: lo saca y no vuelve hasta que lo actives a mano.")
+        elif orden == "excluir":
+            import registro
+            try:
+                registro.desactivar(partes[1].upper())
+                enviar(f"{partes[1].upper()} excluido: la rotacion no lo volvera a poner.")
+            except (ValueError, RuntimeError) as e:
+                enviar(f"No se pudo excluir: {e}")
+        else:
+            import rotacion
+            try:
+                fn = rotacion.quitar_simbolo if orden == "quitar" else rotacion.poner_simbolo
+                enviar(fn(partes[1].upper(), por="Telegram"))
+            except RuntimeError as e:
+                enviar(f"No se pudo {orden}: {e}")
     elif t in INFORMES:
         clave = INFORMES[t]
         enviar(informe(ctx, clave), inline_actualizar(clave))
