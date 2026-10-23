@@ -1301,7 +1301,8 @@ function App() {
               <section className="flex flex-col gap-3">
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Flota LLM</h2>
                 <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
-                  activosAhora={llm.agentes.filter(a => a.activo).length} />
+                  activosAhora={llm.agentes.filter(a => a.activo).length}
+                  topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario} />
               </section>
               <section className="flex flex-col gap-3">
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Home</h2>
@@ -2675,6 +2676,7 @@ function App() {
                               onAccion={llm.accion}
                               onModelo={llm.cambiarModelo}
                               onTimeframe={llm.cambiarTimeframe}
+                              onFiltro={llm.cambiarFiltro}
                               onDecisiones={setLlmDecisiones}
                             />
                           )}

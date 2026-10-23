@@ -165,6 +165,36 @@ async def cambiar_timeframe_agente(symbol: str, body: TimeframeRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class FiltroRequest(BaseModel):
+    sin_filtro: bool          # False = solo se llama con setup (ADX/RSI/Bollinger); True = en cada vela
+
+
+@router.post("/api/llm/agentes/{symbol}/filtro")
+async def cambiar_filtro_agente(symbol: str, body: FiltroRequest):
+    _validar(symbol)
+    try:
+        return await asyncio.to_thread(registro.cambiar_filtro, symbol, body.sin_filtro)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class TopeDiarioRequest(BaseModel):
+    max_llamadas_dia: int     # llamadas al modelo por dia, para todos los agentes. 0 = sin tope
+
+
+@router.get("/api/llm/tope-diario")
+async def leer_tope_diario():
+    return {"max_llamadas_dia": await asyncio.to_thread(registro.leer_tope_diario)}
+
+
+@router.put("/api/llm/tope-diario")
+async def guardar_tope_diario(body: TopeDiarioRequest):
+    try:
+        return await asyncio.to_thread(registro.guardar_tope_diario, body.max_llamadas_dia)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/api/llm/agentes/{symbol}/activar")
 async def activar_agente(symbol: str, body: ActivarRequest = ActivarRequest()):
     _validar(symbol)

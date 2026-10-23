@@ -140,13 +140,44 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     }
   }
 
-  return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, recargar, limites, guardarLimites }
+  const cambiarFiltro = async (symbol, sinFiltro) => {
+    setOcupado(o => ({ ...o, [symbol]: true }))
+    try {
+      await api.post(`${API_BASE}/llm/agentes/${encodeURIComponent(symbol)}/filtro`, { sin_filtro: sinFiltro })
+      await recargar()
+    } catch (e) {
+      setError(`${symbol}: ${e?.response?.data?.detail || 'no se pudo cambiar el filtro'}`)
+    } finally {
+      setOcupado(o => ({ ...o, [symbol]: false }))
+    }
+  }
+
+  // Tope global de llamadas al dia (todos los agentes). 0 = sin tope.
+  const [topeDiario, setTopeDiario] = useState(null)
+  useEffect(() => {
+    if (!habilitado) return
+    api.get(`${API_BASE}/llm/tope-diario`).then(r => setTopeDiario(r.data.max_llamadas_dia)).catch(() => {})
+  }, [api, API_BASE, habilitado])
+
+  const guardarTopeDiario = async (valor) => {
+    try {
+      const r = await api.put(`${API_BASE}/llm/tope-diario`, { max_llamadas_dia: valor })
+      setTopeDiario(r.data.max_llamadas_dia)
+      return null
+    } catch (e) {
+      return e?.response?.data?.detail || 'no se pudo guardar el tope'
+    }
+  }
+
+  return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, cambiarFiltro,
+    recargar, limites, guardarLimites, topeDiario, guardarTopeDiario }
 }
 
 // Barra de topes de la flota: cuantos agentes LLM pueden estar activos a la vez y por clase.
 // Bajarlo no para los agentes que ya estan activos; solo limita los que entran despues.
-export function LlmLimitesBar({ limites, guardar, activosAhora }) {
+export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guardarTopeDiario }) {
   const [maxActivos, setMaxActivos] = useState('')
+  const [tope, setTope] = useState('')
   const [maxClase, setMaxClase] = useState('')
   const [cicloMin, setCicloMin] = useState('')
   const [cadenciaMin, setCadenciaMin] = useState('')
@@ -175,9 +206,14 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
     }
   }, [limites])
 
+  useEffect(() => {
+    if (topeDiario !== null && topeDiario !== undefined) setTope(String(topeDiario))
+  }, [topeDiario])
+
   if (!limites) return null
 
   const guardarAhora = async () => {
+    const errorTope = guardarTopeDiario ? await guardarTopeDiario(Number(tope)) : null
     const error = await guardar({
       max_activos: Number(maxActivos),
       max_por_clase: Number(maxClase),
@@ -191,11 +227,13 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
       penalizacion_quitar: Number(penalQuitar),
       penalizacion_dias: Number(penalDias),
     })
-    setAviso(error || 'Guardado')
+    setAviso(errorTope || error || 'Guardado')
   }
 
   // Un campo por ajuste. title explica lo que hace en el momento de pasar el raton.
   const campos = [
+    { etiqueta: 'Llamadas/día', valor: tope, set: setTope, min: 0,
+      title: 'Llamadas al modelo por día para TODOS los agentes. 0 = sin tope' },
     { etiqueta: 'Máx. activos', valor: maxActivos, set: setMaxActivos, min: 1, max: limites.universo,
       title: 'Cuántos agentes LLM pueden estar activos a la vez' },
     { etiqueta: 'Máx. por clase', valor: maxClase, set: setMaxClase, min: 1,
@@ -255,7 +293,7 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
 const CAMPO = 'w-full text-[11px] font-bold uppercase bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1.5 disabled:opacity-40 focus:outline-none focus:border-indigo-500/60'
 const BOTON = 'flex-1 flex items-center justify-center gap-1 text-[11px] font-bold uppercase py-1.5 rounded-lg border transition-colors disabled:opacity-40'
 
-export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onTimeframe }) {
+export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onTimeframe, onFiltro }) {
   const estado = agente.activo ? (agente.live ? 'Demo · opera' : 'Simulación') : 'Apagado'
   const colorEstado = agente.activo
     ? (agente.live ? 'bg-rose-500/15 text-rose-300 border-rose-500/30' : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30')
@@ -296,6 +334,14 @@ export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onT
           </select>
         </label>
       </div>
+
+      {onFiltro && (
+        <button disabled={ocupado} onClick={() => onFiltro(agente.symbol, !agente.sin_filtro)}
+          title="Con filtro: solo llama si hay setup (ADX, RSI o Bollinger). Sin filtro: llama en cada vela"
+          className={`${BOTON} ${agente.sin_filtro ? 'border-zinc-700 text-zinc-400 hover:bg-zinc-800' : 'border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10'}`}>
+          Filtro de setup: {agente.sin_filtro ? 'apagado' : 'encendido'}
+        </button>
+      )}
 
       <div className="flex items-center gap-2">
         {agente.activo ? (

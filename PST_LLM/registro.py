@@ -169,10 +169,10 @@ def activar(symbol, live=True, origen="manual"):
     registro = F.cargar_registro()
     if not any(a["nombre"] == nombre for a in registro):
         registro.append({"nombre": nombre, "symbol": symbol, "timeframe": "M1", "magic": s.magic,
-                         "sin_filtro": False, "clase": s.clase, "modelo": s.modelo})
+                         "sin_filtro": True, "clase": s.clase, "modelo": s.modelo})
         F.REGISTRO.write_text(json.dumps(registro, indent=2), encoding="utf-8")
     f = F.ficheros(nombre)
-    cfg = F.config_por_defecto({"symbol": symbol, "timeframe": "M1", "sin_filtro": False})
+    cfg = F.config_por_defecto({"symbol": symbol, "timeframe": "M1", "sin_filtro": True})
     cfg.update({"model": s.modelo, "live": bool(live), "timeframe": "M1"})
     if f["config"].is_file():
         # Si ya existia (agente reactivado), se conserva lo que el usuario haya tocado a mano
@@ -352,7 +352,7 @@ def estado():
         out.append({
             "symbol": s.symbol, "clase": s.clase, "modelo": _modelo_de_config(nombre, s.modelo),
             "timeframe": _config_de(nombre, "timeframe", "M1"), "magic": s.magic, "nombre": nombre,
-            "activo": activo, "live": live,
+            "activo": activo, "live": live, "sin_filtro": _sin_filtro_de(nombre),
             "vivo": vivo, "pid": vivos.get(nombre), "actualizado": fila[3] if fila else None,
             "origen": (fila[4] if fila and fila[4] else "manual"), "bloqueado": bool(fila and fila[5]),
             "coste_usd": coste.get(s.symbol, 0.0),
@@ -425,6 +425,46 @@ def cambiar_modelo(symbol, modelo):
     cfg["model"] = modelo
     f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return {"symbol": symbol, "modelo": modelo}
+
+
+def _sin_filtro_de(nombre):
+    try:
+        f = _ficheros(None).ficheros(nombre)
+        return bool(json.loads(f["config"].read_text(encoding="utf-8-sig")).get("sin_filtro", True))
+    except Exception:
+        return True
+
+
+def cambiar_filtro(symbol, sin_filtro):
+    """Filtro de setup por simbolo: apagado (sin_filtro) = el agente se llama en cada vela. Se relee en caliente."""
+    if _simbolo(symbol) is None:
+        raise ValueError(f"{symbol} no esta en el universo")
+    f = _ficheros(None).ficheros(nombre_agente(symbol))
+    if not f["config"].is_file():
+        raise ValueError(f"{symbol} no tiene configuracion: activalo primero")
+    cfg = json.loads(f["config"].read_text(encoding="utf-8-sig"))
+    cfg["sin_filtro"] = bool(sin_filtro)
+    f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    return {"symbol": symbol, "sin_filtro": bool(sin_filtro)}
+
+
+# Tope global de llamadas al dia, para todos los agentes. 0 = sin tope. Lo lee cada agente en cada vuelta.
+LLM_GLOBAL = DATA / "llm_global.json"
+
+
+def leer_tope_diario():
+    try:
+        return max(0, int(json.loads(LLM_GLOBAL.read_text(encoding="utf-8-sig")).get("max_llamadas_dia", 0)))
+    except (FileNotFoundError, ValueError, TypeError):
+        return 0
+
+
+def guardar_tope_diario(valor):
+    valor = int(valor)
+    if valor < 0:
+        raise ValueError("el tope de llamadas no puede ser negativo (0 = sin tope)")
+    LLM_GLOBAL.write_text(json.dumps({"max_llamadas_dia": valor}, indent=2), encoding="utf-8")
+    return {"max_llamadas_dia": valor}
 
 
 def decisiones(symbol, limite=50):

@@ -110,7 +110,8 @@ once and YOU decide which timeframe each trade is based on.
 OUTPUT
 Reply ONLY with the JSON decision requested by the schema. 'action' is one of hold, buy, sell, close. With no
 open position choose hold, buy or sell; with an open position choose hold or close. Prefer hold unless you see
-a clear, specific reason.
+a clear, specific reason. Most candles carry no edge: enter only at a concrete structure (a named level or
+indicator reading) on the timeframe you choose, and say in 'Riesgo' what would invalidate the idea.
 - 'timeframe': the timeframe whose structure justifies the trade. The stop distance (sl_atr_mult x ATR) is
   measured on THAT timeframe's ATR, so a wider timeframe means a wider stop and a longer holding time. Use the
   higher timeframes for direction and the lower ones for timing. Do not fight the higher timeframes without a
@@ -136,8 +137,6 @@ CLOSING RULES (enforced by the system)
   (timeframe + level or indicator).
 - Being in a loss inside the stop is NOT a reason to close, and neither is a small bounce: the stop and the
   target exist to do that job.
-- Evidence so far: in the first live sample, discretionary early closes did worse than letting the stop or
-  target run. The sample is small, so weigh each case on its structure.
 
 STATE FIELDS (units in brackets)
 - symbol; call_interval (the clock, not your trading timeframe); spread_price [price units]; equity [account currency].
@@ -416,6 +415,17 @@ def _resolve_claude():
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m.resolve_claude()
+
+
+LLM_GLOBAL = DATA_DIR / "llm_global.json"   # tope diario global (lo escribe la app en Ajustes); 0 = sin tope
+
+
+def _tope_diario():
+    """Llamadas al dia permitidas para todos los agentes. Se relee en cada llamada; sin fichero = sin tope."""
+    try:
+        return max(0, int(json.loads(LLM_GLOBAL.read_text(encoding="utf-8-sig")).get("max_llamadas_dia", 0)))
+    except (FileNotFoundError, ValueError, TypeError):
+        return 0
 
 
 def cuota_ok():
@@ -912,8 +922,9 @@ def ciclo(mt5, args, con):
     if llamar:
         n_hoy = con.execute("SELECT COUNT(*) FROM decisions WHERE llm_called=1 AND ts>=?",
                             (datetime.now().strftime("%Y-%m-%d"),)).fetchone()[0]
-        if n_hoy >= args.max_llamadas_dia:
-            llamar, motivo = False, f"tope de {args.max_llamadas_dia} llamadas/dia"
+        tope = _tope_diario()
+        if tope and n_hoy >= tope:
+            llamar, motivo = False, f"tope de {tope} llamadas/dia"
     if not llamar:
         print(f"[{ts}] sin llamada: {motivo}", flush=True)
         log_decision(con, ts=ts, symbol=args.symbol, mode=modo, model=args.model, llm_called=0,
@@ -1190,7 +1201,7 @@ def main():
             return 1
         print(f"[llm_trader] {args.symbol} {args.timeframe} · modo {'LIVE (demo)' if args.live else 'SIMULACION'} · "
               f"modelo {args.model}/{args.effort} · filtro {'NO' if args.sin_filtro else 'si'} · "
-              f"tope {args.max_llamadas_dia} llamadas/dia · cuenta {cuenta.login}", flush=True)
+              f"tope {_tope_diario() or 'sin'} llamadas/dia (global) · cuenta {cuenta.login}", flush=True)
         if args.once:
             ciclo(mt5, args, con)
             return 0
