@@ -52,7 +52,7 @@ PERDIDAS_SEGUIDAS = 3
 PERDIDA_DIA_R = -1.5
 RIESGO_R_PCT = 0.5
 MARGEN_CAMBIO = 0.10
-HORAS_RESELECCION = (8, 15)
+HORAS_RESELECCION = (8, 16)
 CICLO_S = 300
 PESOS = {"coste": 0.35, "tendencia": 0.25, "volatilidad": 0.15, "historial": 0.25}
 
