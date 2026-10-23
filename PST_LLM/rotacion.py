@@ -46,14 +46,16 @@ ESTADO = REPO_ROOT / ".agents" / "data" / "rotacion_estado.json"
 STOP = REPO_ROOT / ".agents" / "data" / "rotacion.STOP"     # crear este fichero para parar el bucle
 REF_BROKER = "BTCUSD"                 # cotiza 24/7: su ultimo tick marca la hora actual del broker
 CONFIG = REPO_ROOT / ".agents" / "data" / "rotacion_config.json"   # se relee en cada pasada: no hace falta reiniciar
-LIMITES_POR_DEFECTO = {"max_activos": 10, "max_por_clase": 5}     # pruebas: subir max_activos (p. ej. 15) a mano
-MAX_SUSTITUCIONES_DIA = 2
+# Ajustes editables desde la app (rotacion_config.json). Se relee en cada pasada.
+LIMITES_POR_DEFECTO = {"max_activos": 10, "max_por_clase": 5,
+                       "ciclo_min": 5, "horas_reseleccion": [8, 16],
+                       "margen_cambio": 0.10, "max_sustituciones_dia": 2}
+TIPOS = {"max_activos": int, "max_por_clase": int, "ciclo_min": int,
+         "horas_reseleccion": lambda v: sorted({int(h) for h in v}),
+         "margen_cambio": float, "max_sustituciones_dia": int}
 PERDIDAS_SEGUIDAS = 3
 PERDIDA_DIA_R = -1.5
 RIESGO_R_PCT = 0.5
-MARGEN_CAMBIO = 0.10
-HORAS_RESELECCION = (8, 16)
-CICLO_S = 300
 PESOS = {"coste": 0.35, "tendencia": 0.25, "volatilidad": 0.15, "historial": 0.25}
 
 
@@ -149,26 +151,42 @@ def ranking(mt5, ref_time):
 
 
 def _limites():
-    """Tope de agentes y por clase. Lee rotacion_config.json; si falta o esta roto, usa los por defecto."""
+    """Ajustes de la rotacion. Lee rotacion_config.json; lo que falte o este roto usa el valor por defecto."""
     lim = dict(LIMITES_POR_DEFECTO)
     try:
-        lim.update({k: int(v) for k, v in json.loads(CONFIG.read_text(encoding="utf-8")).items() if k in lim})
-    except (FileNotFoundError, ValueError, TypeError):
-        pass
+        guardado = json.loads(CONFIG.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return lim
+    for k, v in guardado.items():
+        if k in TIPOS:
+            try:
+                lim[k] = TIPOS[k](v)
+            except (TypeError, ValueError):
+                pass
     return lim
 
 
-def guardar_limites(max_activos=None, max_por_clase=None):
-    """Cambia los topes (lo que no se pase se conserva). Lo llama la app; valida contra el universo."""
+def guardar_ajustes(cambios):
+    """Cambia los ajustes indicados (lo que no se pase se conserva). Lo llama la app; valida antes de escribir."""
     lim = _limites()
-    if max_activos is not None:
-        lim["max_activos"] = int(max_activos)
-    if max_por_clase is not None:
-        lim["max_por_clase"] = int(max_por_clase)
+    for k, v in cambios.items():
+        if v is None:
+            continue
+        if k not in TIPOS:
+            raise ValueError(f"ajuste desconocido: {k}")
+        lim[k] = TIPOS[k](v)
     if not 1 <= lim["max_activos"] <= len(universo.UNIVERSO):
         raise ValueError(f"max_activos debe estar entre 1 y {len(universo.UNIVERSO)} (tamano del universo)")
     if not 1 <= lim["max_por_clase"] <= lim["max_activos"]:
         raise ValueError(f"max_por_clase debe estar entre 1 y max_activos ({lim['max_activos']})")
+    if not 1 <= lim["ciclo_min"] <= 60:
+        raise ValueError("ciclo_min debe estar entre 1 y 60 minutos")
+    if not lim["horas_reseleccion"] or any(not 0 <= h <= 23 for h in lim["horas_reseleccion"]):
+        raise ValueError("horas_reseleccion: lista de horas entre 0 y 23")
+    if not 0 <= lim["margen_cambio"] <= 1:
+        raise ValueError("margen_cambio debe estar entre 0 y 1")
+    if not 0 <= lim["max_sustituciones_dia"] <= 10:
+        raise ValueError("max_sustituciones_dia debe estar entre 0 y 10")
     CONFIG.write_text(json.dumps(lim, indent=2), encoding="utf-8")
     return lim
 
@@ -226,6 +244,7 @@ def ciclo(mt5, reseleccion_permitida=False):
         raise RuntimeError("MT5 desconectado: no se rota")
     if mt5.positions_get() is None:
         raise RuntimeError(f"no se pueden leer las posiciones ({mt5.last_error()}): no se rota")
+    lim = _limites()
     e = _estado_dia()
     ref = mt5.symbol_info_tick(REF_BROKER)
     if ref is None:
@@ -254,8 +273,8 @@ def ciclo(mt5, reseleccion_permitida=False):
             continue
         motivo = f"{seguidas} perdidas seguidas" if seguidas >= PERDIDAS_SEGUIDAS else f"{neto:.0f} EUR hoy ({neto / r_eur:.1f} R)"
         datos = {"perdidas_seguidas": seguidas, "neto_dia_eur": round(neto, 2), "r_eur": round(r_eur, 2)}
-        if e["sustituciones"] >= MAX_SUSTITUCIONES_DIA:
-            _anotar("aviso", sym, f"{motivo}: sin sustitucion (limite {MAX_SUSTITUCIONES_DIA} al dia)", datos)
+        if e["sustituciones"] >= lim["max_sustituciones_dia"]:
+            _anotar("aviso", sym, f"{motivo}: sin sustitucion (limite {lim['max_sustituciones_dia']} al dia)", datos)
             continue
         _desactivar(sym, motivo, datos)
         e["fuera_hoy"].append(sym)
@@ -268,7 +287,7 @@ def ciclo(mt5, reseleccion_permitida=False):
         _guardar_estado(e)
 
     # 3) Relleno de huecos libres (arranque y aperturas de mercado).
-    max_activos = _limites()["max_activos"]
+    max_activos = lim["max_activos"]
     while len(activos) < max_activos:
         entra = _mejor_candidato(rank, activos, e)
         if not entra:
@@ -276,10 +295,10 @@ def ciclo(mt5, reseleccion_permitida=False):
         _activar(entra, "hueco libre: mejor simbolo abierto", {})
         activos[entra] = True
 
-    # 4) Reseleccion programada: cambia solo si el candidato puntua MARGEN_CAMBIO mas que el peor activo.
+    # 4) Reseleccion programada: cambia solo si el candidato puntua margen_cambio mas que el peor activo.
     hora = datetime.now().hour
     clave = f"{datetime.now():%Y-%m-%d}-{hora}"
-    if reseleccion_permitida and hora in HORAS_RESELECCION and clave not in e["reseleccion"]:
+    if reseleccion_permitida and hora in lim["horas_reseleccion"] and clave not in e["reseleccion"]:
         e["reseleccion"].append(clave)
         puntos = {p["symbol"]: p["score"] for p, _ in rank}
         peores = sorted([s for s in activos if s in puntos], key=lambda s: puntos[s])
@@ -287,7 +306,7 @@ def ciclo(mt5, reseleccion_permitida=False):
             if _posiciones_abiertas(mt5, sym):
                 continue
             entra = _mejor_candidato(rank, activos, e)
-            if not entra or puntos[entra] < puntos[sym] + MARGEN_CAMBIO:
+            if not entra or puntos[entra] < puntos[sym] + lim["margen_cambio"]:
                 break
             _desactivar(sym, f"reseleccion: {entra} puntua {puntos[entra]:.2f} vs {puntos[sym]:.2f}", {})
             del activos[sym]
@@ -342,7 +361,7 @@ def main():
 
 def bucle():
     """
-    Una pasada cada CICLO_S hasta que aparezca rotacion.STOP. La usan --loop y la app (hilo de fondo al
+    Una pasada cada ciclo_min minutos hasta que aparezca rotacion.STOP. La usan --loop y la app (hilo de fondo al
     arrancar). Tras cada pasada con algun agente activo, arranca revisor y Telegram si no corren (idempotente).
     """
     STOP.unlink(missing_ok=True)
@@ -355,7 +374,7 @@ def bucle():
                 F.iniciar_bot()
         except Exception as e:
             print(f"[rotacion] error en la pasada: {e}", flush=True)
-        for _ in range(CICLO_S // 5):
+        for _ in range(_limites()["ciclo_min"] * 60 // 5):
             if STOP.exists():
                 break
             time.sleep(5)

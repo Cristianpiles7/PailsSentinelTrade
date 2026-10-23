@@ -145,21 +145,39 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
 export function LlmLimitesBar({ limites, guardar, activosAhora }) {
   const [maxActivos, setMaxActivos] = useState('')
   const [maxClase, setMaxClase] = useState('')
+  const [cicloMin, setCicloMin] = useState('')
+  const [horas, setHoras] = useState('')
+  const [margen, setMargen] = useState('')
+  const [sustituciones, setSustituciones] = useState('')
   const [aviso, setAviso] = useState('')
 
   useEffect(() => {
     if (limites) {
       setMaxActivos(String(limites.max_activos))
       setMaxClase(String(limites.max_por_clase))
+      setCicloMin(String(limites.ciclo_min))
+      setHoras(limites.horas_reseleccion.join(','))
+      setMargen(String(limites.margen_cambio))
+      setSustituciones(String(limites.max_sustituciones_dia))
     }
   }, [limites])
 
   if (!limites) return null
 
   const guardarAhora = async () => {
-    const error = await guardar({ max_activos: Number(maxActivos), max_por_clase: Number(maxClase) })
+    const error = await guardar({
+      max_activos: Number(maxActivos),
+      max_por_clase: Number(maxClase),
+      ciclo_min: Number(cicloMin),
+      horas_reseleccion: horas.split(',').map(h => h.trim()).filter(h => h !== '').map(Number),
+      margen_cambio: Number(margen),
+      max_sustituciones_dia: Number(sustituciones),
+    })
     setAviso(error || 'Guardado')
   }
+
+  const campo = 'w-16 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500/60'
+  const etiqueta = 'flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-500'
 
   return (
     <div className="flex flex-wrap items-center gap-3 mb-6 p-3 bg-zinc-900/30 border border-zinc-800/50 rounded-2xl">
@@ -175,6 +193,26 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
         <input type="number" min={1} value={maxClase}
           onChange={e => setMaxClase(e.target.value)}
           className="w-16 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500/60" />
+      </label>
+      <label className={etiqueta}>
+        Cada (min)
+        <input type="number" min={1} max={60} value={cicloMin}
+          onChange={e => setCicloMin(e.target.value)} className={campo} />
+      </label>
+      <label className={etiqueta}>
+        Horas reselección
+        <input type="text" placeholder="8,16" value={horas}
+          onChange={e => setHoras(e.target.value)} className="w-24 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500/60" />
+      </label>
+      <label className={etiqueta}>
+        Margen cambio
+        <input type="number" min={0} max={1} step={0.01} value={margen}
+          onChange={e => setMargen(e.target.value)} className={campo} />
+      </label>
+      <label className={etiqueta}>
+        Sustituciones/día
+        <input type="number" min={0} max={10} value={sustituciones}
+          onChange={e => setSustituciones(e.target.value)} className={campo} />
       </label>
       <button onClick={guardarAhora}
         className="text-[11px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-200 hover:bg-indigo-600/20 transition-colors">

@@ -108,8 +108,12 @@ async def cuota_visible():
 
 
 class RotacionRequest(BaseModel):
-    max_activos: int | None = None      # cuantos agentes LLM pueden estar activos a la vez
-    max_por_clase: int | None = None    # cuantos por clase de mercado (indice, accion_eeuu...)
+    max_activos: int | None = None            # cuantos agentes LLM pueden estar activos a la vez
+    max_por_clase: int | None = None          # cuantos por clase de mercado (indice, accion_eeuu...)
+    ciclo_min: int | None = None              # cada cuantos minutos corre la rotacion
+    horas_reseleccion: list[int] | None = None  # horas (0-23) en las que se permite cambiar un activo por otro
+    margen_cambio: float | None = None        # cuanto debe puntuar el candidato por encima del peor activo
+    max_sustituciones_dia: int | None = None  # sustituciones por perdidas al dia
 
 
 @router.get("/api/llm/rotacion")
@@ -124,7 +128,7 @@ async def leer_rotacion():
 async def guardar_rotacion(body: RotacionRequest):
     import rotacion       # noqa: E402
     try:
-        await asyncio.to_thread(rotacion.guardar_limites, body.max_activos, body.max_por_clase)
+        await asyncio.to_thread(rotacion.guardar_ajustes, body.model_dump(exclude_none=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return await leer_rotacion()
