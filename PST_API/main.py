@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.33",
+    version="2.6.34",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -1564,6 +1564,8 @@ def start_app():
     # Ventana cerrada: los agentes paran (sin perder su marca de activo, se relanzan al abrir).
     _detener_agentes_llm()
     _parar_puntuador()
+    from PST_API.habblaud_proxy import detener_habblaud
+    detener_habblaud()
 
 
 def _arrancar_puntuador():

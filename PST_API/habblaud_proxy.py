@@ -230,6 +230,9 @@ def _is_listening(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
+_proceso_habblaud = None   # el Popen que lanzo PST (None si habblaud ya corria o no se lanzo)
+
+
 def ensure_habblaud_running() -> bool:
     """
     Levanta habblaud si no esta escuchando. OPT-IN: solo actua con HABBLAUD_AUTOSTART=1.
@@ -265,7 +268,8 @@ def ensure_habblaud_running() -> bool:
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.Popen(
+        global _proceso_habblaud
+        _proceso_habblaud = subprocess.Popen(
             ["node", "dist/server/index.js"],
             cwd=habblaud_dir,
             stdout=subprocess.DEVNULL,
@@ -285,6 +289,21 @@ def ensure_habblaud_running() -> bool:
 
     logger.warning("[HABBLAUD] Lanzado pero no llego a escuchar en el puerto %s", port)
     return False
+
+
+def detener_habblaud() -> None:
+    """
+    Para habblaud si lo levanto PST (autostart). Si ya estaba corriendo antes, no se toca.
+    taskkill /T mata tambien los hijos de node.
+    """
+    proc = _proceso_habblaud
+    if proc is None or proc.poll() is not None:
+        return
+    import subprocess
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+                   creationflags=creationflags)
+    logger.info("[HABBLAUD] Parado al cerrar PST")
 
 
 def start_mirror_in_thread() -> None:
