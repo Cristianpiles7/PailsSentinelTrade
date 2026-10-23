@@ -29,6 +29,7 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -95,6 +96,14 @@ def enviar(texto, teclado_inline=None, teclado_fijo=False):
 
 def inline_actualizar(clave):
     return [[{"text": "🔄 Actualizar", "callback_data": f"r:{clave}"}]]
+
+
+def teclado_de(ctx, clave):
+    """Botones de un informe. En Agentes, un boton de excluir por cada agente activo."""
+    if clave != "agentes":
+        return inline_actualizar(clave)
+    excluir = [[{"text": f"⛔ Excluir {a['symbol']}", "callback_data": f"x:{a['symbol']}"}] for _, a in agentes_activos(ctx)]
+    return excluir + inline_actualizar(clave)
 
 
 # ── Datos de MT5 ─────────────────────────────────────────────────────────────
@@ -342,6 +351,13 @@ def r_general(ctx):
     return "\n".join(lin)
 
 
+def agentes_activos(ctx):
+    """[(magic, agente)] de los agentes con el simbolo activo en la BBDD, en el orden del informe."""
+    import registro
+    activos = {a["symbol"] for a in registro.estado() if a["activo"]}
+    return [(magic, a) for magic, a in sorted(ctx.agentes.items()) if a["symbol"] in activos]
+
+
 def r_agentes(ctx):
     vivos = {}
     for p in psutil.process_iter(["pid", "cmdline"]):
@@ -350,10 +366,13 @@ def r_agentes(ctx):
             vivos["Agente_LLM" if "--nombre" not in c else c[c.index("--nombre") + 1]] = p.info["pid"]
         elif any(a.endswith("llm_revisor.py") for a in c):
             vivos["__revisor"] = p.info["pid"]
-    lin = ["🤖 <b>Agentes</b>\n"]
+    lin = ["🤖 <b>Agentes activos</b>\n"]
     tot_l = tot_t = 0
     pos = ctx.mt5.positions_get() or []
-    for magic, a in sorted(ctx.agentes.items()):
+    activos = agentes_activos(ctx)
+    if not activos:
+        lin.append("Ningún agente activo.")
+    for magic, a in activos:
         llam = tok = 0
         ult = "—"
         if a["db"].is_file():
@@ -416,7 +435,7 @@ AYUDA = ("🤖 <b>Panel de la flota</b>\n\nUsa los botones de abajo:\n"
          "📋 <b>Cerradas hoy</b> — lo cerrado hoy y su resultado\n"
          "💰 <b>Ganancias hoy</b> — realizado + flotante, por origen\n"
          "📊 <b>General</b> — todo el historial por agente y EA\n"
-         "🤖 <b>Agentes</b> — quién corre, gasto y cuota de Claude\n"
+         "🤖 <b>Agentes</b> — los activos, gasto y cuota de Claude, con botón para excluir\n"
          "💼 <b>Cuenta</b> — balance, margen y límites de la prueba\n\n"
          "Además te aviso de cada posición que se cierra, con sus datos.\n<i>Solo lectura: desde aquí no se puede operar.</i>")
 
@@ -466,6 +485,21 @@ def _rotacion_decidir(q, d, chat_ok):
         print(f"[bot] error al responder la propuesta: {e}", flush=True)
 
 
+def _excluir_desde_boton(symbol):
+    """Excluye el agente en un hilo aparte: desactivar espera a que el proceso pare (hasta 90 s)."""
+    import registro
+
+    def trabajo():
+        try:
+            registro.desactivar(symbol)
+            enviar(f"⛔ <b>{_h.escape(symbol)}</b> excluido: su agente se ha parado. "
+                   "Para volver a activarlo, hazlo a mano desde la app.")
+        except Exception as e:
+            enviar(f"No se pudo excluir {_h.escape(symbol)}: {_h.escape(type(e).__name__)} {_h.escape(str(e)[:150])}")
+
+    threading.Thread(target=trabajo, daemon=True).start()
+
+
 def procesar(ctx, u, chat_ok):
     if "callback_query" in u:
         q = u["callback_query"]
@@ -479,10 +513,13 @@ def procesar(ctx, u, chat_ok):
             api("answerCallbackQuery", callback_query_id=q["id"])
         except RuntimeError:
             pass
+        if d.startswith("x:"):                       # boton Excluir de un agente (ver teclado_de)
+            _excluir_desde_boton(d[2:])
+            return
         if d.startswith("r:") and d[2:] in GENERADORES:
             try:
                 api("editMessageText", chat_id=chat_ok, message_id=q["message"]["message_id"], text=informe(ctx, d[2:])[:4000],
-                    parse_mode="HTML", disable_web_page_preview=True, reply_markup={"inline_keyboard": inline_actualizar(d[2:])})
+                    parse_mode="HTML", disable_web_page_preview=True, reply_markup={"inline_keyboard": teclado_de(ctx, d[2:])})
             except RuntimeError as e:
                 if "400" not in str(e):          # 400 = "message is not modified": el informe no cambio
                     print(f"[bot] error al actualizar: {e}", flush=True)
@@ -516,9 +553,9 @@ def procesar(ctx, u, chat_ok):
                 enviar(f"No se pudo {orden}: {e}")
     elif t in INFORMES:
         clave = INFORMES[t]
-        enviar(informe(ctx, clave), inline_actualizar(clave))
+        enviar(informe(ctx, clave), teclado_de(ctx, clave))
     elif t.startswith("/") and t[1:] in GENERADORES:
-        enviar(informe(ctx, t[1:]), inline_actualizar(t[1:]))
+        enviar(informe(ctx, t[1:]), teclado_de(ctx, t[1:]))
 
 
 def main():
@@ -540,7 +577,7 @@ def main():
             ctx = Ctx(mt5)
             enviar(AYUDA, teclado_fijo=True)
             for clave in GENERADORES:
-                enviar(informe(ctx, clave), inline_actualizar(clave))
+                enviar(informe(ctx, clave), teclado_de(ctx, clave))
             ult = cerradas(ctx, 3)
             if ult:
                 enviar("🔎 <b>Así se verá el aviso de cierre</b> (última cerrada)\n\n" + tarjeta_cierre(ctx, ult[-1]))
