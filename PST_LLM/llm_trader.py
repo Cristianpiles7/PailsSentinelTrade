@@ -41,6 +41,7 @@ from pathlib import Path
 import numpy as np
 
 import calendario                     # puerta de calendario FTMO (PST_LLM/calendario.py)
+import sesiones                       # paradas recurrentes del mercado: cierre antes del fin de semana (PST_LLM/sesiones.py)
 import registro                       # BBDD central: decisiones y agentes para la app
 import universo
 
@@ -197,7 +198,7 @@ CONFIG_CLAVES = {"enabled": bool, "symbol": str, "timeframe": str, "model": str,
                  "live": bool, "sin_filtro": bool, "max_llamadas_dia": int, "max_perdida_dia": float,
                  "sesion_continua": bool, "reiniciar_cada": int, "telegram": bool, "aviso_cooldown_min": int,
                  "timeframes_analisis": list, "max_perdida_flota_dia": float, "equity_minima": float,
-                 "enfriamiento_min": int, "min_cierre_min": int}
+                 "enfriamiento_min": int, "min_cierre_min": int, "margen_sesion_min": int}
 TF_SEGUNDOS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
 # "timeframe" es CADA CUANTO se llama al agente (el reloj). "timeframes_analisis" son los marcos
 # que ve en cada llamada; el agente elige en cual se apoya cada operacion.
@@ -889,6 +890,48 @@ def recortes(d):
 
 
 # ── Ciclo ────────────────────────────────────────────────────────────────────
+_ULTIMO_CIERRE_SESION = {"t": 0.0}
+
+
+def cerrar_por_sesion(mt5, p, tick, info, cuenta):
+    """Cierre a mercado por parada del mercado: no pasa por el modelo ni por el minimo de tiempo."""
+    buy = p.type == 0
+    req = {"action": mt5.TRADE_ACTION_DEAL, "symbol": info.name, "volume": p.volume, "position": p.ticket,
+           "type": mt5.ORDER_TYPE_SELL if buy else mt5.ORDER_TYPE_BUY,
+           "price": tick.bid if buy else tick.ask, "deviation": 30, "magic": MAGIC,
+           "comment": COMMENT, "type_filling": _filling(mt5, info)}
+    ok, txt, _ = enviar_orden(mt5, req, cuenta)
+    return ok, txt
+
+
+def vigilar_sesion(mt5, args, con):
+    """
+    Cada vuelta del bucle (no solo al cerrar vela, para que un agente en H1 no se pierda la ventana):
+    si el mercado va a parar durante un rato largo, cierra lo abierto de este agente.
+    Reintenta como mucho cada 60 s para no inundar el log si el broker rechaza la orden.
+    """
+    tick = mt5.symbol_info_tick(args.symbol)
+    info = mt5.symbol_info(args.symbol)
+    if tick is None or info is None:
+        return
+    pos = [p for p in (mt5.positions_get(symbol=args.symbol) or []) if p.magic == MAGIC]
+    if not pos:
+        return
+    sesion = sesiones.estado(mt5, args.symbol, tick.time, args.margen_sesion_min * 60)
+    if not sesion["cerrar"] or time.time() - _ULTIMO_CIERRE_SESION["t"] < 60:
+        return
+    _ULTIMO_CIERRE_SESION["t"] = time.time()
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    motivo = f"cierre por sesion: {sesion['motivo']}"
+    if not args.live:
+        print(f"[{ts}] SIM: cerraria por sesion ({sesion['motivo']})", flush=True)
+        return
+    ok, txt = cerrar_por_sesion(mt5, pos[0], tick, info, mt5.account_info())
+    print(f"[{ts}] {motivo} · {txt}", flush=True)
+    log_decision(con, ts=ts, symbol=args.symbol, mode="live", model=args.model, llm_called=0,
+                 gate_reason=motivo, action="close", executed=int(ok), exec_result=txt, reason=motivo, state_json="{}")
+
+
 def ciclo(mt5, args, con):
     snap = snapshot(mt5, args.symbol, args.timeframe, args.timeframes_analisis)
     if snap is None:
@@ -900,6 +943,13 @@ def ciclo(mt5, args, con):
     modo = "live" if args.live else "sim"
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # Parada larga del mercado a la vista: no se llama al modelo ni se abre nada (lo abierto lo cierra vigilar_sesion).
+    sesion = sesiones.estado(mt5, args.symbol, tick.time, args.margen_sesion_min * 60)
+    if sesion["cerrar"]:
+        print(f"[{ts}] sin llamada: parada de sesion ({sesion['motivo']})", flush=True)
+        log_decision(con, ts=ts, symbol=args.symbol, mode=modo, model=args.model, llm_called=0,
+                     gate_reason=f"parada de sesion: {sesion['motivo']}", action="-", state_json=json.dumps(estado))
+        return
     llamar, motivo = puerta(ind[args.timeframe], bool(pos), args.sin_filtro)
     # Mercado cerrado: si la cotizacion no cambia en 20 min, no se llama al modelo (ni de noche ni en fin de semana).
     if not mercado_vivo(tick):
@@ -1155,6 +1205,9 @@ def main():
                     help="resultado real (MT5) de las operaciones de este agente y que habria pasado sin los cierres a mano")
     ap.add_argument("--min-cierre-min", dest="min_cierre_min", type=int, default=30,
                     help="minutos minimos que una operacion debe llevar abierta antes de aceptar un cierre a mano")
+    ap.add_argument("--margen-sesion-min", dest="margen_sesion_min", type=int, default=30,
+                    help="minutos antes de una parada larga del mercado (fin de semana) en los que se cierra lo abierto "
+                         "y no se abre nada")
     ap.add_argument("--enfriamiento-min", dest="enfriamiento_min", type=int, default=30,
                     help="minutos sin abrir en este simbolo tras cerrar una posicion (evita abrir y cerrar sin parar)")
     ap.add_argument("--ultimas", type=int, metavar="N", help="listar las ultimas N decisiones")
@@ -1225,6 +1278,10 @@ def main():
                     print(f"[llm_trader] no se pudo abrir la sesion: {e}", flush=True)
             elif not args.sesion_continua:
                 _SESION.cerrar()
+            try:                                       # en cada vuelta, tambien con el agente parado
+                vigilar_sesion(mt5, args, con)
+            except Exception as e:
+                print(f"[llm_trader] vigilancia de sesion: {type(e).__name__}: {e}", flush=True)
             if args.enabled:
                 r = mt5.copy_rates_from_pos(args.symbol, getattr(mt5, f"TIMEFRAME_{args.timeframe}"), 0, 1)
                 if r is not None and len(r):
