@@ -6,8 +6,15 @@ from dotenv import load_dotenv
 def get_db_path():
     """Calcula la ruta de la base de datos buscando la persistencia de forma inteligente (Autodiscovery v1.8.3)."""
     if hasattr(sys, '_MEIPASS'):
-        # En el ejecutable (PyInstaller)
-        base_persist_dir = os.path.dirname(os.path.abspath(sys.executable))
+        # En el ejecutable (PyInstaller). El .env local de este PC (no sincronizado) puede fijar PST_DATA_ROOT,
+        # p. ej. una carpeta de Google Drive compartida con el otro PC. Sin PST_DATA_ROOT, la base va junto al exe.
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(os.path.join(exe_dir, ".env"), override=False)
+        except Exception:
+            pass
+        base_persist_dir = os.environ.get("PST_DATA_ROOT") or exe_dir
     else:
         # Búsqueda robusta del .env (v1.8.5)
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
