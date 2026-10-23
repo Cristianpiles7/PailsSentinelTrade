@@ -42,8 +42,8 @@ SCRIPT = rutas.PST_LLM_DIR / "llm_trader.py"
 NOMBRE_DEFECTO = "Agente_LLM"      # el agente historico (BTC) conserva los nombres de fichero sin sufijo
 
 REGISTRO_INICIAL = [
-    {"nombre": "Agente_LLM", "symbol": "BTCUSD", "timeframe": "M5", "magic": 109001, "sin_filtro": True},
-    {"nombre": "Agente_ETH", "symbol": "ETHUSD", "timeframe": "M5", "magic": 109002, "sin_filtro": True},
+    {"nombre": "Agente_LLM", "symbol": "BTCUSD", "timeframe": "M1", "magic": 109001, "sin_filtro": True},
+    {"nombre": "Agente_ETH", "symbol": "ETHUSD", "timeframe": "M1", "magic": 109002, "sin_filtro": True},
     {"nombre": "Agente_XAU", "symbol": "XAUUSD", "timeframe": "M15", "magic": 109003, "sin_filtro": True},
     {"nombre": "Agente_EURUSD", "symbol": "EURUSD", "timeframe": "M15", "magic": 109004, "sin_filtro": True},
     {"nombre": "Agente_US500", "symbol": "US500.cash", "timeframe": "M15", "magic": 109005, "sin_filtro": True},

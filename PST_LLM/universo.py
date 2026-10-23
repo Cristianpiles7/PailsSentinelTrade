@@ -7,7 +7,7 @@ simbolo de esa clase, activo solo durante la sesion de su mercado. Ver docs/PLAN
 Magic: uno por simbolo, en 109005-109035 (el revisor vigila 109001-109199, ver lt.MAGICS_FLOTA).
 Los magic 109001-109004 pertenecen a agentes antiguos ya parados (BTC, ETH, XAU, EURUSD) y no se reutilizan.
 
-Modelo: Sonnet para los simbolos principales, Haiku para el resto (decision del usuario).
+Modelo: Haiku para todos (decision del usuario, 2026-10-23).
 
 Comprobar: python PST_LLM/universo.py
 """
@@ -27,10 +27,10 @@ class Simbolo:
 # agentes LLM. La seleccion la hace rotacion.py con puntuacion fija, no esta lista.
 UNIVERSO = [
     # Indices
-    Simbolo("US500.cash", "indice", 109005, "sonnet"),
-    Simbolo("US100.cash", "indice", 109006, "sonnet"),
-    Simbolo("US30.cash", "indice", 109007, "sonnet"),
-    Simbolo("GER40.cash", "indice", 109008, "sonnet"),
+    Simbolo("US500.cash", "indice", 109005, "haiku"),
+    Simbolo("US100.cash", "indice", 109006, "haiku"),
+    Simbolo("US30.cash", "indice", 109007, "haiku"),
+    Simbolo("GER40.cash", "indice", 109008, "haiku"),
     Simbolo("EU50.cash", "indice", 109009, "haiku"),
     Simbolo("UK100.cash", "indice", 109010, "haiku"),
     Simbolo("FRA40.cash", "indice", 109035, "haiku"),
