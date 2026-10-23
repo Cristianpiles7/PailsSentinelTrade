@@ -102,8 +102,9 @@ def teclado_de(ctx, clave):
     """Botones de un informe. En Agentes, un boton de excluir por cada agente activo."""
     if clave != "agentes":
         return inline_actualizar(clave)
-    excluir = [[{"text": f"⛔ Excluir {a['symbol']}", "callback_data": f"x:{a['symbol']}"}] for _, a in agentes_activos(ctx)]
-    return excluir + inline_actualizar(clave)
+    botones = [{"text": f"⛔ {a['symbol'].replace('.cash', '')}", "callback_data": f"x:{a['symbol']}"} for _, a in agentes_activos(ctx)]
+    cuadricula = [botones[i:i + 3] for i in range(0, len(botones), 3)]      # 3 por fila: compacto en el movil
+    return cuadricula + inline_actualizar(clave)
 
 
 # ── Datos de MT5 ─────────────────────────────────────────────────────────────
@@ -366,7 +367,7 @@ def r_agentes(ctx):
             vivos["Agente_LLM" if "--nombre" not in c else c[c.index("--nombre") + 1]] = p.info["pid"]
         elif any(a.endswith("llm_revisor.py") for a in c):
             vivos["__revisor"] = p.info["pid"]
-    lin = ["🤖 <b>Agentes activos</b>\n"]
+    lin = ["🤖 <b>Agentes activos</b> · toca ⛔ para excluir\n"]
     tot_l = tot_t = 0
     pos = ctx.mt5.positions_get() or []
     activos = agentes_activos(ctx)

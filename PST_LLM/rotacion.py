@@ -120,9 +120,10 @@ def _notificar(texto, botones=None):
         body = json.dumps(msg).encode("utf-8")
         req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body,
                                      headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10).read()
+        return json.loads(urllib.request.urlopen(req, timeout=10).read())["result"]["message_id"]
     except Exception as e:                      # sin el token en el mensaje: solo el tipo de error
         print(f"[rotacion] aviso Telegram no enviado: {type(e).__name__}", flush=True)
+    return None
 
 
 def _estado_dia():
@@ -498,7 +499,7 @@ def quitar_simbolo(symbol, por="telegram"):
         it = _insertar(con, "entrada", cand, f"relleno del hueco de {symbol} (quitado desde {por})", {}, None, lim)
     finally:
         con.close()
-    _notificar(_texto_propuesta(it, lim), botones_propuesta(it["id"]))
+    _avisar_propuesta(it, lim)
     return f"{symbol} quitado (penalizado {lim['penalizacion_dias']} dias). Propuesta para rellenar: ENTRAR {cand}."
 
 
@@ -523,7 +524,7 @@ def poner_simbolo(symbol, por="telegram"):
         it = _insertar(con, "entrada", symbol, f"puesto a mano desde {por}", {"manual": True}, None, lim)
     finally:
         con.close()
-    _notificar(_texto_propuesta(it, lim), botones_propuesta(it["id"]))
+    _avisar_propuesta(it, lim)
     return f"Propuesta para meter {symbol}: decide en Telegram o en la app."
 
 
@@ -610,12 +611,13 @@ def _proponer_ranking(mt5, rank, activos, e, lim):
         for clave, fila in pendientes.items():
             if clave not in vistas:
                 _mover(con, fila["id"], "propuesta", "rechazada", "retirada")
+                _quitar_botones(fila["proposed_json"])
                 _anotar("retirada", fila["target"], f"{fila['kind']}: ya no es el mejor cambio", {"id": fila["id"]})
     finally:
         con.close()
     for it in avisar:
         _anotar("propuesta", it["symbol"], f"{it['tipo']}: {it['motivo']}", {"id": it["id"]})
-        _notificar(_texto_propuesta(it, lim), botones_propuesta(it["id"]))
+        _avisar_propuesta(it, lim)
 
 
 def botones_propuesta(pid):
@@ -624,8 +626,41 @@ def botones_propuesta(pid):
              {"text": "⛔ Rechazar", "callback_data": f"rot:r:{pid}"}]]
 
 
+def _avisar_propuesta(it, lim):
+    """Aviso de una propuesta nueva con sus botones. Guarda el id del mensaje para quitarle los botones luego."""
+    msg = _notificar(_texto_propuesta(it, lim), botones_propuesta(it["id"]))
+    if not msg:
+        return
+    con = _db()
+    try:
+        p = json.loads(con.execute("SELECT proposed_json FROM proposals WHERE id = ?", (it["id"],)).fetchone()["proposed_json"] or "{}")
+        p["tg_msg"] = msg
+        con.execute("UPDATE proposals SET proposed_json = ? WHERE id = ?", (json.dumps(p, ensure_ascii=False), it["id"]))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _quitar_botones(proposed_json):
+    """Quita los botones del aviso de Telegram de una propuesta ya resuelta (desde la app o por plazo)."""
+    msg = json.loads(proposed_json or "{}").get("tg_msg")
+    if not msg:
+        return
+    try:
+        import llm_trader as lt
+        token, chat = lt._env_telegram()
+        if not token or not chat:
+            return
+        body = json.dumps({"chat_id": chat, "message_id": msg, "reply_markup": {"inline_keyboard": []}}).encode("utf-8")
+        req = urllib.request.Request(f"https://api.telegram.org/bot{token}/editMessageReplyMarkup", data=body,
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10).read()
+    except Exception as e:                      # 400 "message is not modified" si el bot ya los quito: no es un fallo
+        print(f"[rotacion] no se quitaron los botones: {type(e).__name__}", flush=True)
+
+
 def decidir_propuesta(pid, aprobar, por="telegram"):
-    """Aprueba o rechaza una propuesta pendiente. La aplica la siguiente pasada de riesgo. Lo llama el bot de Telegram."""
+    """Aprueba o rechaza una propuesta pendiente. La aplica la siguiente pasada de riesgo. Lo llama la app y el bot de Telegram."""
     con = _db()
     try:
         fila = con.execute("SELECT * FROM proposals WHERE id = ? AND kind IN (?, ?) AND state = 'propuesta'",
@@ -636,6 +671,7 @@ def decidir_propuesta(pid, aprobar, por="telegram"):
         if not _mover(con, pid, "propuesta", destino, por):
             return "ya no esta pendiente (se resolvio o caduco)"
         it = _item(fila)
+        _quitar_botones(fila["proposed_json"])
         return f"{'Aprobada' if aprobar else 'Rechazada'}: {it['tipo']} {it['symbol']}"
     finally:
         con.close()
@@ -694,9 +730,11 @@ def _resolver_vencidas():
                 continue
             if it["tipo"] == "salida":
                 _mover(con, it["id"], "propuesta", "aprobada", "auto-plazo")
+                _quitar_botones(fila["proposed_json"])
                 _notificar(f"⏱ Sin respuesta: salida de <b>{it['symbol']}</b> se aplica")
             else:
                 _mover(con, it["id"], "propuesta", "rechazada", "auto-plazo")
+                _quitar_botones(fila["proposed_json"])
                 _anotar("rechazada", it["symbol"], "entrada sin respuesta en el plazo", {"id": it["id"]})
                 _notificar(f"⏱ Sin respuesta: entrada de <b>{it['symbol']}</b> rechazada")
     finally:

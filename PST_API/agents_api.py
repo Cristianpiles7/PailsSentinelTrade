@@ -13,7 +13,11 @@ QUIEN DECIDE: `decided_by` se fija SIEMPRE en el servidor, nunca viene del clien
 tabla es el registro de auditoria de lo que la IA ha tocado y quien lo aprobo; aceptar ese
 campo del navegador lo convertiria en un campo de texto libre sin valor probatorio.
 """
+import asyncio
 import logging
+import sqlite3
+import sys
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -76,7 +80,24 @@ async def decide(proposal_id: int, req: DecisionRequest):
             status_code=409,
             detail="Transición no permitida, o la propuesta cambió de estado mientras decidías.",
         )
+    await asyncio.to_thread(_quitar_botones_rotacion, proposal_id)
     return {"ok": True, "proposal_id": proposal_id, "state": req.state}
+
+
+def _quitar_botones_rotacion(proposal_id):
+    """Si era una propuesta de la rotacion, quita los botones de su aviso de Telegram (decidida desde la app)."""
+    con = sqlite3.connect(DB_PATH, timeout=15)
+    try:
+        fila = con.execute("SELECT kind, proposed_json FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
+    finally:
+        con.close()
+    if not fila or not str(fila[0]).startswith("rotacion_"):
+        return
+    llm = str(Path(__file__).resolve().parents[1] / "PST_LLM")
+    if llm not in sys.path:
+        sys.path.insert(0, llm)
+    import rotacion       # noqa: E402  (PST_LLM/rotacion.py)
+    rotacion._quitar_botones(fila[1])
 
 
 @router.get("/api/agents/summary")
