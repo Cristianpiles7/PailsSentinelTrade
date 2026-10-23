@@ -17,6 +17,7 @@ DIA = 86400
 SEMANA = 7 * DIA
 PARADA_MIN = 120                  # hueco sin velas que cuenta como parada (minutos)
 PARADA_LARGA_S = 2 * 3600         # mas de esto = parada larga: se actua antes
+DIARIA_MAX_S = 12 * 3600          # una pausa que se repite cada dia y dura menos de esto es un corte diario
 SEMANAS = 5                       # historial que se mira
 MIN_SEMANAS = 2                   # una parada debe repetirse en al menos esta cantidad de semanas
 TTL_CACHE_S = 6 * 3600            # el horario cambia poco: se recalcula cada 6 h
@@ -42,6 +43,13 @@ def paradas_desde_tiempos(tiempos, parada_min=PARADA_MIN, min_semanas=MIN_SEMANA
             ini = datetime.fromtimestamp(a + 300, tz=timezone.utc).replace(tzinfo=None)
             domingo = (ini - timedelta(days=(ini.weekday() + 1) % 7)).date()
             huecos.append((domingo, segundos_de_semana(ini), b - a - 300))
+    # Cortes diarios: la misma hora del dia en 3 o mas dias de una misma semana, y cortos.
+    # Indices, oro, etc. paran cada noche: eso no es una parada larga aunque pase de 2 h.
+    por_hora_dia = {}
+    for semana, ini_s, dur in huecos:
+        if dur < DIARIA_MAX_S:
+            por_hora_dia.setdefault(round((ini_s % DIA) / 1800), {}).setdefault(semana, set()).add(ini_s // DIA)
+    diarias = {h for h, semanas in por_hora_dia.items() if max(len(d) for d in semanas.values()) >= 3}
     # Agrupar por hora de inicio (ventanas de 30 min) y contar en cuantas semanas aparece cada una.
     grupos = {}
     for semana, ini_s, dur in huecos:
@@ -53,6 +61,8 @@ def paradas_desde_tiempos(tiempos, parada_min=PARADA_MIN, min_semanas=MIN_SEMANA
             continue
         ini_s = sorted(f[1] for f in filas)[len(filas) // 2]
         dur = sorted(f[2] for f in filas)[len(filas) // 2]
+        if dur < DIARIA_MAX_S and round((ini_s % DIA) / 1800) in diarias:
+            continue                                       # corte diario: no es una parada que cierre
         paradas.append((ini_s, ini_s + dur))
     return sorted(paradas)
 
