@@ -233,6 +233,25 @@ def _is_listening(host: str, port: int, timeout: float = 0.5) -> bool:
 _proceso_habblaud = None   # el Popen que lanzo PST (None si habblaud ya corria o no se lanzo)
 
 
+def _construir_habblaud(habblaud_dir):
+    """Primera vez: npm install + npm run build. Corre en un hilo. Si todo va bien, arranca habblaud."""
+    import subprocess
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    for comando in ("npm install", "npm run build"):
+        logger.info("[HABBLAUD] Ejecutando: %s", comando)
+        try:
+            r = subprocess.run(comando, cwd=habblaud_dir, shell=True, capture_output=True, text=True,
+                               timeout=900, creationflags=creationflags)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            logger.error("[HABBLAUD] No se pudo ejecutar '%s': %s", comando, e)
+            return
+        if r.returncode != 0:
+            logger.error("[HABBLAUD] Falló '%s': %s", comando, (r.stderr or r.stdout)[-300:])
+            return
+    logger.info("[HABBLAUD] Build listo: arrancando")
+    ensure_habblaud_running()
+
+
 def ensure_habblaud_running() -> bool:
     """
     Levanta habblaud si no esta escuchando. OPT-IN: solo actua con HABBLAUD_AUTOSTART=1.
@@ -260,7 +279,13 @@ def ensure_habblaud_running() -> bool:
 
     entry = os.path.join(habblaud_dir, "dist", "server", "index.js")
     if not os.path.isfile(entry):
-        logger.warning("[HABBLAUD] No hay build en %s (falta `npm install && npm run build`)", entry)
+        if not os.path.isdir(habblaud_dir):
+            logger.warning("[HABBLAUD] No existe la carpeta %s", habblaud_dir)
+            return False
+        # Primera vez en este PC: se construye en segundo plano para no retrasar el arranque de PST.
+        logger.warning("[HABBLAUD] Falta el build en %s: lo construyo en segundo plano (npm install + build)", habblaud_dir)
+        import threading
+        threading.Thread(target=_construir_habblaud, args=(habblaud_dir,), daemon=True).start()
         return False
 
     import subprocess
