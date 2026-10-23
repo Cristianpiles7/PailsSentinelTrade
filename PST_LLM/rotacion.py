@@ -49,10 +49,12 @@ CONFIG = REPO_ROOT / ".agents" / "data" / "rotacion_config.json"   # se relee en
 # Ajustes editables desde la app (rotacion_config.json). Se relee en cada pasada.
 LIMITES_POR_DEFECTO = {"max_activos": 10, "max_por_clase": 5,
                        "ciclo_min": 5, "horas_reseleccion": [8, 16],
-                       "margen_cambio": 0.10, "max_sustituciones_dia": 2}
+                       "margen_cambio": 0.10, "max_sustituciones_dia": 2,
+                       "penalizacion_cripto": 0.15}
 TIPOS = {"max_activos": int, "max_por_clase": int, "ciclo_min": int,
          "horas_reseleccion": lambda v: sorted({int(h) for h in v}),
-         "margen_cambio": float, "max_sustituciones_dia": int}
+         "margen_cambio": float, "max_sustituciones_dia": int,
+         "penalizacion_cripto": float}
 PERDIDAS_SEGUIDAS = 3
 PERDIDA_DIA_R = -1.5
 RIESGO_R_PCT = 0.5
@@ -141,11 +143,14 @@ def _resultados_7d(mt5, symbol):
 def ranking(mt5, ref_time):
     """Lista de (puntuacion, Simbolo) de los simbolos abiertos, de mejor a peor."""
     out = []
+    penal = _limites()["penalizacion_cripto"]
     for s in universo.UNIVERSO:
         if not abierto(mt5, s.symbol, ref_time):
             continue
         p = puntuar(mt5, s.symbol)
         if p:
+            if s.clase == "cripto":          # menos prioridad para quedarse (comisiones)
+                p = {**p, "score": p["score"] - penal}
             out.append((p, s))
     return sorted(out, key=lambda x: -x[0]["score"])
 
@@ -187,6 +192,8 @@ def guardar_ajustes(cambios):
         raise ValueError("margen_cambio debe estar entre 0 y 1")
     if not 0 <= lim["max_sustituciones_dia"] <= 10:
         raise ValueError("max_sustituciones_dia debe estar entre 0 y 10")
+    if not 0 <= lim["penalizacion_cripto"] <= 0.5:
+        raise ValueError("penalizacion_cripto debe estar entre 0 y 0,5")
     CONFIG.write_text(json.dumps(lim, indent=2), encoding="utf-8")
     return lim
 

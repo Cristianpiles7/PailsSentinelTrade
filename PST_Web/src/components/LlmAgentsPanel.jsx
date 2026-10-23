@@ -149,6 +149,7 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
   const [horas, setHoras] = useState('')
   const [margen, setMargen] = useState('')
   const [sustituciones, setSustituciones] = useState('')
+  const [penalCripto, setPenalCripto] = useState('')
   const [aviso, setAviso] = useState('')
 
   useEffect(() => {
@@ -159,6 +160,7 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
       setHoras(limites.horas_reseleccion.join(','))
       setMargen(String(limites.margen_cambio))
       setSustituciones(String(limites.max_sustituciones_dia))
+      setPenalCripto(String(limites.penalizacion_cripto))
     }
   }, [limites])
 
@@ -172,6 +174,7 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
       horas_reseleccion: horas.split(',').map(h => h.trim()).filter(h => h !== '').map(Number),
       margen_cambio: Number(margen),
       max_sustituciones_dia: Number(sustituciones),
+      penalizacion_cripto: Number(penalCripto),
     })
     setAviso(error || 'Guardado')
   }
@@ -213,6 +216,11 @@ export function LlmLimitesBar({ limites, guardar, activosAhora }) {
         Sustituciones/día
         <input type="number" min={0} max={10} value={sustituciones}
           onChange={e => setSustituciones(e.target.value)} className={campo} />
+      </label>
+      <label className={etiqueta}>
+        Penal. cripto
+        <input type="number" min={0} max={0.5} step={0.01} value={penalCripto}
+          onChange={e => setPenalCripto(e.target.value)} className={campo} />
       </label>
       <button onClick={guardarAhora}
         className="text-[11px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg border border-indigo-500/50 text-indigo-200 hover:bg-indigo-600/20 transition-colors">

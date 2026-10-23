@@ -114,6 +114,7 @@ class RotacionRequest(BaseModel):
     horas_reseleccion: list[int] | None = None  # horas (0-23) en las que se permite cambiar un activo por otro
     margen_cambio: float | None = None        # cuanto debe puntuar el candidato por encima del peor activo
     max_sustituciones_dia: int | None = None  # sustituciones por perdidas al dia
+    penalizacion_cripto: float | None = None  # puntos que pierde cripto en el ranking (menos prioridad para quedarse)
 
 
 @router.get("/api/llm/rotacion")
