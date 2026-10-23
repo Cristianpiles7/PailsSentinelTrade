@@ -17,7 +17,7 @@ DIA = 86400
 SEMANA = 7 * DIA
 PARADA_MIN = 120                  # hueco sin velas que cuenta como parada (minutos)
 PARADA_LARGA_S = 2 * 3600         # mas de esto = parada larga: se actua antes
-DIARIA_MAX_S = 12 * 3600          # una pausa que se repite cada dia y dura menos de esto es un corte diario
+DIARIA_MAX_S = 8 * 3600           # una pausa que se repite cada dia y dura menos de esto es un corte diario
 SEMANAS = 5                       # historial que se mira
 MIN_SEMANAS = 2                   # una parada debe repetirse en al menos esta cantidad de semanas
 TTL_CACHE_S = 6 * 3600            # el horario cambia poco: se recalcula cada 6 h
