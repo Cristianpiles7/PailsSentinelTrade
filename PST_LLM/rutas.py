@@ -46,22 +46,13 @@ AGENTS_CODE_DIR = RECURSOS / ".agents"
 AGENTS_DATA_DIR = DATOS / ".agents" / "data"
 
 
-_ARRANQUE = (
-    "import runpy, sys; r, d, s = sys.argv[1:4]; sys.argv = sys.argv[3:]; "
-    "sys.path.extend([r, d]); runpy.run_path(s, run_name='__main__')"
-)
-
-
 def comando_python(script, *args):
     """
-    Comando para lanzar un script de la flota como proceso Python independiente.
+    Comando para lanzar un script de la flota como proceso independiente.
 
-    En el exe sys.executable es el propio exe, asi que se usa el python del sistema con -E (ignora
-    PYTHONPATH y PYTHON*, pero conserva el user site donde estan psutil y MetaTrader5) y un arranque que
-    AÑADE al final de sys.path la raiz del bundle (PST_Core) y PST_LLM. Añadir al final es lo que evita
-    que se cargue el _sqlite3.pyd empaquetado.
+    En el exe los hijos son el propio exe en modo --ejecutar-script (PST_MASTER.py): llevan empaquetadas
+    todas sus dependencias, asi que no dependen de ningun Python instalado en el PC.
     """
     if not CONGELADO:
         return [sys.executable, "-u", str(script), *args]
-    python = shutil.which("python") or shutil.which("py") or "python"
-    return [python, "-E", "-u", "-c", _ARRANQUE, str(RECURSOS), str(PST_LLM_DIR), str(script), *args]
+    return [sys.executable, "--ejecutar-script", str(script), *args]

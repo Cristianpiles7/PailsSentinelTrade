@@ -105,7 +105,12 @@ def resolve_claude() -> str:
                                  "claude-code", "bin", "claude.exe")
             if os.path.isfile(guess):
                 return guess
-    return shutil.which("claude") or "claude"
+    ruta = shutil.which("claude")
+    if ruta and not ruta.lower().endswith(".cmd"):
+        return ruta
+    # Sin esto, subprocess lanzaria "claude" pelado y fallaria con WinError 2 sin decir que falta la CLI.
+    raise RuntimeError("Claude CLI no encontrado: instalala (npm i -g @anthropic-ai/claude-code) "
+                       "e inicia sesion ejecutando 'claude' una vez")
 
 
 def build_command(agent: str, model: str, effort: str, prompt: str) -> list:

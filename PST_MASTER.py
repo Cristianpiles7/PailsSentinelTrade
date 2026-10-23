@@ -2,6 +2,18 @@ import sys
 import os
 import logging
 
+# Modo hijo: el propio exe ejecuta los scripts de los agentes (PST_LLM) con sus dependencias empaquetadas,
+# asi no hace falta un Python instalado en el PC. Va antes de cualquier import pesado.
+if len(sys.argv) > 2 and sys.argv[1] == "--ejecutar-script":
+    import runpy
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+    script = os.path.abspath(sys.argv[2])
+    sys.argv = [script, *sys.argv[3:]]
+    sys.path.insert(0, os.path.dirname(script))
+    runpy.run_path(script, run_name="__main__")
+    sys.exit(0)
+
 # Configuración de logs de emergencia para el ejecutable
 def setup_emergency_logging():
     log_path = "PST_Startup.log"

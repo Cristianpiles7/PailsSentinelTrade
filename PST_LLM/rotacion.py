@@ -244,6 +244,10 @@ def ciclo(mt5, reseleccion_permitida=False):
         raise RuntimeError("MT5 desconectado: no se rota")
     if mt5.positions_get() is None:
         raise RuntimeError(f"no se pueden leer las posiciones ({mt5.last_error()}): no se rota")
+    import bloqueo
+    ajeno = bloqueo.tomar_o_latir()
+    if ajeno:
+        raise RuntimeError(f"opera otro equipo ({ajeno}): no se rota aqui")
     lim = _limites()
     e = _estado_dia()
     ref = mt5.symbol_info_tick(REF_BROKER)

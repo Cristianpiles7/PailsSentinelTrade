@@ -157,6 +157,10 @@ def _ficheros(nombre):
 
 def activar(symbol, live=False, origen="manual"):
     """Crea (si hace falta) la configuracion del agente y lo arranca. Devuelve un resumen."""
+    import bloqueo
+    ajeno = bloqueo.tomar_o_latir()
+    if ajeno:
+        raise RuntimeError(f"opera otro equipo ({ajeno}): no se activa {symbol} aqui")
     s = _simbolo(symbol)
     if s is None:
         raise ValueError(f"{symbol} no esta en el universo (PST_LLM/universo.py)")
@@ -261,6 +265,11 @@ def arrancar_activos():
     primero restaura esa intencion desde los ficheros de config. Al final alinea los checks de la
     home con los agentes. Devuelve los simbolos.
     """
+    import bloqueo
+    ajeno = bloqueo.tomar_o_latir()
+    if ajeno:
+        print(f"[registro] no se relanzan agentes: opera otro equipo ({ajeno})", flush=True)
+        return []
     restaurar_intencion()
     sincronizar_home()
     F = _ficheros(None)
