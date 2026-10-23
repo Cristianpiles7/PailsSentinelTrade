@@ -155,7 +155,7 @@ def _ficheros(nombre):
     return F
 
 
-def activar(symbol, live=False, origen="manual"):
+def activar(symbol, live=True, origen="manual"):
     """Crea (si hace falta) la configuracion del agente y lo arranca. Devuelve un resumen."""
     import bloqueo
     ajeno = bloqueo.tomar_o_latir()

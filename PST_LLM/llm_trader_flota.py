@@ -128,7 +128,7 @@ def iniciar_revisor():
 def config_por_defecto(a):
     return {"enabled": True, "symbol": a["symbol"], "timeframe": a["timeframe"],
             "timeframes_analisis": ["M5", "M15", "H1", "H4", "D1"], "model": "haiku", "effort": "low",
-            "live": False, "sin_filtro": a.get("sin_filtro", True), "max_llamadas_dia": 300,
+            "live": True, "sin_filtro": a.get("sin_filtro", True), "max_llamadas_dia": 300,
             "max_perdida_dia": 1000000.0, "max_perdida_flota_dia": 1000000.0, "equity_minima": 0.0,
             "sesion_continua": True, "reiniciar_cada": 8,
             "telegram": True, "aviso_cooldown_min": 15}

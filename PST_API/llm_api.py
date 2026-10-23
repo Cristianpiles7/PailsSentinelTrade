@@ -70,7 +70,7 @@ async def alertas_calendario():
 
 
 class ActivarRequest(BaseModel):
-    live: bool = False        # False = simulacion (sin ordenes). True = opera en la demo.
+    live: bool = True         # True = opera en la demo (por defecto). False = simulacion (sin ordenes).
 
 
 def _validar(symbol):
