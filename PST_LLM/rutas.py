@@ -18,10 +18,14 @@ CONGELADO = bool(getattr(sys, "frozen", False))
 if CONGELADO:
     _EXE_DIR = Path(sys.executable).resolve().parent
     # El .env del exe vive junto a el (la app lo busca ahi); se carga antes de leer PST_DATA_ROOT.
+    # Sin python-dotenv (puede no ir empaquetado en el exe): KEY=VALUE, sin pisar lo ya definido.
     try:
-        from dotenv import load_dotenv
-        load_dotenv(_EXE_DIR / ".env", override=False)
-    except Exception:
+        for _linea in (_EXE_DIR / ".env").read_text(encoding="utf-8-sig").splitlines():
+            _linea = _linea.strip()
+            if _linea and not _linea.startswith("#") and "=" in _linea:
+                _k, _v = _linea.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+    except OSError:
         pass
     RECURSOS = Path(sys._MEIPASS)
     DATOS = Path(os.environ.get("PST_DATA_ROOT") or _EXE_DIR)

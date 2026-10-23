@@ -3,17 +3,27 @@ import os
 import sys
 from dotenv import load_dotenv
 
+def _leer_env_sin_override(ruta):
+    """Carga KEY=VALUE de un .env sin python-dotenv (en el exe puede no ir empaquetado). No pisa lo ya definido."""
+    try:
+        with open(ruta, encoding="utf-8-sig") as f:
+            for linea in f:
+                linea = linea.strip()
+                if not linea or linea.startswith("#") or "=" not in linea:
+                    continue
+                clave, valor = linea.split("=", 1)
+                os.environ.setdefault(clave.strip(), valor.strip().strip('"').strip("'"))
+    except OSError:
+        pass
+
+
 def get_db_path():
     """Calcula la ruta de la base de datos buscando la persistencia de forma inteligente (Autodiscovery v1.8.3)."""
     if hasattr(sys, '_MEIPASS'):
         # En el ejecutable (PyInstaller). El .env local de este PC (no sincronizado) puede fijar PST_DATA_ROOT,
         # p. ej. una carpeta de Google Drive compartida con el otro PC. Sin PST_DATA_ROOT, la base va junto al exe.
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        try:
-            from dotenv import load_dotenv
-            load_dotenv(os.path.join(exe_dir, ".env"), override=False)
-        except Exception:
-            pass
+        _leer_env_sin_override(os.path.join(exe_dir, ".env"))
         base_persist_dir = os.environ.get("PST_DATA_ROOT") or exe_dir
     else:
         # Búsqueda robusta del .env (v1.8.5)
