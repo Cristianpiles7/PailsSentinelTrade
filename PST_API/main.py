@@ -29,6 +29,7 @@ from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_th
 from PST_API.agents_api import router as agents_router
 from PST_API.llm_api import router as llm_router
 from PST_API.puntuador_api import router as puntuador_router
+from PST_API.updater_api import router as updater_router, limpiar_restos as limpiar_restos_actualizacion
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
 import pandas_ta as ta
@@ -181,7 +182,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.45",
+    version="2.6.46",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -1358,6 +1359,7 @@ app.include_router(habblaud_router)
 app.include_router(agents_router)
 app.include_router(llm_router)
 app.include_router(puntuador_router)
+app.include_router(updater_router)
 
 if os.path.isdir(react_dist_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_path, "assets")), name="assets")
@@ -1508,6 +1510,9 @@ def start_app():
     # v1.8.3: Puerto Fijo 8000 para mantener persistencia de sesión (localStorage)
     port = int(os.getenv("API_PORT", 8000))
     host = "127.0.0.1"
+
+    # Exe viejo (.old) que deja la auto-actualizacion: ya no esta en uso. Ver PST_API/updater_api.py.
+    limpiar_restos_actualizacion()
 
     def run_server():
         uvicorn.run(app, host=host, port=port, log_level="info")

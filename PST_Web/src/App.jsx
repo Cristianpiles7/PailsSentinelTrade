@@ -28,6 +28,7 @@ import { StrategyLab } from './components/StrategyLab'
 import { PerformanceDashboard } from './components/PerformanceDashboard'
 import { NavItem } from './components/ui/NavItem'
 import { CalendarioRestringidoWidget } from './components/ui/CalendarioRestringidoWidget'
+import { ActualizacionAviso } from './components/ui/ActualizacionAviso'
 import { Sparkline } from './components/ui/Sparkline'
 import { ProximityGauge } from './components/ui/ProximityGauge'
 import { PuntuadorPanel } from './components/PuntuadorPanel'
@@ -608,6 +609,9 @@ function App() {
       {loading && <PantallaCargando texto={cargaLenta ? "El motor tarda en responder, sigue intentándolo..." : "Cargando datos del motor..."} overlay />}
 
 
+
+      {/* Aviso de version nueva en GitHub (PST_API/updater_api.py) */}
+      <ActualizacionAviso api={api} API_BASE={API_BASE} />
 
       {/* Notification Toast Hub */}
 
