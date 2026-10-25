@@ -125,6 +125,31 @@ def iniciar_revisor():
     print(f"  + Revisor de posiciones arrancado, PID {p.pid}")
 
 
+MEJORA = rutas.PST_LLM_DIR / "llm_mejora_prompt.py"
+MEJORA_STOP = DATA / "llm_mejora_prompt.STOP"
+
+
+def mejora_pid():
+    for p in psutil.process_iter(["pid", "cmdline"]):
+        if any(a.endswith("llm_mejora_prompt.py") for a in (p.info["cmdline"] or [])):
+            return p.info["pid"]
+    return None
+
+
+def iniciar_mejora():
+    """Agente de mejora del criterio (solo propone; ver PST_LLM/llm_mejora_prompt.py)."""
+    pid = mejora_pid()
+    if pid:
+        print(f"  = Mejora de criterio ya corre (PID {pid})")
+        return
+    MEJORA_STOP.unlink(missing_ok=True)
+    salida, error = open(DATA / "llm_mejora_prompt.log", "a", encoding="utf-8"), open(DATA / "llm_mejora_prompt.err", "w", encoding="utf-8")
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    p = subprocess.Popen(rutas.comando_python(MEJORA), cwd=str(REPO_ROOT), stdout=salida, stderr=error,
+                         stdin=subprocess.DEVNULL, creationflags=flags)
+    print(f"  + Mejora de criterio arrancada, PID {p.pid}")
+
+
 def config_por_defecto(a):
     return {"enabled": True, "symbol": a["symbol"], "timeframe": a["timeframe"],
             "timeframes_analisis": ["M5", "M15", "H1", "H4", "D1"], "model": "haiku", "effort": "low",
@@ -156,6 +181,7 @@ def iniciar():
         print(f"  + {a['nombre']} ({a['symbol']} {a['timeframe']}) arrancado, PID {p.pid}")
     iniciar_revisor()
     iniciar_bot()
+    iniciar_mejora()
 
 
 def parar():
@@ -164,9 +190,10 @@ def parar():
         ficheros(a["nombre"])["stop"].write_text("stop", encoding="utf-8")
     REVISOR_STOP.write_text("stop", encoding="utf-8")
     BOT_STOP.write_text("stop", encoding="utf-8")
+    MEJORA_STOP.write_text("stop", encoding="utf-8")
     print("  STOP enviado a todos; esperando a que cierren sus sesiones...")
     limite = time.time() + 60
-    while time.time() < limite and (procesos_corriendo() or revisor_pid() or bot_pid()):
+    while time.time() < limite and (procesos_corriendo() or revisor_pid() or bot_pid() or mejora_pid()):
         time.sleep(2)
     if bot_pid():
         print("  ! el panel de Telegram no cerro a tiempo, se mata")
@@ -179,8 +206,12 @@ def parar():
         psutil.Process(revisor_pid()).kill()
     for a in reg:
         ficheros(a["nombre"])["stop"].unlink(missing_ok=True)
+    if mejora_pid():
+        print("  ! la mejora de criterio no cerro a tiempo, se mata")
+        psutil.Process(mejora_pid()).kill()
     REVISOR_STOP.unlink(missing_ok=True)
     BOT_STOP.unlink(missing_ok=True)
+    MEJORA_STOP.unlink(missing_ok=True)
     print("  parados.")
 
 

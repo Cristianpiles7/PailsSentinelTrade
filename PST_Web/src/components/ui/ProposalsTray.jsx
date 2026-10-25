@@ -41,6 +41,32 @@ function Evidencia({ json }) {
   )
 }
 
+// Propuesta de criterio de un agente LLM (kind prompt_simbolo): el texto completo con los cambios marcados.
+function CambioCriterio({ p }) {
+  let prop
+  try { prop = JSON.parse(p.proposed_json || '{}') } catch { return null }
+  const lineas = prop.diff || []
+  const n = lineas.filter(d => d.t !== '=').length
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {prop.resumen && <p className="text-xs font-bold text-zinc-200">{prop.resumen}</p>}
+      <details open={p.state === 'propuesta'}>
+        <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-300">
+          Criterio propuesto · {n} línea{n === 1 ? '' : 's'} cambiada{n === 1 ? '' : 's'}
+        </summary>
+        <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950 p-2 font-mono text-[11px] leading-relaxed">
+          {lineas.map((d, i) => (
+            <div key={i} className={`whitespace-pre-wrap px-1 rounded ${
+              d.t === '+' ? 'bg-emerald-500/10 text-emerald-300' : d.t === '-' ? 'bg-rose-500/10 text-rose-300 line-through' : 'text-zinc-400'}`}>
+              <span className="select-none text-zinc-600">{d.t === '=' ? '  ' : d.t + ' '}</span>{d.l}
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  )
+}
+
 export function ProposalsTray({ pollMs = 20000 }) {
   const [props, setProps] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -69,7 +95,8 @@ export function ProposalsTray({ pollMs = 20000 }) {
 
   const decidir = async (id, state) => {
     try {
-      await axios.post(`/api/agents/proposals/${id}/decide`, { state })
+      const { data } = await axios.post(`/api/agents/proposals/${id}/decide`, { state })
+      if (data?.mensaje && data.mensaje !== 'rechazada') setError(data.mensaje)
     } catch (e) {
       // 409 = transición no permitida o alguien decidió antes. Refrescar es la respuesta
       // correcta: el estado real está en el servidor, no en esta pestaña.
@@ -135,14 +162,23 @@ export function ProposalsTray({ pollMs = 20000 }) {
                     </span>
                   )}
                 </div>
-                {p.rationale && <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">{p.rationale}</p>}
+                {p.kind === 'prompt_simbolo' && <CambioCriterio p={p} />}
+                {p.rationale && <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed whitespace-pre-wrap">{p.rationale}</p>}
                 <Evidencia json={p.evidence_json} />
               </div>
 
+              {p.state === 'viva' && p.kind === 'prompt_simbolo' && (
+                <button onClick={() => decidir(p.id, 'revertida')} title="Volver al criterio anterior"
+                  className="shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold uppercase tracking-widest text-rose-400 hover:bg-rose-500/10 transition-all">
+                  Revertir
+                </button>
+              )}
               {p.state === 'propuesta' && (
                 <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => decidir(p.id, 'shadow')} title="Probar en shadow"
-                    className="p-2 rounded-lg text-sky-400 hover:bg-sky-500/10 transition-all"><Eye size={15} /></button>
+                  {p.kind !== 'prompt_simbolo' && (
+                    <button onClick={() => decidir(p.id, 'shadow')} title="Probar en shadow"
+                      className="p-2 rounded-lg text-sky-400 hover:bg-sky-500/10 transition-all"><Eye size={15} /></button>
+                  )}
                   <button onClick={() => decidir(p.id, 'aprobada')} title="Aprobar"
                     className="p-2 rounded-lg text-emerald-400 hover:bg-emerald-500/10 transition-all"><Check size={15} /></button>
                   <button onClick={() => decidir(p.id, 'rechazada')} title="Rechazar"

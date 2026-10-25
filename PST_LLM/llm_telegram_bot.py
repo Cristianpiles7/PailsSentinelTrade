@@ -486,6 +486,58 @@ def _rotacion_decidir(q, d, chat_ok):
         print(f"[bot] error al responder la propuesta: {e}", flush=True)
 
 
+def enviar_documento(nombre, contenido, caption=""):
+    """Envia un fichero de texto (multipart): para textos largos que no caben en un mensaje (4096 caracteres)."""
+    import uuid
+    token, chat = lt._env_telegram()
+    limite = "----pst" + uuid.uuid4().hex
+    nl = chr(13) + chr(10)                   # CRLF del formato multipart
+    partes = []
+    for k, v in (("chat_id", str(chat)), ("caption", caption[:1000])):
+        partes.append(f'--{limite}{nl}Content-Disposition: form-data; name="{k}"{nl}{nl}{v}{nl}'.encode("utf-8"))
+    partes.append(f'--{limite}{nl}Content-Disposition: form-data; name="document"; filename="{nombre}"{nl}'
+                  f'Content-Type: text/plain; charset=utf-8{nl}{nl}'.encode("utf-8") + contenido.encode("utf-8") + nl.encode())
+    partes.append(f"--{limite}--{nl}".encode("utf-8"))
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendDocument", data=b"".join(partes),
+                                 headers={"Content-Type": f"multipart/form-data; boundary={limite}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:             # sin e.url: lleva el token
+        raise RuntimeError(f"HTTP {e.code} {e.reason}") from None
+
+
+def _prompt_propuesta(q, d, chat_ok):
+    """'pr:a:<id>' aprobar y aplicar, 'pr:r:<id>' rechazar, 'pr:v:<id>' ver el texto completo (ver prompts.py)."""
+    import prompts
+    try:
+        _, accion, pid = d.split(":")
+        pid = int(pid)
+    except ValueError:
+        return
+    if accion == "v":
+        p = prompts.leer_propuesta(pid)
+        try:
+            api("answerCallbackQuery", callback_query_id=q["id"], text="Enviando el texto completo…" if p else "No existe")
+            if p:
+                enviar_documento(f"propuesta_{pid}_{p['target'].replace('.', '_')}.txt", prompts.documento(p),
+                                 f"Propuesta #{pid} · {p['target']} · estado: {p['state']}")
+        except RuntimeError as e:
+            print(f"[bot] error al enviar la propuesta completa: {e}", flush=True)
+        return
+    try:
+        texto = prompts.decidir(pid, accion == "a", por="telegram")
+    except Exception as e:
+        texto = f"error: {type(e).__name__}"
+    try:
+        api("answerCallbackQuery", callback_query_id=q["id"], text=texto[:200])
+        api("editMessageReplyMarkup", chat_id=chat_ok, message_id=q["message"]["message_id"],
+            reply_markup={"inline_keyboard": []})
+        enviar(("✅ " if accion == "a" and texto.split(": ", 1)[-1].startswith("aplicada") else "ℹ️ ") + _h.escape(texto))
+    except RuntimeError as e:
+        print(f"[bot] error al responder la propuesta de criterio: {e}", flush=True)
+
+
 def _excluir_desde_boton(symbol):
     """Excluye el agente en un hilo aparte: desactivar espera a que el proceso pare (hasta 90 s)."""
     import registro
@@ -509,6 +561,9 @@ def procesar(ctx, u, chat_ok):
         d = q.get("data", "")
         if d.startswith("rot:"):                   # propuesta de rotacion: aprobar o rechazar (ver rotacion.py)
             _rotacion_decidir(q, d, chat_ok)
+            return
+        if d.startswith("pr:"):                    # propuesta de criterio: aprobar, rechazar o ver (ver prompts.py)
+            _prompt_propuesta(q, d, chat_ok)
             return
         try:
             api("answerCallbackQuery", callback_query_id=q["id"])

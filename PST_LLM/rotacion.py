@@ -797,6 +797,7 @@ def bucle():
                 F = registro._ficheros(None)
                 F.iniciar_revisor()
                 F.iniciar_bot()
+                F.iniciar_mejora()
         except Exception as e:
             print(f"[rotacion] error en la pasada: {e}", flush=True)
         for _ in range(_limites()["ciclo_min"] * 60 // TICK_S):

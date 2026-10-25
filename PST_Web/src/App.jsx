@@ -41,6 +41,7 @@ import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
 import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 import { AgentsOffice } from './components/AgentsOffice'
 import { LlmFila, LlmDecisionesModal, LlmLimitesBar, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
+import { LlmCriterioPanel } from './components/LlmCriterioPanel'
 import { LlmSeguro } from './components/LlmOpinionCard'
 
 
@@ -1303,6 +1304,10 @@ function App() {
                 <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
                   activosAhora={llm.agentes.filter(a => a.activo).length}
                   topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario} />
+              </section>
+              <section className="flex flex-col gap-3">
+                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Prompts de los agentes</h2>
+                <LlmCriterioPanel api={api} API_BASE={API_BASE} agentes={llm.agentes} />
               </section>
               <section className="flex flex-col gap-3">
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Home</h2>

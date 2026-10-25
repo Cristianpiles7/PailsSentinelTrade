@@ -289,6 +289,7 @@ def arrancar_activos():
     if arrancados:
         F.iniciar_revisor()                 # el revisor vigila las posiciones de estos agentes
         F.iniciar_bot()
+        F.iniciar_mejora()                  # propone cambios de criterio por simbolo (no aplica nada solo)
     return arrancados
 
 

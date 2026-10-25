@@ -249,3 +249,54 @@ async def prompt_version(version: str):
     if fila is None:
         raise HTTPException(status_code=404, detail=f"no hay prompt con version {version}")
     return fila
+
+
+# ── Criterio de entrada por simbolo (PST_LLM/prompts.py) ─────────────────────
+import prompts        # noqa: E402  (PST_LLM/prompts.py)
+
+
+class CriterioRequest(BaseModel):
+    texto: str
+
+
+class MejoraPromptRequest(BaseModel):
+    activo: bool | None = None                # el agente de mejora revisa y propone
+    min_operaciones: int | None = None        # operaciones cerradas nuevas por simbolo antes de revisarlo
+    modelo: str | None = None                 # haiku | sonnet | opus
+    esfuerzo: str | None = None               # low | medium | high
+    cadencia_min: int | None = None           # cada cuantos minutos mira si algun simbolo toca
+    max_caracteres: int | None = None         # longitud maxima del criterio
+    max_operaciones_contexto: int | None = None  # operaciones que ve como mucho en cada revision
+
+
+@router.get("/api/llm/criterio/{symbol}")
+async def leer_criterio(symbol: str):
+    _validar(symbol)
+    act = await asyncio.to_thread(prompts.activo, symbol)
+    hist = await asyncio.to_thread(prompts.historial, symbol, 30)
+    pend = await asyncio.to_thread(prompts.pendiente_de, symbol)
+    return {**act, "historial": hist, "propuesta_pendiente": pend, "defecto_texto": prompts.CRITERIO_DEFECTO,
+            "max_caracteres": prompts.ajustes()["max_caracteres"]}
+
+
+@router.put("/api/llm/criterio/{symbol}")
+async def guardar_criterio(symbol: str, body: CriterioRequest):
+    _validar(symbol)
+    try:
+        await asyncio.to_thread(prompts.guardar, symbol, body.texto, "usuario")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await leer_criterio(symbol)
+
+
+@router.get("/api/llm/mejora-prompt")
+async def leer_mejora_prompt():
+    return await asyncio.to_thread(prompts.ajustes)
+
+
+@router.put("/api/llm/mejora-prompt")
+async def guardar_mejora_prompt(body: MejoraPromptRequest):
+    try:
+        return await asyncio.to_thread(prompts.guardar_ajustes, body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

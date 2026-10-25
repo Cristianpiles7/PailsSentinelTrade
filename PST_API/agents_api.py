@@ -81,7 +81,26 @@ async def decide(proposal_id: int, req: DecisionRequest):
             detail="Transición no permitida, o la propuesta cambió de estado mientras decidías.",
         )
     await asyncio.to_thread(_quitar_botones_rotacion, proposal_id)
-    return {"ok": True, "proposal_id": proposal_id, "state": req.state}
+    mensaje = await asyncio.to_thread(_tras_decidir_criterio, proposal_id, req.state)
+    return {"ok": True, "proposal_id": proposal_id, "state": req.state, "mensaje": mensaje}
+
+
+def _tras_decidir_criterio(proposal_id, state):
+    """Propuesta de criterio (prompt_simbolo): aprobada se aplica ya; revertida vuelve al criterio anterior."""
+    llm = str(Path(__file__).resolve().parents[1] / "PST_LLM")
+    if llm not in sys.path:
+        sys.path.insert(0, llm)
+    import prompts        # noqa: E402  (PST_LLM/prompts.py)
+    if prompts.leer_propuesta(proposal_id) is None:
+        return None
+    if state == "aprobada":
+        texto = prompts.aplicar(proposal_id, por="usuario")
+    elif state == "revertida":
+        texto = prompts.revertir(proposal_id, por="usuario")
+    else:
+        texto = "rechazada"
+    prompts.quitar_botones_de(proposal_id, f"ℹ️ Decidida desde la app: {texto}")
+    return texto
 
 
 def _quitar_botones_rotacion(proposal_id):

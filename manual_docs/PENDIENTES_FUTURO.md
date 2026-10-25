@@ -114,11 +114,26 @@ Propuesta: antes del cierre de cada clase de activo un viernes, cerrar a mercado
 - **Falta:** ejecutar el exportador en el portátil (el terminal de este PC no tiene sesión iniciada) e integrar la llamada en `llm_trader.py` (ruta de ejecución, con tu revisión).
 - **Pendiente de decidir:** los festivos del mercado pueden no venir en el horario del broker; hay que comprobarlo con un viernes de festivo.
 
+**Estado (v2.6.44):** implementado y subido. Las paradas se sacan del historial de velas de MT5. Un corte que se repite cada día y dura menos de 8 h no cierra nada. Una parada de más de 2 h que no es diaria (fin de semana) cierra 30 min antes.
+- **Decisión tomada:** las acciones se cierran cada noche (su corte nocturno de ~17 h cuenta como parada larga). Si se quiere mantenerlas de un día para otro, subir `DIARIA_MAX_S` a unas 20 h.
+- **Sin cubrir:** festivos sueltos; símbolos con menos de dos semanas de historial; posiciones de los EAs (su barrido de viernes es otro sistema).
+- **Por verificar en el portátil:** que la detección coincide con el horario del broker para cada símbolo (se verá en el contador de la home).
+
 **Caso de hoy (viernes 23-oct):** MSFT (venta 19:40) y GER40 (venta 19:55) probablemente quedan abiertas. Confirmar en MT5.
 
 ---
 
-## 10. Lo que ya está hecho y conviene no perder de vista
+## 10. Informe de la confianza de los agentes
+
+**Estado:** pendiente
+
+El campo `confidence` que el modelo devuelve en cada decisión no tiene una definición en el prompt, y no está calibrado. Primeros datos (17 operaciones ejecutadas, 15 cerradas): el tramo 0.35–0.40 gana 7 de 10 y el 0.45–0.50, 3 de 5, con resultados que dependen de pocos trades. Con tan pocos datos no sirve para decidir.
+
+Hacer un informe que agrupe las operaciones por tramo de confianza (n, aciertos, resultado neto) y se actualice solo. Cuando haya muestra suficiente, decidir si mantener el campo en la notificación, o definirlo en el prompt como probabilidad de llegar al objetivo antes que al stop.
+
+---
+
+## 11. Lo que ya está hecho y conviene no perder de vista
 
 - **Filtro de setup y tope de llamadas** configurables desde la app (v2.6.40). El tope global es 0 = sin límite.
 - **Prompt de los agentes:** criterio de entrada explícito y sin muestra fija (v2.6.40).

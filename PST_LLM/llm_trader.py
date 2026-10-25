@@ -40,6 +40,7 @@ from pathlib import Path
 
 import numpy as np
 
+import prompts                        # criterio de entrada por simbolo, en BBDD (PST_LLM/prompts.py)
 import calendario                     # puerta de calendario FTMO (PST_LLM/calendario.py)
 import sesiones                       # paradas recurrentes del mercado: cierre antes del fin de semana (PST_LLM/sesiones.py)
 import registro                       # BBDD central: decisiones y agentes para la app
@@ -102,7 +103,9 @@ _SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 MAX_SPREAD_SOBRE_STOP = 0.15   # se rechaza la orden si el spread supera este % de la distancia al stop
 
-SYSTEM_PROMPT = (
+# Parte FIJA del prompt (formato, costes, cierres, campos). El CRITERIO de entrada va aparte, uno por
+# simbolo, en la BBDD (PST_LLM/prompts.py): lo editas en Ajustes o lo cambia una propuesta aprobada.
+PROMPT_FIJO = (
     f"""ROLE
 You are a discretionary trader on a DEMO account managing one symbol. You are called at regular intervals
 ('call_interval'). The call interval is NOT your trading timeframe: each snapshot holds several timeframes at
@@ -110,13 +113,10 @@ once and YOU decide which timeframe each trade is based on.
 
 OUTPUT
 Reply ONLY with the JSON decision requested by the schema. 'action' is one of hold, buy, sell, close. With no
-open position choose hold, buy or sell; with an open position choose hold or close. Prefer hold unless you see
-a clear, specific reason. Most candles carry no edge: enter only at a concrete structure (a named level or
-indicator reading) on the timeframe you choose, and say in 'Riesgo' what would invalidate the idea.
+open position choose hold, buy or sell; with an open position choose hold or close. Follow the TRADING CRITERIA
+section below to decide whether and where to enter.
 - 'timeframe': the timeframe whose structure justifies the trade. The stop distance (sl_atr_mult x ATR) is
-  measured on THAT timeframe's ATR, so a wider timeframe means a wider stop and a longer holding time. Use the
-  higher timeframes for direction and the lower ones for timing. Do not fight the higher timeframes without a
-  clear reason.
+  measured on THAT timeframe's ATR, so a wider timeframe means a wider stop and a longer holding time.
 - 'sl_atr_mult': stop distance in ATRs of that timeframe, between {SL_MULT[0]} and {SL_MULT[1]}.
 - 'tp_r': take-profit as a multiple of the risk, between {TP_R[0]} and {TP_R[1]}.
 - 'confidence': between 0 and 1.
@@ -125,6 +125,9 @@ indicator reading) on the timeframe you choose, and say in 'Riesgo' what would i
   used, naming each timeframe and the actual numbers from the snapshot), 'Decisión:' (what you do and why),
   'Riesgo:' (what would prove the idea wrong, or why you stay out). Be specific and concrete, no generic phrases.
 Values outside these ranges are clamped by the system, not rejected: stay inside them.
+
+TRADING CRITERIA (specific to this symbol, written in Spanish; it may be revised over time)
+{{criterio}}
 
 COSTS AND SIZING (enforced by the system)
 - The system rejects any trade whose stop is less than ~{1 / MAX_SPREAD_SOBRE_STOP:.1f}x the spread.
@@ -166,9 +169,27 @@ DECISION_SCHEMA = {
 }
 
 
-# Huella del prompt: si cambia, la app muestra decisiones de distinta version.
+def montar_prompt(criterio):
+    return PROMPT_FIJO.replace("{criterio}", criterio.strip())
+
+
+# Prompt completo del agente: fijo + criterio de su simbolo. Se recalcula en cada vuelta (prompt_actual);
+# si cambia, la sesion continua se reabre con el nuevo y la version nueva queda guardada para la app.
+SYSTEM_PROMPT = montar_prompt(prompts.CRITERIO_DEFECTO)
 PROMPT_VERSION = registro.prompt_version(SYSTEM_PROMPT)
-registro.guardar_prompt(PROMPT_VERSION, SYSTEM_PROMPT)
+_VERSIONES_GUARDADAS = set()
+
+
+def prompt_actual(symbol):
+    """Fija SYSTEM_PROMPT/PROMPT_VERSION con el criterio activo del simbolo. Nunca lanza."""
+    global SYSTEM_PROMPT, PROMPT_VERSION
+    SYSTEM_PROMPT = montar_prompt(prompts.texto_seguro(symbol))
+    PROMPT_VERSION = registro.prompt_version(SYSTEM_PROMPT)
+    if PROMPT_VERSION not in _VERSIONES_GUARDADAS:
+        registro.guardar_prompt(PROMPT_VERSION, SYSTEM_PROMPT)
+        _VERSIONES_GUARDADAS.add(PROMPT_VERSION)
+    _SESION.prompt = SYSTEM_PROMPT
+    return SYSTEM_PROMPT, PROMPT_VERSION
 
 
 # ── BBDD de decisiones ───────────────────────────────────────────────────────
@@ -181,7 +202,7 @@ def db():
         confidence REAL, reason TEXT, tokens_in INTEGER, tokens_out INTEGER,
         tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, duration_s REAL,
         executed INTEGER, exec_result TEXT, ticket INTEGER, state_json TEXT)""")
-    for col in ("quota_5h REAL", "quota_7d REAL", "timeframe TEXT", "horizonte TEXT", "recorte TEXT"):   # tablas creadas antes de esto
+    for col in ("quota_5h REAL", "quota_7d REAL", "timeframe TEXT", "horizonte TEXT", "recorte TEXT", "prompt_version TEXT"):   # tablas creadas antes de esto
         try:
             con.execute(f"ALTER TABLE decisions ADD COLUMN {col}")
         except sqlite3.OperationalError:
@@ -235,6 +256,7 @@ def aplicar_config(args):
 
 
 def log_decision(con, **k):
+    k.setdefault("prompt_version", PROMPT_VERSION)
     cols = ", ".join(k)
     con.execute(f"INSERT INTO decisions ({cols}) VALUES ({', '.join('?' for _ in k)})", tuple(k.values()))
     con.commit()
@@ -476,7 +498,7 @@ def _decision(env):
 
 def preguntar_suelto(estado, model, effort, nombre):
     """Una sesion nueva por decision: el proceso vive unos segundos y se va."""
-    cmd = _comando_base(model, effort) + ["--output-format", "json", json.dumps(estado, separators=(",", ":"))]
+    cmd = _comando_base(model, effort, SYSTEM_PROMPT) + ["--output-format", "json", json.dumps(estado, separators=(",", ":"))]
     t0 = time.time()
     r = subprocess.run(cmd, cwd=str(cwd_agente(nombre)), capture_output=True, text=True, stdin=subprocess.DEVNULL,
                        timeout=180, encoding="utf-8", errors="replace", creationflags=_SIN_VENTANA)
@@ -517,12 +539,13 @@ class SesionContinua:
                 q.put(linea)
             q.put(None)                       # EOF: el proceso termino
         threading.Thread(target=_leer, args=(self.proc, self._cola), daemon=True).start()
-        self.firma, self.turnos = (model, effort, nombre), 0
+        self.firma, self.turnos = (model, effort, nombre, self.prompt), 0
 
     def asegurar(self, model, effort, nombre):
         """Mantiene la sesion ABIERTA aunque no haya nada que decidir (sin mensajes no gasta nada):
         un proceso `claude` en espera ya crea su fichero de sesion, que es lo que ve Habblaud."""
-        if self.proc is None or self.proc.poll() is not None or self.firma != (model, effort, nombre):
+        # El prompt forma parte de la firma: si cambia el criterio del simbolo, se reabre con el nuevo.
+        if self.proc is None or self.proc.poll() is not None or self.firma != (model, effort, nombre, self.prompt):
             self.cerrar()
             self._abrir(model, effort, nombre)
 
@@ -1255,6 +1278,7 @@ def main():
         print(f"[llm_trader] {args.symbol} {args.timeframe} · modo {'LIVE (demo)' if args.live else 'SIMULACION'} · "
               f"modelo {args.model}/{args.effort} · filtro {'NO' if args.sin_filtro else 'si'} · "
               f"tope {_tope_diario() or 'sin'} llamadas/dia (global) · cuenta {cuenta.login}", flush=True)
+        prompt_actual(args.symbol)
         if args.once:
             ciclo(mt5, args, con)
             return 0
@@ -1271,6 +1295,7 @@ def main():
             if (args.symbol, args.timeframe) != (simbolo_ant, tf_ant):
                 simbolo_ant, tf_ant, ultima = args.symbol, args.timeframe, None   # reiniciar el reloj de velas
                 mt5.symbol_select(args.symbol, True)
+            prompt_actual(args.symbol)                 # criterio del simbolo (BBDD): cambio en caliente
             if args.sesion_continua and args.enabled:
                 try:
                     _SESION.asegurar(args.model, args.effort, args.sala)
