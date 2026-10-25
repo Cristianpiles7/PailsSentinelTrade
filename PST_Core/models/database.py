@@ -7,6 +7,7 @@ import asyncio
 from datetime import datetime
 
 from ..config import DB_PATH
+from ..utils.reloj_mt5 import local_desde_mt5
 
 logger = logging.getLogger("PST-Database")
 
@@ -1418,7 +1419,6 @@ class PSTDatabase:
         closed_bot_trades = []  # [(symbol, pnl)] para que el caller registre cooldowns
 
         try:
-            from datetime import datetime, timezone
             import MetaTrader5 as mt5
             
             async with aiosqlite.connect(self.db_path, timeout=30) as db:
@@ -1428,11 +1428,8 @@ class PSTDatabase:
                     if d.entry not in [1, 2, 3]: 
                         continue
                     
-                    # d.time codifica la hora de pared del SERVIDOR del bróker como epoch
-                    # "UTC"; fromtimestamp() local le añadía el offset local encima
-                    # (time_out salía ~+3h vs reloj local). Conversión sin doble salto:
-                    time_out_dt = datetime.fromtimestamp(d.time, tz=timezone.utc).replace(tzinfo=None)
-                    time_out_str = time_out_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    # Hora local: d.time es hora de pared del bróker codificada como epoch (ver utils/reloj_mt5)
+                    time_out_str = local_desde_mt5(d.time).strftime('%Y-%m-%d %H:%M:%S')
                     total_pnl = d.profit + d.swap + d.commission
                     
                     # PASO 1: ¿Es un trade del BOT? (Buscamos ticket = position_id)
@@ -1496,8 +1493,7 @@ class PSTDatabase:
                                     continue
                                 if pd.entry == 0: # ENTRY_IN
                                     price_in = pd.price
-                                    # Hora de pared del servidor, sin doble desplazamiento
-                                    time_in_str = datetime.fromtimestamp(pd.time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                                    time_in_str = local_desde_mt5(pd.time).strftime('%Y-%m-%d %H:%M:%S')
                                     if getattr(pd, 'comment', ''):
                                         strategy_name = pd.comment.strip()
                                     break

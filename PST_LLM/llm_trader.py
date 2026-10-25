@@ -45,6 +45,8 @@ import calendario                     # puerta de calendario FTMO (PST_LLM/calen
 import sesiones                       # paradas recurrentes del mercado: cierre antes del fin de semana (PST_LLM/sesiones.py)
 import registro                       # BBDD central: decisiones y agentes para la app
 import universo
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))             # raíz del repo: para importar PST_Core
+from PST_Core.utils.reloj_mt5 import local_desde_mt5, broker_desde_mt5   # horas de MT5: ver utils/reloj_mt5
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -361,7 +363,7 @@ def historial_propio(mt5, n=5):
         neto = sum(d.profit + d.commission + d.swap for d in deals)
         s = sal[-1]
         salida = "revisor" if "REVISOR" in (s.comment or "").upper() else RAZON_DEAL.get(s.reason, "otra")
-        out.append({"side": accion, "opened": datetime.fromtimestamp(ent[0].time).strftime("%m-%d %H:%M"),
+        out.append({"side": accion, "opened": local_desde_mt5(ent[0].time).strftime("%m-%d %H:%M"),
                     "minutes": int((s.time - ent[0].time) / 60), "exit": salida,
                     "R": round(neto / riesgo, 2) if riesgo else None, "net_eur": round(neto, 2)})
         if len(out) == n:
@@ -389,7 +391,7 @@ def snapshot(mt5, symbol, cadencia, tfs):
         ind_por_tf[tf] = ind
         n = 24 if tf == cadencia else 8          # mas detalle en el marco del reloj
         marcos[tf] = {
-            "closed_at": datetime.fromtimestamp(int(cerradas[-1]["time"])).strftime("%m-%d %H:%M"),
+            "closed_at": broker_desde_mt5(int(cerradas[-1]["time"])).strftime("%m-%d %H:%M"),
             # Decimales del SIMBOLO, no 2 fijos: con 2, EURUSD (5 decimales) llegaba al agente con todas las
             # velas en 1.12 y ATR 0 (detectado el 2026-10-21 porque el propio agente lo dijo). Los
             # indicadores en escala de precio usan los decimales del simbolo; los acotados (RSI, ADX...) no.

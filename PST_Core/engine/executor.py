@@ -10,6 +10,7 @@ from ..models.database import PSTDatabase
 from ..portfolio.manager import PortfolioManager
 from ..config import BE_ATR_MULTIPLIER, TRAIL_ATR_MULTIPLIER, TP_ATR_BY_CLASS, STRATEGY_CATEGORIES, MAX_POSITIONS_PER_CATEGORY, MAX_SYMBOL_EXPOSURE_PCT, SCALPER_PARTIAL_CLOSE_ENABLED, SCALPER_PARTIAL_CLOSE_PCT, SCALPER_PARTIAL_BE_COMMISSION_PADDING_PTS, COMMISSION_SPEC, CRYPTO_MAX_COMMISSION_R, SCALPER_PARTIAL_CLOSE_DISABLED_CLASSES
 from ..utils.tech_utils import get_asset_class
+from ..utils.reloj_mt5 import local_desde_mt5
 from ..utils.cooldown_manager import cooldown_mgr
 
 logger = logging.getLogger("PST-Executor")
@@ -560,7 +561,7 @@ class PSTExecutor:
                 # PST-PrecisionScalping: salida si el precio cruza el VWAP en contra.
                 # Tiempo mínimo de sostenimiento (120s): impide que la salida VWAP cierre
                 # la posición en su propia vela de entrada por un simple tick de ruido.
-                pos_age_secs = (datetime.now() - datetime.fromtimestamp(p.time_setup if hasattr(p, "time_setup") else p.time)).total_seconds()
+                pos_age_secs = (datetime.now() - local_desde_mt5(p.time_setup if hasattr(p, "time_setup") else p.time)).total_seconds()
                 if "PrecisionScalping" in p.comment and pos_age_secs >= 120:
                     from ..strategies.pst_precision_scalping import PSTPrecisionScalping
                     ps_strat = PSTPrecisionScalping()
@@ -633,7 +634,7 @@ class PSTExecutor:
                                         logger.info(f"🛡️ [PARTIAL BE] {symbol} SL movido a Breakeven tras cierre parcial (Padding: {be_pad} pts).")
 
                     # Si el trade lleva más de 30 min abierto, cerramos si no hay profit claro
-                    time_open = datetime.now() - datetime.fromtimestamp(p.time_setup if hasattr(p, 'time_setup') else p.time)
+                    time_open = datetime.now() - local_desde_mt5(p.time_setup if hasattr(p, 'time_setup') else p.time)
                     # --- FIX: Solo cerrar por timeout si el mercado está abierto ---
                     is_full_tradable = s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL if s_info else False
                     # Excepción TREND (Fase 6, PST-MomentumPulse): este timeout está pensado

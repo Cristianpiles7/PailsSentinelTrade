@@ -16,6 +16,7 @@ from datetime import datetime
 import aiosqlite
 
 from .mt5_async import get_positions_async, get_history_deals_async
+from ..utils.reloj_mt5 import local_desde_mt5
 
 logger = logging.getLogger("PST-Sync")
 
@@ -110,7 +111,7 @@ class MT5PositionSync:
         # magic->nombre "amigable" (que puede desincronizarse si se renombra un EA).
         strategy_name = (p.comment or "").strip() or MAGIC_STRATEGY_MAP.get(p.magic) or (f"Manual/otro EA (magic {p.magic})" if p.magic else "Manual")
         trade_type = "BUY" if p.type == 0 else "SELL"  # 0=ORDER_TYPE_BUY, 1=ORDER_TYPE_SELL en MT5
-        time_in = datetime.fromtimestamp(p.time).strftime('%Y-%m-%d %H:%M:%S')
+        time_in = local_desde_mt5(p.time).strftime('%Y-%m-%d %H:%M:%S')
         await self.db.save_trade({
             "symbol": p.symbol,
             "type": trade_type,

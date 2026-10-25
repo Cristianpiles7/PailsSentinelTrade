@@ -35,11 +35,15 @@ import prompts            # noqa: E402
 import registro           # noqa: E402
 import universo           # noqa: E402
 import llm_trader as lt   # noqa: E402
+import sesgo              # noqa: E402  vigía de sesgo direccional: ve también los hold
 
 DATA = rutas.DATOS / ".agents" / "data"
 STOP_FILE = DATA / "llm_mejora_prompt.STOP"
 SALA = "Mejora_Prompt"            # directorio de trabajo fuera del repo (no hereda CLAUDE.md ni memoria)
 MAX_POR_PASADA = 3                # simbolos revisados como mucho en cada pasada (cuota)
+SESGO_DIAS = 7                    # ventana del sesgo que se le enseña al agente de mejora
+SESGO_REPETIR_H = 24              # un mismo sesgo no vuelve a consumir cuota antes de estas horas
+AVISO_SESGO_CADA_H = 24           # informe de sesgo a Telegram (una vez al día)
 RAZON = {0: "manual", 1: "movil", 2: "web", 3: "agente", 4: "STOP", 5: "TAKE PROFIT", 6: "stop-out"}
 
 SISTEMA = """Eres el revisor del CRITERIO DE ENTRADA de un agente de trading (un LLM) que opera UN símbolo en una
@@ -65,6 +69,14 @@ Reglas:
 - No escribas sobre tamaño de posición, riesgo por operación, límites diarios ni reglas de cierre: los aplica
   el sistema y ya están en la parte fija.
 - Si una versión anterior probó algo parecido y no funcionó, no lo vuelvas a proponer sin evidencia nueva.
+- 'sesgo_direccional' (si viene) cuenta TODAS las decisiones, también los hold, por régimen (H1 y H4 alineados
+  alcista o bajista). Si el agente casi nunca compra en un régimen alcista, o nunca vende en uno bajista, eso
+  es un fallo del criterio aunque no haya pérdidas que lo muestren: propón una entrada CONCRETA para la
+  dirección que falta (p. ej. retroceso a la EMA20 de M5/M15 con RSI y +DI/-DI que confirmen, con su
+  invalidación), con las mismas exigencias que la dirección contraria. No añadas reglas que solo
+  restrinjan más: un criterio que solo bloquea entradas no corrige un sesgo por falta de entradas.
+- Una frase de "Por defecto, quédate fuera" no basta para justificar que nunca haya compras: si el régimen
+  alcista existe, el criterio debe decir qué lo convierte en entrada.
 - 'tickets_evidencia': los tickets de las operaciones que apoyan el cambio (y las ganadoras que afectaría).
 - 'resumen': una frase (máx. 200 caracteres) que diga qué cambia. 'motivo': el patrón, con números
   (cuántas operaciones, cuánto ganaron/perdieron), máx. 1200 caracteres.
@@ -198,22 +210,38 @@ def _versiones_previas(mt5, symbol, max_n=3):
 # ── Revision de un simbolo ───────────────────────────────────────────────────
 def preguntar(entrada, cfg):
     sistema = SISTEMA.replace("{max_car}", str(cfg["max_caracteres"]))
-    cmd = lt._comando_base(cfg["modelo"], cfg["esfuerzo"], prompt=sistema, schema=SCHEMA) + [
-        "--output-format", "json", json.dumps(entrada, ensure_ascii=False, separators=(",", ":"))]
-    r = subprocess.run(cmd, cwd=str(lt.cwd_agente(SALA)), capture_output=True, text=True, stdin=subprocess.DEVNULL,
+    # El contexto va por stdin: como argumento de línea de comandos supera el límite de Windows (WinError 206)
+    cmd = lt._comando_base(cfg["modelo"], cfg["esfuerzo"], prompt=sistema, schema=SCHEMA) + ["--output-format", "json"]
+    payload = json.dumps(entrada, ensure_ascii=False, separators=(",", ":"))
+    r = subprocess.run(cmd, cwd=str(lt.cwd_agente(SALA)), input=payload, capture_output=True, text=True,
                        timeout=600, encoding="utf-8", errors="replace", creationflags=lt._SIN_VENTANA)
     if r.returncode != 0:
         raise RuntimeError(f"claude -p fallo ({r.returncode}): {(r.stderr or r.stdout)[-400:]}")
     return lt._decision(json.loads(r.stdout))
 
 
+def _ultima_revision(symbol):
+    con = prompts._con()
+    try:
+        fila = con.execute("SELECT MAX(ts) FROM llm_prompt_revisiones WHERE symbol=?", (symbol,)).fetchone()
+        return fila[0] if fila else None
+    finally:
+        con.close()
+
+
 def revisar(mt5, symbol, cfg, forzar=False, seco=False):
     act = prompts.activo(symbol)
     ops = operaciones_cerradas(mt5, symbol, act["activado"])
     nuevas = [o for o in ops if o["ticket"] not in _tickets_revisados(symbol, act["version"])]
-    if not forzar and len(nuevas) < cfg["min_operaciones"]:
+    # El sesgo cuenta aunque no haya operaciones cerradas: un agente que nunca compra no cierra compras.
+    alerta = sesgo.analizar(dias=SESGO_DIAS)["alertas"].get(symbol)
+    if alerta:
+        ult = _ultima_revision(symbol)
+        if ult and (datetime.now() - datetime.strptime(ult, "%Y-%m-%d %H:%M:%S")).total_seconds() < SESGO_REPETIR_H * 3600:
+            return f"{symbol}: sesgo ya revisado en las últimas {SESGO_REPETIR_H} h"
+    if not forzar and not alerta and len(nuevas) < cfg["min_operaciones"]:
         return f"{symbol}: {len(nuevas)}/{cfg['min_operaciones']} operaciones nuevas, todavía no"
-    if not ops:
+    if not ops and not alerta:
         return f"{symbol}: sin operaciones cerradas con el criterio actual"
     clase = next((s.clase for s in universo.UNIVERSO if s.symbol == symbol), None)
     contexto = ops[-cfg["max_operaciones_contexto"]:]
@@ -222,6 +250,9 @@ def revisar(mt5, symbol, cfg, forzar=False, seco=False):
                "resumen_con_criterio_actual": resumen(ops), "operaciones": contexto,
                "versiones_anteriores": _versiones_previas(mt5, symbol),
                "parte_fija_del_prompt": lt.PROMPT_FIJO}
+    if alerta:
+        entrada["sesgo_direccional"] = {"ventana_dias": SESGO_DIAS, "alertas": alerta["marcas"],
+                                        "decisiones": alerta["stats"], "por_regimen": alerta["regimen"]}
     d = preguntar(entrada, cfg)
     if seco:
         print(json.dumps(d, ensure_ascii=False, indent=2))
@@ -242,7 +273,9 @@ def revisar(mt5, symbol, cfg, forzar=False, seco=False):
 
 def pasada(mt5, cfg):
     hechas = 0
-    for sym in simbolos_con_operaciones():
+    con_sesgo = sorted(sesgo.analizar(dias=SESGO_DIAS)["alertas"])
+    candidatos = con_sesgo + [s for s in simbolos_con_operaciones() if s not in con_sesgo]
+    for sym in candidatos:
         if hechas >= MAX_POR_PASADA:
             break
         ok, why, _ = lt.cuota_ok()
@@ -257,6 +290,15 @@ def pasada(mt5, cfg):
         print(f"[mejora] {txt}", flush=True)
         if "todavía no" not in txt and "sin operaciones" not in txt:
             hechas += 1
+
+
+def aviso_sesgo():
+    """Informe diario de sesgo a Telegram: solo avisa de lo que pasa, la propuesta de prompt va aparte."""
+    informe = sesgo.analizar(dias=SESGO_DIAS)
+    texto = sesgo.texto(informe)
+    print(f"[sesgo] {len(informe['alertas'])} símbolos con sesgo", flush=True)
+    if informe["alertas"]:
+        lt.telegram_enviar(texto)
 
 
 def main():
@@ -278,7 +320,7 @@ def main():
             pasada(mt5, prompts.ajustes())
             return 0
         STOP_FILE.unlink(missing_ok=True)
-        ultima = 0.0
+        ultima, ultimo_aviso = 0.0, 0.0
         print("[mejora] en marcha", flush=True)
         while not (STOP_FILE.exists() or lt.STOP_GLOBAL.exists()):
             cfg = prompts.ajustes()
@@ -288,6 +330,12 @@ def main():
                     pasada(mt5, cfg)
                 except Exception as e:
                     print(f"[mejora] error en la pasada: {e}", flush=True)
+            if time.time() - ultimo_aviso >= AVISO_SESGO_CADA_H * 3600:
+                ultimo_aviso = time.time()
+                try:
+                    aviso_sesgo()
+                except Exception as e:
+                    print(f"[sesgo] error en el aviso: {e}", flush=True)
             time.sleep(20)
         print("[mejora] fichero STOP detectado: parado.", flush=True)
     finally:

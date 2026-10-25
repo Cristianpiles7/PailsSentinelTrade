@@ -8,6 +8,7 @@ import numpy as np
 from datetime import datetime
 from PST_Core.portfolio.manager import PortfolioManager
 from PST_Core.utils.tech_utils import calculate_channel_boundary, calculate_manual_score
+from PST_Core.utils.reloj_mt5 import local_desde_mt5
 from ..strategies.pst_trendmaster import PSTTrendMaster
 from ..strategies.pst_rsi_equities import PSTRSIEquities
 from ..strategies.pst_ema_flow import PSTEMAFlow
@@ -1627,8 +1628,8 @@ def import_history_from_mt5():
                         d.price, 
                         0.0, 0.0, 
                         profit, 
-                        str(datetime.fromtimestamp(d.time)), # Time In aproximado (usamos el del cierre visualmente o null) -> Mejor ponemos el del cierre en time_out
-                        str(datetime.fromtimestamp(d.time)), 
+                        str(local_desde_mt5(d.time)), # Time In aproximado (usamos el del cierre visualmente o null) -> Mejor ponemos el del cierre en time_out
+                        str(local_desde_mt5(d.time)),
                         "UNKNOWN", 
                         "IMPORTED", 
                         d.position_id
