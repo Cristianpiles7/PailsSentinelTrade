@@ -188,6 +188,8 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
   const [penalQuitar, setPenalQuitar] = useState('')
   const [penalDias, setPenalDias] = useState('')
   const [inactividad, setInactividad] = useState('')
+  const [accionEntrada, setAccionEntrada] = useState('aprobar')
+  const [accionSalida, setAccionSalida] = useState('aprobar')
   const [aviso, setAviso] = useState('')
 
   useEffect(() => {
@@ -203,6 +205,8 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
       setPenalQuitar(String(limites.penalizacion_quitar))
       setPenalDias(String(limites.penalizacion_dias))
       setInactividad(String(limites.inactividad_min))
+      setAccionEntrada(limites.accion_entrada)
+      setAccionSalida(limites.accion_salida)
     }
   }, [limites])
 
@@ -226,6 +230,8 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
       penalizacion_cripto: Number(penalCripto),
       penalizacion_quitar: Number(penalQuitar),
       penalizacion_dias: Number(penalDias),
+      accion_entrada: accionEntrada,
+      accion_salida: accionSalida,
     })
     setAviso(errorTope || error || 'Guardado')
   }
@@ -243,7 +249,7 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
     { etiqueta: 'Propuestas cada (min)', valor: cadenciaMin, set: setCadenciaMin, min: 5, max: 240,
       title: 'Cada cuántos minutos se recalculan las propuestas de cambio' },
     { etiqueta: 'Plazo respuesta (min)', valor: plazoMin, set: setPlazoMin, min: 5, max: 720,
-      title: 'Minutos para responder una propuesta antes de su acción por defecto' },
+      title: 'Minutos que tienes para decidir una propuesta. Al vencer, actúa la opción de Entrar/Salir sin respuesta (no aplica si está en "Sin plazo")' },
     { etiqueta: 'Margen cambio', valor: margen, set: setMargen, min: 0, max: 1, step: 0.01,
       title: 'Cuánto debe puntuar el candidato por encima del peor activo' },
     { etiqueta: 'Sustituciones/día', valor: sustituciones, set: setSustituciones, min: 0, max: 10,
@@ -256,6 +262,14 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
       title: 'Puntos que resta un símbolo que quitaste' },
     { etiqueta: 'Días pen.', valor: penalDias, set: setPenalDias, min: 1, max: 30,
       title: 'Días hasta que la penalización de quitar llega a cero' },
+  ]
+
+  // Qué pasa con cada propuesta si no contestas en el plazo: se aprueba, se rechaza, o se queda en la bandeja.
+  const acciones = [
+    { etiqueta: 'Entrar sin respuesta', valor: accionEntrada, set: setAccionEntrada,
+      title: 'Propuestas de abrir un símbolo nuevo que no contestas en el plazo' },
+    { etiqueta: 'Salir sin respuesta', valor: accionSalida, set: setAccionSalida,
+      title: 'Propuestas de quitar un símbolo que no contestas en el plazo' },
   ]
 
   const campo = 'w-full text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500/60'
@@ -274,6 +288,16 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
             <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{c.etiqueta}</span>
             <input type="number" min={c.min} max={c.max} step={c.step} value={c.valor}
               onChange={e => c.set(e.target.value)} className={campo} />
+          </label>
+        ))}
+        {acciones.map(a => (
+          <label key={a.etiqueta} title={a.title} className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{a.etiqueta}</span>
+            <select value={a.valor} onChange={e => a.set(e.target.value)} className={campo}>
+              <option value="aprobar">Aprobar al vencer el plazo</option>
+              <option value="rechazar">Rechazar al vencer el plazo</option>
+              <option value="pendiente">Sin plazo: solo yo decido</option>
+            </select>
           </label>
         ))}
       </div>

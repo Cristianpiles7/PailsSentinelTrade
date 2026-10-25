@@ -18,9 +18,10 @@ PROPUESTAS (2026-10-23): huecos libres y reseleccion no se aplican solos. Cada c
   (tabla proposals, kind rotacion_entrada / rotacion_salida). Se avisa por Telegram.
   Se decide en la bandeja de la app (Aprobar / Rechazar). Lo aprobado lo aplica la siguiente pasada de riesgo
   (cada ciclo_min) y pasa a 'viva'; si ya no es valido, pasa a 'rechazada'.
-  Sin respuesta en ventana_aprobacion_min minutos:
-    - salida   -> se aprueba sola (auto-plazo) y se aplica
-    - entrada  -> se rechaza (auto-plazo)
+  Sin respuesta en ventana_aprobacion_min minutos, cada tipo hace lo que diga su ajuste (desde la app):
+    accion_entrada / accion_salida = aprobar (se aplica sola) | rechazar | pendiente (no caduca: decides tu).
+    Mientras no venza el plazo decides tu, a mano desde la bandeja o Telegram; el plazo solo actua si no contestas.
+    Lo aprobado, sea a mano o por plazo, lo revalida la pasada de riesgo: una propuesta ya obsoleta no entra.
   Cada pasada de propuestas sustituye las pendientes por las nuevas; el plazo cuenta desde el primer aviso.
 
 PUNTUACION (0-1, pesos fijos, sin LLM):
@@ -61,15 +62,17 @@ KIND = {"entrada": "rotacion_entrada", "salida": "rotacion_salida"}
 PENALIZACIONES = REPO_ROOT / ".agents" / "data" / "rotacion_penalizaciones.json"   # {symbol: momento en que lo quitaste}
 # Ajustes editables desde la app (rotacion_config.json). Se relee en cada pasada.
 LIMITES_POR_DEFECTO = {"max_activos": 10, "max_por_clase": 5,
-                       "ciclo_min": 5, "cadencia_ranking_min": 15, "ventana_aprobacion_min": 30,
+                       "ciclo_min": 5, "cadencia_ranking_min": 15, "ventana_aprobacion_min": 25,
                        "margen_cambio": 0.10, "max_sustituciones_dia": 2,
                        "penalizacion_cripto": 0.15,
-                       "penalizacion_quitar": 0.20, "penalizacion_dias": 3, "inactividad_min": 180}
+                       "penalizacion_quitar": 0.20, "penalizacion_dias": 3, "inactividad_min": 180,
+                       "accion_entrada": "aprobar", "accion_salida": "aprobar"}
 TIPOS = {"max_activos": int, "max_por_clase": int, "ciclo_min": int,
          "cadencia_ranking_min": int, "ventana_aprobacion_min": int,
          "margen_cambio": float, "max_sustituciones_dia": int,
          "penalizacion_cripto": float, "penalizacion_quitar": float, "penalizacion_dias": int,
-         "inactividad_min": int}
+         "inactividad_min": int, "accion_entrada": str, "accion_salida": str}
+ACCIONES = ("aprobar", "rechazar", "pendiente")     # que pasa con una propuesta sin respuesta en el plazo
 PERDIDAS_SEGUIDAS = 3
 PERDIDA_DIA_R = -1.5
 RIESGO_R_PCT = 0.5
@@ -259,6 +262,9 @@ def guardar_ajustes(cambios):
         raise ValueError("penalizacion_dias debe estar entre 1 y 30")
     if not 30 <= lim["inactividad_min"] <= 1440:
         raise ValueError("inactividad_min debe estar entre 30 y 1440 minutos")
+    for k in ("accion_entrada", "accion_salida"):
+        if lim[k] not in ACCIONES:
+            raise ValueError(f"{k} debe ser uno de: {', '.join(ACCIONES)}")
     CONFIG.write_text(json.dumps(lim, indent=2), encoding="utf-8")
     return lim
 
@@ -680,12 +686,14 @@ def decidir_propuesta(pid, aprobar, por="telegram"):
 def _texto_propuesta(it, lim):
     if it["tipo"] == "entrada":
         cabecera = f"🔔 Propuesta: <b>ENTRAR {it['symbol']}</b>"
-        plazo = "se rechaza"
     else:
         cabecera = f"🔔 Propuesta: <b>SALIR {it['symbol']}</b>"
-        plazo = "se aprueba y se aplica"
-    return (f"{cabecera}\n{it['motivo']}\n"
-            f"Decide en la bandeja de propuestas. Sin respuesta en {lim['ventana_aprobacion_min']} min: {plazo}.")
+    accion = lim[f"accion_{it['tipo']}"]
+    if accion == "pendiente":
+        plazo = "queda en la bandeja hasta que decidas"
+    else:
+        plazo = f"sin respuesta en {lim['ventana_aprobacion_min']} min se {'aprueba y se aplica' if accion == 'aprobar' else 'rechaza'}"
+    return f"{cabecera}\n{it['motivo']}\nDecide en la bandeja de propuestas: {plazo}."
 
 
 def _ejecutar(it, mt5, rank, activos, lim):
@@ -720,23 +728,28 @@ def _ejecutar(it, mt5, rank, activos, lim):
 
 
 def _resolver_vencidas():
-    """Plazo cumplido sin respuesta: la salida pasa a aprobada (se aplica en esta pasada); la entrada, a rechazada."""
+    """Plazo cumplido sin respuesta: segun accion_entrada / accion_salida se aprueba (y la aplica la siguiente pasada),
+    se rechaza, o se queda pendiente sin caducar."""
     ahora = datetime.now()
+    lim = _limites()
     con = _db()
     try:
         for fila in _filas(con, "propuesta"):
             it = _item(fila)
             if not it["expira"] or datetime.fromisoformat(it["expira"]) > ahora:
                 continue
-            if it["tipo"] == "salida":
+            accion = lim[f"accion_{it['tipo']}"]
+            if accion == "pendiente":
+                continue
+            if accion == "aprobar":
                 _mover(con, it["id"], "propuesta", "aprobada", "auto-plazo")
                 _quitar_botones(fila["proposed_json"])
-                _notificar(f"⏱ Sin respuesta: salida de <b>{it['symbol']}</b> se aplica")
+                _notificar(f"⏱ Sin respuesta: {it['tipo']} de <b>{it['symbol']}</b> se aplica")
             else:
                 _mover(con, it["id"], "propuesta", "rechazada", "auto-plazo")
                 _quitar_botones(fila["proposed_json"])
-                _anotar("rechazada", it["symbol"], "entrada sin respuesta en el plazo", {"id": it["id"]})
-                _notificar(f"⏱ Sin respuesta: entrada de <b>{it['symbol']}</b> rechazada")
+                _anotar("rechazada", it["symbol"], f"{it['tipo']} sin respuesta en el plazo", {"id": it["id"]})
+                _notificar(f"⏱ Sin respuesta: {it['tipo']} de <b>{it['symbol']}</b> rechazada")
     finally:
         con.close()
 

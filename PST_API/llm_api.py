@@ -119,6 +119,8 @@ class RotacionRequest(BaseModel):
     penalizacion_quitar: float | None = None  # puntos que resta un simbolo que quitaste (baja con el tiempo)
     penalizacion_dias: int | None = None      # dias hasta que la penalizacion de quitar llega a cero
     inactividad_min: int | None = None        # minutos sin llamadas al modelo tras los que un agente activo puede salir
+    accion_entrada: str | None = None         # sin respuesta en el plazo: aprobar | rechazar | pendiente (no caduca)
+    accion_salida: str | None = None          # igual, para las propuestas de salir de un simbolo
 
 
 @router.get("/api/llm/rotacion")
