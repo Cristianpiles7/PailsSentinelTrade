@@ -152,6 +152,9 @@ STATE FIELDS (units in brackets)
 - timeframes.<TF>.px_vs_ema20_atr: signed distance of the last close to EMA20 [ATRs].
 - timeframes.<TF>.spread_atr: spread / ATR [ratio].
 - own_history: your last closed trades, oldest first: side; opened [local time]; minutes; exit (STOP, TAKE PROFIT, manual, agent, revisor, other); R (approximate: net result after costs / risk at entry, so -1 is a full stop); net_eur. Empty list if none. Use it to calibrate, do not chase the last result.
+- timeframes.<TF>.niveles: structure levels of that timeframe. maximo_20 / minimo_20 [price units]: highest high and lowest low of the last 20 closed candles. swing_alto / swing_bajo [price units]: most recent swing high / low in the last 60 candles (a candle higher / lower than its 2 neighbours on each side), null if none. dist_*_atr: signed distance from the last close to each level [ATRs of that timeframe]; negative = the level is below the close.
+- dia_anterior: the previous daily candle: maximo, minimo, cierre [price units]; dist_maximo_atr, dist_minimo_atr [ATRs of the call-interval timeframe]; null if unavailable.
+- cartera: open positions of ALL the LLM agents together (the flota): abiertas; por_lado {{buy, sell}}; flotante_eur and realizado_hoy_eur [account currency]; posiciones: symbol, side, clase (asset class), floating_eur. Your own symbol appears there too if you are in a trade. Use it to avoid stacking exposure to the same risk (for example, several index shorts at once).
 - position (null if none): side; open_price; sl; tp [price units]; floating_pnl [account currency]; minutes_held; close_locked_for_min [minutes].
 """
 )
@@ -336,6 +339,53 @@ def indicadores(o, h, l, c):
             "bb_pos": (c[-1] - (sma20[-1] - 2 * sd20[-1])) / max(4 * sd20[-1], 1e-12)}
 
 
+def niveles(o, h, l, c, atr, digits, n_rango=20, n_swing=60):
+    """
+    Niveles de estructura del marco: maximo y minimo de las ultimas n_rango velas cerradas y el ultimo
+    swing alto/bajo (una vela mas alta/baja que sus 2 vecinas a cada lado) de las ultimas n_swing.
+    Distancias con signo en ATRs de ESTE marco: negativa = el nivel esta por debajo del cierre.
+    """
+    cierre = c[-1]
+    alto_r, bajo_r = h[-n_rango:].max(), l[-n_rango:].min()
+    sw_alto = sw_bajo = None
+    for i in range(len(h) - 3, max(len(h) - n_swing, 2) - 1, -1):
+        if sw_alto is None and h[i] > max(h[i - 2], h[i - 1]) and h[i] > max(h[i + 1], h[i + 2]):
+            sw_alto = float(h[i])
+        if sw_bajo is None and l[i] < min(l[i - 2], l[i - 1]) and l[i] < min(l[i + 1], l[i + 2]):
+            sw_bajo = float(l[i])
+        if sw_alto is not None and sw_bajo is not None:
+            break
+    def dist(nivel):
+        return None if nivel is None else round((nivel - cierre) / atr, 2)
+    return {"maximo_20": round(float(alto_r), digits), "minimo_20": round(float(bajo_r), digits),
+            "dist_maximo_20_atr": dist(alto_r), "dist_minimo_20_atr": dist(bajo_r),
+            "swing_alto": None if sw_alto is None else round(sw_alto, digits), "dist_swing_alto_atr": dist(sw_alto),
+            "swing_bajo": None if sw_bajo is None else round(sw_bajo, digits), "dist_swing_bajo_atr": dist(sw_bajo)}
+
+
+def dia_anterior(mt5, symbol, atr, cierre, digits):
+    """Maximo, minimo y cierre de la ultima vela diaria cerrada, con distancia al cierre del marco del reloj."""
+    d1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, 3)
+    if d1 is None or len(d1) < 2:
+        return None
+    p = d1[-2]                                    # d1[-1] es el dia en curso
+    alto, bajo = float(p["high"]), float(p["low"])
+    return {"maximo": round(alto, digits), "minimo": round(bajo, digits), "cierre": round(float(p["close"]), digits),
+            "dist_maximo_atr": round((alto - cierre) / atr, 2), "dist_minimo_atr": round((bajo - cierre) / atr, 2)}
+
+
+def cartera(mt5, symbol):
+    """Posiciones abiertas de TODA la flota de agentes LLM: el agente ve donde esta expuesto el conjunto."""
+    pos = [p for p in (mt5.positions_get() or []) if p.magic in MAGICS_FLOTA]
+    realizado, flotante = pnl_flota(mt5, MAGICS_FLOTA)
+    return {"abiertas": len(pos), "por_lado": {"buy": sum(1 for p in pos if p.type == 0),
+                                               "sell": sum(1 for p in pos if p.type == 1)},
+            "flotante_eur": round(flotante, 2), "realizado_hoy_eur": round(realizado, 2),
+            "posiciones": [{"symbol": p.symbol, "side": "buy" if p.type == 0 else "sell",
+                            "clase": next((s.clase for s in universo.UNIVERSO if s.symbol == p.symbol), None),
+                            "floating_eur": round(p.profit, 2)} for p in pos[:20]]}
+
+
 # ── Estado y puerta previa ───────────────────────────────────────────────────
 def historial_propio(mt5, n=5):
     """
@@ -400,6 +450,7 @@ def snapshot(mt5, symbol, cadencia, tfs):
                     for k, v in ind.items()},
             "px_vs_ema20_atr": round(float((c[-1] - ind["ema20"]) / ind["atr"]), 2),
             "spread_atr": round(float(spread / ind["atr"]), 3),
+            "niveles": niveles(o, h, l, c, ind["atr"], info.digits),
         }
     if cadencia not in ind_por_tf:
         return None
@@ -410,6 +461,9 @@ def snapshot(mt5, symbol, cadencia, tfs):
         "equity": round(cuenta.equity, 2), "timeframes": marcos, "position": None,
     }
     estado["own_history"] = historial_propio(mt5)
+    estado["dia_anterior"] = dia_anterior(mt5, symbol, ind_por_tf[cadencia]["atr"],
+                                          marcos[cadencia]["candles_ohlc"][-1][3], info.digits)
+    estado["cartera"] = cartera(mt5, symbol)
     if pos:
         p = pos[0]
         estado["position"] = {

@@ -84,9 +84,9 @@ El mensaje `[bot] historico sembrado` sale cada vez que el bot arranca con la ta
 
 ## 7. Claude CLI en el portátil tras el cambio de equipo
 
-**Estado:** pendiente de comprobar
+**Estado:** resuelto (incidente puntual)
 
-Entre las 17:44 y las 18:14 los agentes no pudieron llamar al modelo (`Claude CLI no encontrado`). Desde entonces van bien. Confirmar que el CLI está instalado e iniciado en el portátil, para que no vuelva a pasar tras una reinstalación.
+El 23 de octubre, entre las 17:32 y las 18:14, los agentes no pudieron llamar al modelo (`Claude CLI no encontrado`; 123 decisiones en error). Desde entonces funcionan y el CLI está instalado e iniciado en el portátil. No se requiere acción salvo que vuelva a aparecer ese error tras una reinstalación.
 
 ---
 

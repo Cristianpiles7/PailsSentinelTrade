@@ -36,6 +36,8 @@ import registro           # noqa: E402
 import universo           # noqa: E402
 import llm_trader as lt   # noqa: E402
 import sesgo              # noqa: E402  vigía de sesgo direccional: ve también los hold
+import contrafactual      # noqa: E402  qué habría pasado en los hold (entradas que no se tomaron)
+import validacion_propuesta  # noqa: E402  valida la propuesta con decisiones pasadas antes de avisar
 
 DATA = rutas.DATOS / ".agents" / "data"
 STOP_FILE = DATA / "llm_mejora_prompt.STOP"
@@ -77,6 +79,12 @@ Reglas:
   restrinjan más: un criterio que solo bloquea entradas no corrige un sesgo por falta de entradas.
 - Una frase de "Por defecto, quédate fuera" no basta para justificar que nunca haya compras: si el régimen
   alcista existe, el criterio debe decir qué lo convierte en entrada.
+- 'holds_contrafactual': lo que habría pasado en las decisiones 'hold' (el agente no entró). Por cada una se mira
+  qué lado recorrió primero 1 ATR (del marco del reloj) en la hora siguiente. 'primero_arriba_pct' alto = las
+  compras que dejó pasar iban bien; 'primero_abajo_pct' alto = lo mismo con las ventas. Es la única vista de las
+  entradas perdidas: úsala para detectar un lado que se queda fuera sin motivo, no solo las pérdidas.
+- 'clase': lo mismo para los demás símbolos de su misma clase (operaciones y holds). Sirve para tener más muestra
+  cuando este símbolo tiene pocas operaciones. No copies una regla de otro símbolo sin que se vea en el suyo.
 - 'tickets_evidencia': los tickets de las operaciones que apoyan el cambio (y las ganadoras que afectaría).
 - 'resumen': una frase (máx. 200 caracteres) que diga qué cambia. 'motivo': el patrón, con números
   (cuántas operaciones, cuánto ganaron/perdieron), máx. 1200 caracteres.
@@ -124,7 +132,8 @@ def _indicadores(state_json):
         st = json.loads(state_json or "{}")
     except ValueError:
         return None
-    return {tf: {**(d.get("ind") or {}), "px_vs_ema20_atr": d.get("px_vs_ema20_atr"), "spread_atr": d.get("spread_atr")}
+    return {tf: {**(d.get("ind") or {}), "px_vs_ema20_atr": d.get("px_vs_ema20_atr"), "spread_atr": d.get("spread_atr"),
+                 "niveles": d.get("niveles")}
             for tf, d in (st.get("timeframes") or {}).items()}
 
 
@@ -229,6 +238,18 @@ def _ultima_revision(symbol):
         con.close()
 
 
+def _contexto_clase(mt5, symbol, clase):
+    """Operaciones y holds de los demás símbolos de la misma clase: más muestra para un símbolo con pocas ops."""
+    _, hermanos = contrafactual.de_la_clase(symbol)
+    cache, otros = {}, {}
+    for s in hermanos:
+        if s == symbol:
+            continue
+        otros[s] = {"operaciones": resumen(operaciones_cerradas(mt5, s)),
+                    "holds": contrafactual.resumen(contrafactual.evaluar(mt5, s, dias=SESGO_DIAS, cache=cache))["total"]}
+    return {"nombre": clase, "otros_simbolos": otros}
+
+
 def revisar(mt5, symbol, cfg, forzar=False, seco=False):
     act = prompts.activo(symbol)
     ops = operaciones_cerradas(mt5, symbol, act["activado"])
@@ -250,6 +271,8 @@ def revisar(mt5, symbol, cfg, forzar=False, seco=False):
                "resumen_con_criterio_actual": resumen(ops), "operaciones": contexto,
                "versiones_anteriores": _versiones_previas(mt5, symbol),
                "parte_fija_del_prompt": lt.PROMPT_FIJO}
+    entrada["holds_contrafactual"] = contrafactual.resumen(contrafactual.evaluar(mt5, symbol, dias=SESGO_DIAS))
+    entrada["clase"] = _contexto_clase(mt5, symbol, clase)
     if alerta:
         entrada["sesgo_direccional"] = {"ventana_dias": SESGO_DIAS, "alertas": alerta["marcas"],
                                         "decisiones": alerta["stats"], "por_regimen": alerta["regimen"]}
@@ -261,6 +284,12 @@ def revisar(mt5, symbol, cfg, forzar=False, seco=False):
         _anotar_revision(symbol, act["version"], nuevas, f"sin cambio: {d.get('motivo', '')}")
         return f"{symbol}: sin cambio ({(d.get('resumen') or '')[:120]})"
     ev = {**resumen(ops), "tickets": d.get("tickets_evidencia") or []}
+    if cfg.get("validar", True):
+        try:
+            ev["validacion"] = validacion_propuesta.validar_criterios(
+                mt5, symbol, act["texto"], d["criterio_nuevo"], dias=SESGO_DIAS, n=cfg.get("validacion_n", 20))
+        except Exception as e:
+            ev["validacion"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
     try:
         pid = prompts.crear_propuesta(symbol, d["criterio_nuevo"], (d.get("resumen") or "")[:200],
                                       (d.get("motivo") or "")[:1500], ev)

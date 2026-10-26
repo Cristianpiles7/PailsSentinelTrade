@@ -30,9 +30,10 @@ import rutas
 KIND = "prompt_simbolo"
 CONFIG = rutas.DATOS / ".agents" / "data" / "mejora_prompt_config.json"
 POR_DEFECTO = {"activo": True, "min_operaciones": 10, "modelo": "sonnet", "esfuerzo": "medium",
-               "cadencia_min": 60, "max_caracteres": 3000, "max_operaciones_contexto": 60}
+               "cadencia_min": 60, "max_caracteres": 3000, "max_operaciones_contexto": 60,
+               "validar": True, "validacion_n": 20}
 TIPOS = {"activo": bool, "min_operaciones": int, "modelo": str, "esfuerzo": str, "cadencia_min": int,
-         "max_caracteres": int, "max_operaciones_contexto": int}
+         "max_caracteres": int, "max_operaciones_contexto": int, "validar": bool, "validacion_n": int}
 
 CRITERIO_DEFECTO = """- Por defecto, quédate fuera (hold). La mayoría de las velas no tienen ventaja: entra solo con una razón clara y concreta.
 - Entra solo en una estructura concreta (un nivel o una lectura de indicador con nombre) del marco que elijas, y di en 'Riesgo:' qué invalidaría la idea.
@@ -76,6 +77,8 @@ def guardar_ajustes(cambios):
         raise ValueError("max_caracteres debe estar entre 500 y 10000")
     if not 10 <= a["max_operaciones_contexto"] <= 300:
         raise ValueError("max_operaciones_contexto debe estar entre 10 y 300")
+    if not 5 <= a["validacion_n"] <= 100:
+        raise ValueError("validacion_n debe estar entre 5 y 100")
     CONFIG.parent.mkdir(parents=True, exist_ok=True)
     CONFIG.write_text(json.dumps(a, indent=2), encoding="utf-8")
     return a
@@ -322,6 +325,14 @@ def texto_aviso(p):
     if ev:
         cab += (f"Con el criterio actual: {ev.get('operaciones', '?')} ops · {ev.get('ganadas', '?')} ganadas · "
                 f"{ev.get('neto_eur', 0):+.0f} € · {ev.get('r_total', 0):+.1f} R\n\n")
+    val = ev.get("validacion")
+    if val:
+        if val.get("muestra"):
+            texto = (f"{val['veredicto']} (muestra de {val['muestra']} decisiones; puntos con el criterio actual "
+                     f"{val['partida']['puntos']}, con el propuesto {val['propuesto']['puntos']})")
+        else:
+            texto = val.get("veredicto") or val.get("error") or "sin datos"
+        cab += f"Validación: {_esc(texto)}\n\n"
     pie = "\n<i>No caduca. Si llega otra propuesta para este símbolo, esta queda sustituida.</i>"
     # Solo las lineas que cambian: el texto entero va en «Ver completo» (Telegram corta a 4096 caracteres).
     lineas = [("🟢 " if d["t"] == "+" else "🔴 ") + d["l"].removeprefix("- ") for d in prop.get("diff", []) if d["t"] != "="]
