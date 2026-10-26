@@ -288,7 +288,7 @@ def pasada(mt5, cfg):
             print(f"[mejora] {sym}: error {type(e).__name__}: {e}", flush=True)
             continue
         print(f"[mejora] {txt}", flush=True)
-        if "todavía no" not in txt and "sin operaciones" not in txt:
+        if not any(f in txt for f in ("todavía no", "sin operaciones", "ya revisado")):
             hechas += 1
 
 
