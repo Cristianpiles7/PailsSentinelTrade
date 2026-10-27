@@ -29,6 +29,9 @@ PUNTUACION (0-1, pesos fijos, sin LLM):
   0,25 tendencia: ADX(14)/30, limitado a 1.
   0,15 volatilidad: ATR/precio entre 0,3 % y 2,5 % = 1; fuera = 0,5.
   0,25 historial : (ganadoras 7 d + 1)/(operaciones 7 d + 2). Con pocas operaciones tiende a 0,5.
+PENALIZACION POR COMISION (2026-10-27): resta puntos, no entra en los pesos. Comision real del broker por operacion
+  cerrada (ultimos COMISION_DIAS dias), en R. Resta penalizacion_comision * min(1, comision_R / COMISION_TOPE_R).
+  Un simbolo sin comision no pierde nada; uno caro baja, pero sigue entrando si su puntuacion lo compensa.
 
 Uso:
     python PST_LLM/rotacion.py --ranking        # puntua lo abierto ahora, sin cambiar nada
@@ -64,19 +67,22 @@ PENALIZACIONES = REPO_ROOT / ".agents" / "data" / "rotacion_penalizaciones.json"
 LIMITES_POR_DEFECTO = {"max_activos": 10, "max_por_clase": 5,
                        "ciclo_min": 5, "cadencia_ranking_min": 15, "ventana_aprobacion_min": 25,
                        "margen_cambio": 0.10, "max_sustituciones_dia": 2,
-                       "penalizacion_cripto": 0.15,
+                       "penalizacion_cripto": 0.15, "penalizacion_comision": 0.20,
                        "penalizacion_quitar": 0.20, "penalizacion_dias": 3, "inactividad_min": 180,
                        "accion_entrada": "aprobar", "accion_salida": "aprobar"}
 TIPOS = {"max_activos": int, "max_por_clase": int, "ciclo_min": int,
          "cadencia_ranking_min": int, "ventana_aprobacion_min": int,
          "margen_cambio": float, "max_sustituciones_dia": int,
-         "penalizacion_cripto": float, "penalizacion_quitar": float, "penalizacion_dias": int,
+         "penalizacion_cripto": float, "penalizacion_comision": float,
+         "penalizacion_quitar": float, "penalizacion_dias": int,
          "inactividad_min": int, "accion_entrada": str, "accion_salida": str}
 ACCIONES = ("aprobar", "rechazar", "pendiente")     # que pasa con una propuesta sin respuesta en el plazo
 PERDIDAS_SEGUIDAS = 3
 PERDIDA_DIA_R = -1.5
 RIESGO_R_PCT = 0.5
 PESOS = {"coste": 0.35, "tendencia": 0.25, "volatilidad": 0.15, "historial": 0.25}
+COMISION_DIAS = 30                    # ventana para medir la comision real de cada simbolo
+COMISION_TOPE_R = 0.5                 # comision por operacion (en R) a partir de la cual se aplica la penalizacion entera
 
 
 def _mt5():
@@ -177,6 +183,18 @@ def _resultados_7d(mt5, symbol):
     return ganadoras, len(salidas)
 
 
+def _comision_r(mt5, symbol, r_eur):
+    """Comision real del broker por operacion cerrada del simbolo, en R (0 si no hay operaciones en la ventana)."""
+    desde = datetime.now() - timedelta(days=COMISION_DIAS)
+    deals = mt5.history_deals_get(desde, datetime.now() + timedelta(days=1), group=symbol) or []
+    salidas = [d for d in deals if d.entry == 1]
+    if not salidas or r_eur <= 0:
+        return 0.0
+    # Se suman las comisiones de entrada y salida (algunos brokers cobran en ambas patas) y se divide entre las operaciones.
+    com = sum(abs(d.commission + getattr(d, "fee", 0.0)) for d in deals)
+    return (com / len(salidas)) / r_eur
+
+
 def _leer_penalizaciones():
     try:
         return json.loads(PENALIZACIONES.read_text(encoding="utf-8"))
@@ -202,15 +220,18 @@ def ranking(mt5, ref_time):
     """Lista de (puntuacion, Simbolo) de los simbolos abiertos, de mejor a peor."""
     out = []
     lim = _limites()
+    r_eur = _r_eur(mt5)
     for s in universo.UNIVERSO:
         if not abierto(mt5, s.symbol, ref_time):
             continue
         p = puntuar(mt5, s.symbol)
         if p:
+            com_r = _comision_r(mt5, s.symbol, r_eur)
             resta = _penalizacion_quitar(s.symbol, lim)
             if s.clase == "cripto":          # menos prioridad para quedarse (comisiones)
                 resta += lim["penalizacion_cripto"]
-            p = {**p, "score": p["score"] - resta}
+            resta += lim["penalizacion_comision"] * min(1.0, com_r / COMISION_TOPE_R)   # comision real medida
+            p = {**p, "comision_r": round(com_r, 3), "score": p["score"] - resta}
             out.append((p, s))
     return sorted(out, key=lambda x: -x[0]["score"])
 
@@ -256,6 +277,8 @@ def guardar_ajustes(cambios):
         raise ValueError("max_sustituciones_dia debe estar entre 0 y 10")
     if not 0 <= lim["penalizacion_cripto"] <= 0.5:
         raise ValueError("penalizacion_cripto debe estar entre 0 y 0,5")
+    if not 0 <= lim["penalizacion_comision"] <= 0.5:
+        raise ValueError("penalizacion_comision debe estar entre 0 y 0,5")
     if not 0 <= lim["penalizacion_quitar"] <= 0.5:
         raise ValueError("penalizacion_quitar debe estar entre 0 y 0,5")
     if not 1 <= lim["penalizacion_dias"] <= 30:
@@ -782,7 +805,7 @@ def main():
         ref = mt5.symbol_info_tick(REF_BROKER).time
         for p, s in ranking(mt5, ref):
             print(f"{p['score']:.3f}  {s.symbol:<11} {s.clase:<11} coste {p['coste']:.2f} tend {p['tendencia']:.2f} "
-                  f"vol {p['volatilidad']:.2f} hist {p['historial']:.2f}")
+                  f"vol {p['volatilidad']:.2f} hist {p['historial']:.2f} comision {p['comision_r']:.3f} R")
         return
     if args.ciclo:
         print(f"activos tras la pasada: {ciclo(mt5, ranking_toca=True)}")

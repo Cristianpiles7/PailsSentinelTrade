@@ -116,6 +116,7 @@ class RotacionRequest(BaseModel):
     margen_cambio: float | None = None        # cuanto debe puntuar el candidato por encima del peor activo
     max_sustituciones_dia: int | None = None  # sustituciones por perdidas al dia
     penalizacion_cripto: float | None = None  # puntos que pierde cripto en el ranking (menos prioridad para quedarse)
+    penalizacion_comision: float | None = None  # puntos que resta un simbolo segun su comision real (tope = penalizacion entera)
     penalizacion_quitar: float | None = None  # puntos que resta un simbolo que quitaste (baja con el tiempo)
     penalizacion_dias: int | None = None      # dias hasta que la penalizacion de quitar llega a cero
     inactividad_min: int | None = None        # minutos sin llamadas al modelo tras los que un agente activo puede salir
