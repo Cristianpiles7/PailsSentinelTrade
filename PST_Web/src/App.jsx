@@ -1307,7 +1307,8 @@ function App() {
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Flota LLM</h2>
                 <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
                   activosAhora={llm.agentes.filter(a => a.activo).length}
-                  topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario} />
+                  topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario}
+                  cuotaTopes={llm.cuotaTopes} guardarCuotaTopes={llm.guardarCuotaTopes} />
               </section>
               <section className="flex flex-col gap-3">
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Prompts de los agentes</h2>

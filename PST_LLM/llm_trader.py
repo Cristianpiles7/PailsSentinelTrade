@@ -96,8 +96,6 @@ def configurar_agente(nombre, magic):
 RIESGO_PCT = 0.5            # % de equity arriesgado por operacion
 SL_MULT = (1.0, 3.0)        # el modelo elige dentro de este rango (x ATR)
 TP_R = (1.0, 4.0)           # y el TP como multiplo del riesgo
-CUOTA_MAX_5H = 60           # mismo freno que .agents/scheduler.py
-CUOTA_MAX_SEMANAL = 70      # por debajo del 85% del planificador de la flota: este experimento cede antes
 
 # En Windows, cada `claude` lanzado desde aqui abria una consola negra. CREATE_NO_WINDOW la evita:
 # el proceso sigue en el Administrador de tareas, pero sin ventana. En otros SO es 0 (sin efecto).
@@ -512,11 +510,12 @@ def cuota_ok():
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     q = m.leer_cuota()
-    if q and q.get("cinco_h") is not None and q["cinco_h"] > CUOTA_MAX_5H:
-        return False, f"ventana de 5h al {q['cinco_h']}% (tope {CUOTA_MAX_5H}%)", q
+    topes = m.leer_topes_cuota()                       # configurables en la app (Ajustes > Flota LLM)
+    if q and q.get("cinco_h") is not None and q["cinco_h"] > topes["max_5h"]:
+        return False, f"ventana de 5h al {q['cinco_h']}% (tope {topes['max_5h']}%)", q
     # La semanal es la restriccion de fondo si esto corre 24/7 (la de 5h se recupera sola en horas).
-    if q and q.get("semanal") is not None and q["semanal"] > CUOTA_MAX_SEMANAL:
-        return False, f"cuota semanal al {q['semanal']}% (tope {CUOTA_MAX_SEMANAL}%)", q
+    if q and q.get("semanal") is not None and q["semanal"] > topes["max_semanal"]:
+        return False, f"cuota semanal al {q['semanal']}% (tope {topes['max_semanal']}%)", q
     return True, "", q
 
 

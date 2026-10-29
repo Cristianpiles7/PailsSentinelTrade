@@ -46,10 +46,28 @@ USAGE_FILE = Path(os.path.expanduser("~/.habblaud/usage/.claude.json"))
 # ── Presupuesto de cuota ─────────────────────────────────────────────────────
 # Topes conservadores: el usuario tiene prioridad sobre la flota. Si la ventana de 5h ya
 # va cargada, no se lanza nada; si la semanal va justa, solo los baratos.
-MAX_5H_PARA_LANZAR = 60      # % de la ventana de 5h por encima del cual no se lanza nada
-MAX_SEMANAL_BARATOS = 85     # % semanal por encima del cual ni los baratos
-MAX_SEMANAL_CAROS = 50       # % semanal por encima del cual no se lanzan los de opus
+# Los topes los configura el usuario en la app (Ajustes > Flota LLM) y se guardan en cuota_topes.json.
+# Mismo fichero que PST_LLM/registro.py; sin fichero se usan estos valores.
+CUOTA_TOPES_DEFECTO = {"max_5h": 60, "max_semanal": 70}
+CUOTA_TOPES = Path(os.environ.get("PST_DATA_ROOT") or REPO_ROOT) / ".agents" / "data" / "cuota_topes.json"
 USAGE_MAX_EDAD_H = 12        # si el dato de cuota es mas viejo, se considera desconocido
+
+
+def leer_topes_cuota():
+    """Topes vigentes: {'max_5h': %, 'max_semanal': %}. Si el fichero falta o esta roto, valores por defecto."""
+    try:
+        guardado = json.loads(CUOTA_TOPES.read_text(encoding="utf-8-sig"))
+    except (FileNotFoundError, ValueError):
+        guardado = {}
+    if not isinstance(guardado, dict):
+        guardado = {}
+    out = {}
+    for k, v in CUOTA_TOPES_DEFECTO.items():
+        try:
+            out[k] = int(guardado.get(k, v))
+        except (TypeError, ValueError):
+            out[k] = v
+    return out
 
 
 def leer_cuota():
@@ -250,6 +268,12 @@ def main():
               f"(dato de hace {cuota['edad_h']}h)")
     else:
         print("[scheduler] cuota: SIN DATO fresco → modo conservador, solo agentes baratos")
+
+    # Topes configurados en la app. Los de los agentes caros van 20 puntos por debajo del de los baratos.
+    topes = leer_topes_cuota()
+    MAX_5H_PARA_LANZAR = topes["max_5h"]
+    MAX_SEMANAL_BARATOS = topes["max_semanal"]
+    MAX_SEMANAL_CAROS = max(0, topes["max_semanal"] - 20)
 
     # Freno global por ventana de 5h
     if cuota and not args.ignorar_cuota and cuota["cinco_h"] is not None:

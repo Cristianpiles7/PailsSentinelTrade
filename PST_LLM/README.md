@@ -30,7 +30,7 @@ Los cambios de código en `llm_trader.py` solo aplican a los agentes que se rein
 1. Mercado sin cotizaciones nuevas durante 20 min → no se llama (noche, fin de semana).
 2. Sin posición: calendario FTMO (bloquea 30 min antes y 15 min después de un evento restringido).
 3. Filtro de setup (solo agentes con `sin_filtro: false`).
-4. Cuota: freno al 60 % de la ventana de 5 h y al 70 % semanal.
+4. Cuota: freno al 60 % de la ventana de 5 h y al 70 % semanal por defecto. Ambos topes se configuran en la app (Ajustes > Flota LLM) y se guardan en `.agents/data/cuota_topes.json`.
 
 ## Uso
 

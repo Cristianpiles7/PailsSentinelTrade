@@ -11,6 +11,16 @@ from ..utils.reloj_mt5 import local_desde_mt5
 
 logger = logging.getLogger("PST-Database")
 
+def _comision_entrada(mt5, position_id, time_close):
+    """Comision del deal de APERTURA de una posicion. MT5 la cobra en la entrada y no en el cierre.
+    El filtro por position= del servidor no funciona en este broker: se filtra a mano."""
+    try:
+        deals = mt5.history_deals_get(time_close - 3600 * 24 * 30, time_close + 10) or []
+    except Exception:
+        return 0.0
+    return sum(d.commission for d in deals if d.position_id == position_id and d.entry == 0)
+
+
 class PSTDatabase:
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
@@ -80,6 +90,8 @@ class PSTDatabase:
             try:
                 await db.execute("ALTER TABLE trades ADD COLUMN ticket INTEGER DEFAULT 0")
                 await db.execute("ALTER TABLE trades ADD COLUMN is_partial_closed INTEGER DEFAULT 0")
+                await db.execute("ALTER TABLE trades ADD COLUMN commission REAL DEFAULT 0")
+                await db.execute("ALTER TABLE trades ADD COLUMN swap REAL DEFAULT 0")
             except: pass # Ya existen
             
             # Tabla de Señales (Para analizar fiabilidad)
@@ -1430,7 +1442,9 @@ class PSTDatabase:
                     
                     # Hora local: d.time es hora de pared del bróker codificada como epoch (ver utils/reloj_mt5)
                     time_out_str = local_desde_mt5(d.time).strftime('%Y-%m-%d %H:%M:%S')
-                    total_pnl = d.profit + d.swap + d.commission
+                    # Comision de cierre + la de apertura (ver _comision_entrada). profit = neto de comision y swap.
+                    comision = d.commission + _comision_entrada(mt5, d.position_id, d.time)
+                    total_pnl = d.profit + d.swap + comision
                     
                     # PASO 1: ¿Es un trade del BOT? (Buscamos ticket = position_id)
                     # El bot guarda apertura con ticket = position_id
@@ -1445,9 +1459,9 @@ class PSTDatabase:
                         # time_out con reloj LOCAL (el mismo que time_in): el sync corre
                         # cada 60s, así que en operación normal el error es ≤ ~1 min.
                         await db.execute("""
-                            UPDATE trades SET price_out = ?, profit = ?, time_out = ?
+                            UPDATE trades SET price_out = ?, profit = ?, time_out = ?, commission = ?, swap = ?
                             WHERE id = ?
-                        """, (d.price, float(total_pnl), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), bot_trade[0]))
+                        """, (d.price, float(total_pnl), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), float(comision), float(d.swap), bot_trade[0]))
                         await db.commit()
                         count_synced += 1
                         closed_bot_trades.append((d.symbol, float(total_pnl)))
@@ -1501,9 +1515,9 @@ class PSTDatabase:
                         pass # Fallback a time_out si falla la búsqueda
 
                     await db.execute("""
-                        INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_in, time_out, ticket, strategy_name, is_partial_closed)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (d.symbol, trade_type, d.volume, price_in, d.price, float(total_pnl), time_in_str, time_out_str, d.ticket, strategy_name, 0))
+                        INSERT INTO trades (symbol, type, volume, price_in, price_out, profit, time_in, time_out, ticket, strategy_name, is_partial_closed, commission, swap)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (d.symbol, trade_type, d.volume, price_in, d.price, float(total_pnl), time_in_str, time_out_str, d.ticket, strategy_name, 0, float(comision), float(d.swap)))
                     await db.commit()
                     count_imported += 1
                     logger.info(f"📥 [SYNC-EXT] Importado manual/externo: {d.symbol} (ID {d.position_id}) | PnL: {total_pnl:.2f}")

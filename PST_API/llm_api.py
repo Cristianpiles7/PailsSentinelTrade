@@ -198,6 +198,24 @@ async def guardar_tope_diario(body: TopeDiarioRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class CuotaTopesRequest(BaseModel):
+    max_5h: int           # % de la ventana de 5 h por encima del cual la flota no llama
+    max_semanal: int      # % de la cuota semanal por encima del cual la flota no llama
+
+
+@router.get("/api/llm/cuota-topes")
+async def leer_cuota_topes():
+    return await asyncio.to_thread(registro.leer_topes_cuota)
+
+
+@router.put("/api/llm/cuota-topes")
+async def guardar_cuota_topes(body: CuotaTopesRequest):
+    try:
+        return await asyncio.to_thread(registro.guardar_topes_cuota, body.max_5h, body.max_semanal)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/api/llm/agentes/{symbol}/activar")
 async def activar_agente(symbol: str, body: ActivarRequest = ActivarRequest()):
     _validar(symbol)

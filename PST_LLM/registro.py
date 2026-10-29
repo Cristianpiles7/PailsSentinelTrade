@@ -468,6 +468,37 @@ def guardar_tope_diario(valor):
     return {"max_llamadas_dia": valor}
 
 
+# Topes de cuota de Claude (% de la ventana de 5 h y de la semanal) por encima de los cuales la flota no llama.
+# Los configura la app (Ajustes > Flota LLM). .agents/scheduler.py lee este mismo fichero con su propia copia.
+CUOTA_TOPES = DATA / "cuota_topes.json"
+CUOTA_TOPES_DEFECTO = {"max_5h": 60, "max_semanal": 70}
+
+
+def leer_topes_cuota():
+    try:
+        guardado = json.loads(CUOTA_TOPES.read_text(encoding="utf-8-sig"))
+    except (FileNotFoundError, ValueError):
+        guardado = {}
+    if not isinstance(guardado, dict):
+        guardado = {}
+    out = {}
+    for k, v in CUOTA_TOPES_DEFECTO.items():
+        try:
+            out[k] = int(guardado.get(k, v))
+        except (TypeError, ValueError):
+            out[k] = v
+    return out
+
+
+def guardar_topes_cuota(max_5h, max_semanal):
+    nuevos = {"max_5h": int(max_5h), "max_semanal": int(max_semanal)}
+    for k, v in nuevos.items():
+        if not 10 <= v <= 100:
+            raise ValueError(f"{k} debe estar entre 10 y 100")
+    CUOTA_TOPES.write_text(json.dumps(nuevos, indent=2), encoding="utf-8")
+    return nuevos
+
+
 def decisiones(symbol, limite=50):
     con = central()
     con.row_factory = sqlite3.Row

@@ -169,15 +169,34 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     }
   }
 
+  // Topes de cuota de Claude (% de la ventana de 5 h y de la semanal) que frenan las llamadas.
+  const [cuotaTopes, setCuotaTopes] = useState(null)
+  useEffect(() => {
+    if (!habilitado) return
+    api.get(`${API_BASE}/llm/cuota-topes`).then(r => setCuotaTopes(r.data)).catch(() => {})
+  }, [api, API_BASE, habilitado])
+
+  const guardarCuotaTopes = async (valores) => {
+    try {
+      const r = await api.put(`${API_BASE}/llm/cuota-topes`, valores)
+      setCuotaTopes(r.data)
+      return null
+    } catch (e) {
+      return e?.response?.data?.detail || 'no se pudieron guardar los topes de cuota'
+    }
+  }
+
   return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, cambiarFiltro,
-    recargar, limites, guardarLimites, topeDiario, guardarTopeDiario }
+    recargar, limites, guardarLimites, topeDiario, guardarTopeDiario, cuotaTopes, guardarCuotaTopes }
 }
 
 // Barra de topes de la flota: cuantos agentes LLM pueden estar activos a la vez y por clase.
 // Bajarlo no para los agentes que ya estan activos; solo limita los que entran despues.
-export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guardarTopeDiario }) {
+export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guardarTopeDiario, cuotaTopes, guardarCuotaTopes }) {
   const [maxActivos, setMaxActivos] = useState('')
   const [tope, setTope] = useState('')
+  const [topeCuota5h, setTopeCuota5h] = useState('')
+  const [topeCuotaSemanal, setTopeCuotaSemanal] = useState('')
   const [maxClase, setMaxClase] = useState('')
   const [cicloMin, setCicloMin] = useState('')
   const [cadenciaMin, setCadenciaMin] = useState('')
@@ -214,10 +233,20 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
     if (topeDiario !== null && topeDiario !== undefined) setTope(String(topeDiario))
   }, [topeDiario])
 
+  useEffect(() => {
+    if (cuotaTopes) {
+      setTopeCuota5h(String(cuotaTopes.max_5h))
+      setTopeCuotaSemanal(String(cuotaTopes.max_semanal))
+    }
+  }, [cuotaTopes])
+
   if (!limites) return null
 
   const guardarAhora = async () => {
     const errorTope = guardarTopeDiario ? await guardarTopeDiario(Number(tope)) : null
+    const errorCuota = guardarCuotaTopes
+      ? await guardarCuotaTopes({ max_5h: Number(topeCuota5h), max_semanal: Number(topeCuotaSemanal) })
+      : null
     const error = await guardar({
       max_activos: Number(maxActivos),
       max_por_clase: Number(maxClase),
@@ -233,13 +262,17 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
       accion_entrada: accionEntrada,
       accion_salida: accionSalida,
     })
-    setAviso(errorTope || error || 'Guardado')
+    setAviso(errorTope || errorCuota || error || 'Guardado')
   }
 
   // Un campo por ajuste. title explica lo que hace en el momento de pasar el raton.
   const campos = [
     { etiqueta: 'Llamadas/día', valor: tope, set: setTope, min: 0,
       title: 'Llamadas al modelo por día para TODOS los agentes. 0 = sin tope' },
+    { etiqueta: 'Tope cuota 5 h (%)', valor: topeCuota5h, set: setTopeCuota5h, min: 10, max: 100,
+      title: 'Por encima de este % de la ventana de 5 horas, la flota no llama al modelo' },
+    { etiqueta: 'Tope cuota semanal (%)', valor: topeCuotaSemanal, set: setTopeCuotaSemanal, min: 10, max: 100,
+      title: 'Por encima de este % de la cuota semanal, la flota no llama al modelo (los agentes caros, 20 puntos antes)' },
     { etiqueta: 'Máx. activos', valor: maxActivos, set: setMaxActivos, min: 1, max: limites.universo,
       title: 'Cuántos agentes LLM pueden estar activos a la vez' },
     { etiqueta: 'Máx. por clase', valor: maxClase, set: setMaxClase, min: 1,
