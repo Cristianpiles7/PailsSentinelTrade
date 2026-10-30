@@ -10,6 +10,7 @@ import os
 import sys
 import MetaTrader5 as mt5
 import asyncio
+import time
 
 # Añadir el directorio raíz al path para poder importar PST_Core
 if hasattr(sys, '_MEIPASS'):
@@ -102,6 +103,32 @@ load_dotenv() # Carga variables desde el archivo .env
 WEB_PASSWORD = os.getenv("WEB_PASSWORD")
 
 
+from PST_Core.utils import alertas, backup_db, salud  # noqa: E402
+
+# Tareas de fondo de la app. Se cancelan al cerrar: antes seguian corriendo mientras el executor por defecto
+# ya estaba apagado, y de ahi salian los "cannot schedule new futures after shutdown" del log.
+_tareas = []
+_arranque = time.time()
+
+# Reconexion con MT5: como mucho un intento cada 30 s (antes se intentaba en cada peticion del panel, cada 3 s).
+_MT5_REINTENTO_S = 30
+_mt5_ultimo_intento = 0.0
+_mt5_caida_desde = None
+
+
+def _lanzar(coro):
+    tarea = asyncio.create_task(coro)
+    _tareas.append(tarea)
+    return tarea
+
+
+def _mt5_ok():
+    try:
+        return mt5.account_info() is not None
+    except Exception:
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
@@ -137,7 +164,7 @@ async def lifespan(app: FastAPI):
     try:
         from PST_Core.engine.mt5_sync import MT5PositionSync
         position_sync = MT5PositionSync(db=db)
-        asyncio.create_task(position_sync.run())
+        _lanzar(position_sync.run())
         logger.info("✅ [SYNC] Sincronizador de posiciones MT5 iniciado.")
     except Exception as e:
         logger.error(f"Error starting MT5 position sync: {e}")
@@ -148,7 +175,7 @@ async def lifespan(app: FastAPI):
         from PST_Core.engine.telegram_manager import telegram_bot
 
         monitor = PSTMonitorAgent(db=db, portfolio=portfolio, telegram_bot=telegram_bot)
-        asyncio.create_task(monitor.run())
+        _lanzar(monitor.run())
         # Enlazar el monitor al telegram_bot para que /report y /metrics funcionen
         telegram_bot.monitor_agent = monitor
         logger.info("✅ [MONITOR] Agente de vigilancia iniciado.")
@@ -169,20 +196,47 @@ async def lifespan(app: FastAPI):
                     logger.error(f"Error en protección de sesión: {e}")
                 await asyncio.sleep(10)
 
-        asyncio.create_task(_session_protection_loop())
+        _lanzar(_session_protection_loop())
         logger.info("✅ [SESSION] Protección de cierre por horario iniciada.")
     except Exception as e:
         logger.error(f"Error starting session protection: {e}")
 
     # Avisos por Telegram antes de cada bloqueo del calendario restringido (PST_API/llm_api.py)
     from PST_API.llm_api import alertas_calendario
-    asyncio.create_task(alertas_calendario())
+    _lanzar(alertas_calendario())
+
+    # Latido para el vigia externo (PST_UTIL/vigia_salud.py) y copia de seguridad diaria de la BBDD.
+    async def _latido_loop():
+        while True:
+            salud.escribir(mt5=_mt5_ok(), arranque=_arranque)
+            await asyncio.sleep(60)
+
+    async def _copia_loop():
+        while True:
+            ultima = backup_db.ultima_copia(DB_PATH)
+            if ultima is None or time.time() - ultima.stat().st_mtime > 24 * 3600:
+                try:
+                    destino = await asyncio.to_thread(backup_db.hacer_copia, DB_PATH)
+                    logger.info(f"💾 Copia de seguridad de la BBDD: {destino.name}")
+                except Exception as e:
+                    logger.error(f"❌ Copia de seguridad fallida: {type(e).__name__}: {e}")
+                    alertas.avisar("copia_bd", "La copia de seguridad de la BBDD ha fallado. Revisa el log.", 6 * 3600)
+            await asyncio.sleep(3600)
+
+    _lanzar(_latido_loop())
+    _lanzar(_copia_loop())
 
     yield
 
+    # Cierre ordenado: cancelar lo de fondo antes de que el loop y sus executors se apaguen.
+    for tarea in _tareas:
+        tarea.cancel()
+    await asyncio.gather(*_tareas, return_exceptions=True)
+    _tareas.clear()
+
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.54",
+    version="2.6.55",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -246,21 +300,45 @@ executor = PSTExecutor(db=db, portfolio=portfolio)
 
 # Helper para asegurar conexión con MT5 (FASE 42)
 def ensure_mt5_connected():
-    """Verifica si MT5 está conectado e intenta re-inicializar si es necesario."""
+    """Verifica si MT5 está conectado e intenta re-inicializar, como mucho cada _MT5_REINTENTO_S segundos."""
+    global _mt5_ultimo_intento, _mt5_caida_desde
     try:
         # account_info() es una forma rápida de verificar si hay conexión activa
-        if mt5.account_info() is None:
-            logger.warning("🔄 MT5 desconectado. Intentando re-inicializar...")
-            if mt5.initialize():
-                logger.info("✅ Re-conexión con MT5 exitosa.")
-                return True
-            else:
-                logger.error("❌ Fallo crítico al re-inicializar MetaTrader 5.")
-                return False
-        return True
+        if mt5.account_info() is not None:
+            _mt5_caida_desde = None
+            return True
     except Exception as e:
         logger.error(f"⚠️ Error verificando conexión MT5: {e}")
         return False
+
+    ahora = time.time()
+    if _mt5_caida_desde is None:
+        _mt5_caida_desde = ahora
+    if ahora - _mt5_ultimo_intento < _MT5_REINTENTO_S:
+        return False
+    _mt5_ultimo_intento = ahora
+    logger.warning("🔄 MT5 desconectado. Intentando re-inicializar...")
+    if mt5.initialize():
+        logger.info("✅ Re-conexión con MT5 exitosa.")
+        _mt5_caida_desde = None
+        return True
+    logger.error("❌ Fallo crítico al re-inicializar MetaTrader 5.")
+    if ahora - _mt5_caida_desde > 5 * 60:
+        alertas.avisar("mt5_caido", "MT5 lleva más de 5 min desconectado y no se puede reinicializar. Revisa el terminal.", 1800)
+    return False
+
+
+@app.get("/api/health", tags=["Sistema"])
+async def health():
+    """Estado de la app para la cabecera del panel: MT5, calendario económico y última copia de la BBDD."""
+    from PST_Core.engine.news_manager import news_guard
+    copia = backup_db.ultima_copia(DB_PATH)
+    return {
+        "mt5": _mt5_ok(),
+        "calendario_t": news_guard.last_update.timestamp() if news_guard.last_update else None,
+        "copia_t": copia.stat().st_mtime if copia else None,
+        "servidor_t": time.time(),
+    }
 
 
 @app.get("/api/account", response_model=AccountStatus, tags=["Trading"])
@@ -799,6 +877,13 @@ async def get_hourly_performance():
     except Exception as e:
         logger.error(f"Error en get_hourly_performance: {e}")
         return [{"hour": h, "pnl": 0.0, "trades": 0, "win_rate": 0.0} for h in range(24)]
+
+
+@app.get("/api/performance/operaciones", tags=["Performance"])
+async def get_operaciones(limite: int = 5000):
+    """Operaciones cerradas de todas las fuentes (agentes LLM, EAs, manuales) en un solo formato. Ver PST_Core/utils/rendimiento.py."""
+    from PST_Core.utils import rendimiento
+    return await asyncio.to_thread(rendimiento.leer_operaciones, db.db_path, min(max(limite, 1), 20000))
 
 
 @app.get("/api/performance/buckets", tags=["Performance"])

@@ -5,7 +5,13 @@ import logging
 import threading
 import time
 
+from PST_Core.utils import alertas
+
 logger = logging.getLogger("PST_News_Manager")
+
+REINTENTOS = 3                    # descargas por intento: el feed corta el SSL de vez en cuando (EOF en el handshake)
+PAUSA_S = 3600                    # con la ultima descarga bien, la siguiente va en una hora
+PAUSA_FALLO_S = 600               # tras un fallo, se vuelve a intentar en 10 min (antes: una hora)
 
 class NewsManager:
     _instance = None
@@ -23,6 +29,7 @@ class NewsManager:
             return
         self.events = []
         self.last_update = None
+        self.fallos_seguidos = 0
         self._initialized = True
         self._shutdown = False
         self._thread = None
@@ -38,8 +45,9 @@ class NewsManager:
                 except Exception as e:
                     logger.error(f"❌ Error fetching news: {e}")
                 
-                # Esperar 1 hora antes de la próxima actualización
-                for _ in range(3600):
+                # Esperar antes de la próxima actualización: 1 h si fue bien, 10 min si falló
+                espera = PAUSA_S if self.fallos_seguidos == 0 else PAUSA_FALLO_S
+                for _ in range(espera):
                     if self._shutdown: break
                     time.sleep(1)
 
@@ -51,12 +59,36 @@ class NewsManager:
         if self._thread:
             self._thread.join(timeout=2)
 
+    def _descargar(self, url, headers):
+        """Descarga con reintentos: un corte SSL puntual no debe contar como fallo del calendario."""
+        ultimo = None
+        for intento in range(REINTENTOS):
+            try:
+                return requests.get(url, headers=headers, timeout=15)
+            except requests.RequestException as e:
+                ultimo = e
+                if intento < REINTENTOS - 1:
+                    time.sleep(5 * (intento + 1))
+        raise ultimo
+
+    def _fallo(self, motivo):
+        self.fallos_seguidos += 1
+        logger.error(f"❌ Error en fetch_news ({self.fallos_seguidos} seguidos): {motivo}")
+        if self.fallos_seguidos == 3:
+            alertas.avisar("calendario_noticias",
+                           "El calendario de noticias no se actualiza: 3 descargas fallidas seguidas. "
+                           "Se usa la última copia cargada.", 6 * 3600)
+
+    def esta_obsoleto(self, max_horas=6):
+        """True si nunca se cargo o la ultima carga tiene mas de max_horas."""
+        return self.last_update is None or datetime.now() - self.last_update > timedelta(hours=max_horas)
+
     def fetch_news(self):
         # Usamos el feed de faireconomy que es más amigable para scripts
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
         try:
             headers = {"User-Agent": "PailsSentinelTrade/1.0"}
-            response = requests.get(url, headers=headers, timeout=15)
+            response = self._descargar(url, headers)
             if response.status_code == 200:
                 root = ET.fromstring(response.content)
                 new_events = []
@@ -111,11 +143,12 @@ class NewsManager:
                 
                 self.events = new_events
                 self.last_update = datetime.now()
+                self.fallos_seguidos = 0
                 logger.info(f"✅ NewsManager: {len(self.events)} eventos cargados.")
             else:
-                logger.error(f"❌ NewsManager HTTP Error: {response.status_code}")
+                self._fallo(f"HTTP {response.status_code}")
         except Exception as e:
-            logger.error(f"❌ Error en fetch_news: {e}")
+            self._fallo(f"{type(e).__name__}: {e}")
 
     def get_upcoming_high_impact(self, limit=5):
         now = datetime.now(timezone.utc)

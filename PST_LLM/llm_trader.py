@@ -48,6 +48,7 @@ import operaciones                    # una fila por operacion cerrada en llm_op
 import universo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))             # raíz del repo: para importar PST_Core
 from PST_Core.utils.reloj_mt5 import local_desde_mt5, broker_desde_mt5   # horas de MT5: ver utils/reloj_mt5
+from PST_Core.utils import alertas                                       # avisos criticos por Telegram (PST_Core/utils/alertas.py)
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -824,6 +825,13 @@ def enfriamiento_restante(mt5, magic, minutos, ahora_broker):
     return max(0, int(minutos * 60 - (ahora_broker - max(salidas))))     # ambos en hora del broker
 
 
+def _aviso_trading_apagado(retcode):
+    """10027: el terminal tiene el trading automatico desactivado. Se avisa como mucho una vez por hora."""
+    if retcode == 10027:
+        alertas.avisar("autotrading_off", "MT5 rechaza las órdenes (retcode 10027): el trading automático está "
+                       "desactivado en el terminal. Vuelve a activar el botón 'Algo Trading'.", 3600)
+
+
 def enviar_orden(mt5, req, cuenta):
     """
     order_check ANTES de order_send: valida stops, volumen, tipo de ejecucion y margen sin tocar la
@@ -832,11 +840,13 @@ def enviar_orden(mt5, req, cuenta):
     """
     chk = mt5.order_check(req)
     if chk is None or chk.retcode != 0:
+        _aviso_trading_apagado(getattr(chk, "retcode", None))
         return False, f"order_check rechazo la orden: {getattr(chk, 'retcode', None)} {getattr(chk, 'comment', '')}", None
     if "position" not in req and chk.margin_free < MARGEN_LIBRE_MIN * cuenta.equity:
         return False, (f"margen: quedarian {chk.margin_free:.0f} libres "
                        f"(< {MARGEN_LIBRE_MIN * 100:.0f}% del equity {cuenta.equity:.0f})"), None
     r = mt5.order_send(req)
+    _aviso_trading_apagado(getattr(r, "retcode", None))
     ok = r is not None and r.retcode == mt5.TRADE_RETCODE_DONE
     return ok, f"retcode {getattr(r, 'retcode', None)} {getattr(r, 'comment', '')}".strip(), getattr(r, "order", None)
 

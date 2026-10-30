@@ -98,12 +98,26 @@ def inline_actualizar(clave):
     return [[{"text": "🔄 Actualizar", "callback_data": f"r:{clave}"}]]
 
 
-def teclado_de(ctx, clave):
-    """Botones de un informe. En Agentes, un boton de excluir por cada agente activo."""
+AGENTES_POR_PAGINA = 9       # 3 filas de 3: con 25 agentes el menu se pagina en vez de ocupar toda la pantalla
+
+
+def teclado_de(ctx, clave, pagina=0):
+    """Botones de un informe. En Agentes, un boton de excluir por agente activo, paginado de 9 en 9."""
     if clave != "agentes":
         return inline_actualizar(clave)
     botones = [{"text": f"⛔ {a['symbol'].replace('.cash', '')}", "callback_data": f"x:{a['symbol']}"} for _, a in agentes_activos(ctx)]
-    cuadricula = [botones[i:i + 3] for i in range(0, len(botones), 3)]      # 3 por fila: compacto en el movil
+    paginas = max(1, -(-len(botones) // AGENTES_POR_PAGINA))
+    pagina = max(0, min(pagina, paginas - 1))
+    trozo = botones[pagina * AGENTES_POR_PAGINA:(pagina + 1) * AGENTES_POR_PAGINA]
+    cuadricula = [trozo[i:i + 3] for i in range(0, len(trozo), 3)]          # 3 por fila: compacto en el movil
+    if paginas > 1:
+        nav = []
+        if pagina > 0:
+            nav.append({"text": "◀", "callback_data": f"pg:agentes:{pagina - 1}"})
+        nav.append({"text": f"{pagina + 1}/{paginas}", "callback_data": f"pg:agentes:{pagina}"})
+        if pagina < paginas - 1:
+            nav.append({"text": "▶", "callback_data": f"pg:agentes:{pagina + 1}"})
+        cuadricula.append(nav)
     return cuadricula + inline_actualizar(clave)
 
 
@@ -571,6 +585,16 @@ def procesar(ctx, u, chat_ok):
             pass
         if d.startswith("x:"):                       # boton Excluir de un agente (ver teclado_de)
             _excluir_desde_boton(d[2:])
+            return
+        if d.startswith("pg:"):                      # paginas del menu de Agentes (ver teclado_de)
+            _, clave, pagina = d.split(":")
+            if clave in GENERADORES:
+                try:
+                    api("editMessageText", chat_id=chat_ok, message_id=q["message"]["message_id"], text=informe(ctx, clave)[:4000],
+                        parse_mode="HTML", disable_web_page_preview=True, reply_markup={"inline_keyboard": teclado_de(ctx, clave, int(pagina))})
+                except RuntimeError as e:
+                    if "400" not in str(e):
+                        print(f"[bot] error al paginar: {e}", flush=True)
             return
         if d.startswith("r:") and d[2:] in GENERADORES:
             try:

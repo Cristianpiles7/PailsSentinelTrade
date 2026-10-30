@@ -527,9 +527,10 @@ def _insertar(con, tipo, sym, motivo, datos, score, lim):
     expira = (datetime.now() + timedelta(minutes=lim["ventana_aprobacion_min"])).isoformat(timespec="seconds")
     proposed = {"motivo": motivo, "datos": datos, "expira": expira}
     cur = con.execute(
-        "INSERT INTO proposals (kind, target, proposed_json, evidence_json, rationale, state)"
-        " VALUES (?, ?, ?, ?, ?, 'propuesta')",
-        (KIND[tipo], sym, json.dumps(proposed, ensure_ascii=False), json.dumps({"score": score}), motivo))
+        "INSERT INTO proposals (kind, target, proposed_json, evidence_json, rationale, state, created_at)"
+        " VALUES (?, ?, ?, ?, ?, 'propuesta', ?)",
+        (KIND[tipo], sym, json.dumps(proposed, ensure_ascii=False), json.dumps({"score": score}), motivo,
+         datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     con.commit()
     return {"id": cur.lastrowid, "tipo": tipo, "symbol": sym, "motivo": motivo, "expira": expira}
 

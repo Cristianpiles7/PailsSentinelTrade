@@ -74,6 +74,10 @@ async def decide(proposal_id: int, req: DecisionRequest):
     if req.state not in _ESTADOS:
         raise HTTPException(status_code=400, detail=f"Estado desconocido: {req.state}")
 
+    # Doble pulsacion o dos pestanas: si ya esta en ese estado no se repiten los efectos (aplicar criterio, quitar botones).
+    if await _db.estado_propuesta(proposal_id) == req.state:
+        return {"ok": True, "proposal_id": proposal_id, "state": req.state, "ya_estaba": True,
+                "mensaje": "La propuesta ya estaba en ese estado."}
     ok = await _db.decide_proposal(proposal_id, req.state, decided_by="usuario")
     if not ok:
         raise HTTPException(

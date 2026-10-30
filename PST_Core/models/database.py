@@ -11,6 +11,15 @@ from ..utils.reloj_mt5 import local_desde_mt5
 
 logger = logging.getLogger("PST-Database")
 
+
+async def _alter(db, sql):
+    """ALTER de migracion: 'columna duplicada' es lo normal (ya migrado). Cualquier otro error se registra; antes se tragaba en silencio."""
+    try:
+        await db.execute(sql)
+    except Exception as e:
+        if "duplicate column" not in str(e).lower():
+            logger.error(f"❌ Migración fallida [{sql[:80]}]: {e}")
+
 def _comision_entrada(mt5, position_id, time_close):
     """Comision del deal de APERTURA de una posicion. MT5 la cobra en la entrada y no en el cierre.
     El filtro por position= del servidor no funciona en este broker: se filtra a mano."""
@@ -95,7 +104,7 @@ class PSTDatabase:
                 "swap REAL DEFAULT 0",
             ):
                 try:
-                    await db.execute(f"ALTER TABLE trades ADD COLUMN {col_def}")
+                    await _alter(db, f"ALTER TABLE trades ADD COLUMN {col_def}")
                 except: pass # Ya existe
             
             # Tabla de Señales (Para analizar fiabilidad)
@@ -116,12 +125,12 @@ class PSTDatabase:
                 )
             ''')
             try:
-                await db.execute("ALTER TABLE signal_logs ADD COLUMN blocked_reason TEXT")
+                await _alter(db, "ALTER TABLE signal_logs ADD COLUMN blocked_reason TEXT")
             except: pass
             try:
-                await db.execute("ALTER TABLE signal_logs ADD COLUMN bar_time TEXT")
-                await db.execute("ALTER TABLE signal_logs ADD COLUMN fresh_cross INTEGER")
-                await db.execute("ALTER TABLE signal_logs ADD COLUMN threshold_used REAL")
+                await _alter(db, "ALTER TABLE signal_logs ADD COLUMN bar_time TEXT")
+                await _alter(db, "ALTER TABLE signal_logs ADD COLUMN fresh_cross INTEGER")
+                await _alter(db, "ALTER TABLE signal_logs ADD COLUMN threshold_used REAL")
             except: pass
             
             # Tabla de Regímenes (Historial de mercado)
@@ -147,7 +156,7 @@ class PSTDatabase:
                 )
             ''')
             try:
-                await db.execute("ALTER TABLE trade_context ADD COLUMN ticket INTEGER DEFAULT 0")
+                await _alter(db, "ALTER TABLE trade_context ADD COLUMN ticket INTEGER DEFAULT 0")
             except: pass
             # Tabla de configuración global
             await db.execute('''
@@ -181,12 +190,12 @@ class PSTDatabase:
 
             # Migración: Verificar si columnas price2/time2/time1 existen
             try:
-                await db.execute("ALTER TABLE user_levels ADD COLUMN price2 REAL")
-                await db.execute("ALTER TABLE user_levels ADD COLUMN time2 TEXT")
-                await db.execute("ALTER TABLE user_levels ADD COLUMN time1 TEXT")
-                await db.execute("ALTER TABLE user_levels ADD COLUMN time1_ts REAL")
-                await db.execute("ALTER TABLE user_levels ADD COLUMN time2_ts REAL")
-                await db.execute("ALTER TABLE user_levels ADD COLUMN mode TEXT DEFAULT 'BOTH'")
+                await _alter(db, "ALTER TABLE user_levels ADD COLUMN price2 REAL")
+                await _alter(db, "ALTER TABLE user_levels ADD COLUMN time2 TEXT")
+                await _alter(db, "ALTER TABLE user_levels ADD COLUMN time1 TEXT")
+                await _alter(db, "ALTER TABLE user_levels ADD COLUMN time1_ts REAL")
+                await _alter(db, "ALTER TABLE user_levels ADD COLUMN time2_ts REAL")
+                await _alter(db, "ALTER TABLE user_levels ADD COLUMN mode TEXT DEFAULT 'BOTH'")
             except: pass # Ya existen
             
             # Tabla de Configuración de Canales (Nuevo)
@@ -306,7 +315,7 @@ class PSTDatabase:
                 ("min_rr", "REAL DEFAULT 1.5"),
             ]:
                 try:
-                    await db.execute(f"ALTER TABLE symbols_config ADD COLUMN {col} {col_def}")
+                    await _alter(db, f"ALTER TABLE symbols_config ADD COLUMN {col} {col_def}")
                 except: pass  # Ya existe
 
             # Migraciones Fase 48: Riesgo por Estrategia y BE/TS Configurable
@@ -324,7 +333,7 @@ class PSTDatabase:
                 ("filter_profile", "TEXT"),      # Fase 2: perfil de filtros JSON por símbolo/grupo
             ]:
                 try:
-                    await db.execute(f"ALTER TABLE symbol_strategies ADD COLUMN {col} {col_def}")
+                    await _alter(db, f"ALTER TABLE symbol_strategies ADD COLUMN {col} {col_def}")
                 except: pass  # Ya existe
 
             # Migraciones Fase 53: Sentinel Journal (Notas y Snapshots)
@@ -333,7 +342,7 @@ class PSTDatabase:
                 ("snapshot_path", "TEXT")
             ]:
                 try:
-                    await db.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_def}")
+                    await _alter(db, f"ALTER TABLE trades ADD COLUMN {col} {col_def}")
                 except: pass # Ya existe
 
             # Migración v3.0: Reemplazar estrategias legacy por las nuevas
@@ -1567,10 +1576,10 @@ class PSTDatabase:
         async with aiosqlite.connect(self.db_path, timeout=30) as db:
             cur = await db.execute("""
                 INSERT INTO proposals (agent_run_id, kind, target, current_json, proposed_json,
-                                       evidence_json, judge_delta_eur, rationale, state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'propuesta')
+                                       evidence_json, judge_delta_eur, rationale, state, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'propuesta', ?)
             """, (agent_run_id, kind, target, current_json, proposed_json,
-                  evidence_json, judge_delta_eur, rationale))
+                  evidence_json, judge_delta_eur, rationale, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             await db.commit()
             return cur.lastrowid
 
@@ -1586,6 +1595,13 @@ class PSTDatabase:
         "rechazada": set(),
         "revertida": set(),
     }
+
+    async def estado_propuesta(self, proposal_id: int):
+        """Estado actual de una propuesta, o None si no existe."""
+        async with aiosqlite.connect(self.db_path, timeout=30) as db:
+            cur = await db.execute("SELECT state FROM proposals WHERE id = ?", (proposal_id,))
+            row = await cur.fetchone()
+            return row[0] if row else None
 
     async def decide_proposal(self, proposal_id: int, new_state: str, decided_by: str = "usuario") -> bool:
         """

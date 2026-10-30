@@ -42,28 +42,34 @@ Cada hallazgo se clasifica en **código**, **entorno** o **configuración**. Sol
 
 ## 2. Aviso por Telegram cuando una orden se rechaza por trading automático desactivado
 
-**Estado:** pendiente
+**Estado:** hecho (pendiente de release)
 
 Hoy el error `retcode 10027` solo queda en el log y en la tabla de decisiones. Debería avisar una vez, no en cada intento.
 
+
+**Hecho:** `enviar_orden` avisa por Telegram con el retcode 10027, como mucho una vez por hora (`PST_LLM/llm_trader.py`).
 ---
 
 ## 3. Hora de `created_at` en las propuestas
 
-**Estado:** pendiente (decidido dejarlo como está de momento)
+**Estado:** hecho (pendiente de release)
 
 `proposals.created_at` usa `CURRENT_TIMESTAMP` de SQLite, que es UTC. La bandeja la muestra sin convertir, así que va dos horas por detrás en horario de verano. Arreglo: guardar la hora local en `_insertar` o convertirla al mostrarla.
 
+
+**Hecho:** las propuestas guardan `created_at` en hora local en los tres puntos de inserción.
 ---
 
 ## 4. Menú de exclusión de Telegram con muchos agentes
 
-**Estado:** decidir
+**Estado:** hecho (pendiente de release)
 
 Con 25 agentes activos, la cuadrícula de botones sigue siendo larga. Opciones:
 - **Paginar:** 6 u 8 botones por página con ◀ y ▶.
 - **Menú de dos pasos:** primero el grupo (índices, acciones, cripto, forex) y luego el símbolo.
 
+
+**Hecho:** paginación de 9 en 9 con ◀ ▶ (`PST_LLM/llm_telegram_bot.py`).
 ---
 
 ## 5. Cuota de Claude con 25 agentes en M1 sin filtro
@@ -102,7 +108,7 @@ Pinta en la terminal errores, avisos y operaciones, sin Telegram. Pendiente:
 
 ## 9. Cierre de fin de semana para los agentes LLM
 
-**Estado:** pendiente, prioritario
+**Estado:** hecho (verificado en código)
 
 Los agentes LLM no cierran sus posiciones antes del fin de semana. El barrido de viernes solo existe en el sistema de los EAs (`PST_Core/engine/executor.py`). El SL y el TP están en el broker, pero el gap del lunes y el swap de fin de semana no los controla nadie.
 
@@ -121,16 +127,20 @@ Propuesta: antes del cierre de cada clase de activo un viernes, cerrar a mercado
 
 **Caso de hoy (viernes 23-oct):** MSFT (venta 19:40) y GER40 (venta 19:55) probablemente quedan abiertas. Confirmar en MT5.
 
+
+**Verificado:** `vigilar_sesion` se ejecuta en cada vuelta del bucle del agente (`PST_LLM/llm_trader.py`). Lo que sigue abierto es comprobar en el portátil que la detección coincide con el horario del broker.
 ---
 
 ## 10. Informe de la confianza de los agentes
 
-**Estado:** pendiente
+**Estado:** en curso
 
 El campo `confidence` que el modelo devuelve en cada decisión no tiene una definición en el prompt, y no está calibrado. Primeros datos (17 operaciones ejecutadas, 15 cerradas): el tramo 0.35–0.40 gana 7 de 10 y el 0.45–0.50, 3 de 5, con resultados que dependen de pocos trades. Con tan pocos datos no sirve para decidir.
 
 Hacer un informe que agrupe las operaciones por tramo de confianza (n, aciertos, resultado neto) y se actualice solo. Cuando haya muestra suficiente, decidir si mantener el campo en la notificación, o definirlo en el prompt como probabilidad de llegar al objetivo antes que al stop.
 
+
+**Hecho:** `PST_LLM/metricas.py` muestra por agente y por tramo de confianza (n, aciertos, neto, expectancy, pérdida máxima, racha). La definición de `confidence` en el prompt sigue pendiente de decidir.
 ---
 
 ## 11. Lo que ya está hecho y conviene no perder de vista
@@ -140,3 +150,22 @@ Hacer un informe que agrupe las operaciones por tramo de confianza (n, aciertos,
 - **Botones de Telegram en cuadrícula** de tres por fila (v2.6.41).
 - **Propuestas de rotación:** los botones se quitan al decidir desde la app o al caducar (v2.6.41).
 - **Pendiente operativo:** tras cada release, reiniciar la app en el portátil y borrar la caché de la webview (`PST_Core/data/webview_storage`).
+
+---
+
+## 12. Mejoras del fin de semana (30-oct-2026)
+
+Sin release: los cambios están en el árbol de trabajo, sin commit.
+
+- **Ciclo de vida de la API:** las tareas de fondo se cancelan al cerrar (`PST_API/main.py`). Era la causa de los `cannot schedule new futures after shutdown`.
+- **Reconexión MT5:** un intento cada 30 s en vez de uno por cada petición del panel. Aviso por Telegram si lleva caída más de 5 min.
+- **Calendario de noticias:** tres reintentos por descarga y reintento a los 10 min tras un fallo (antes, 1 h). Aviso tras 3 fallos seguidos (`PST_Core/engine/news_manager.py`).
+- **Migraciones de la BBDD:** los ALTER pasan por `_alter`, que registra cualquier error que no sea columna duplicada. Antes se tragaban en silencio, y en un bloque de `user_levels` un fallo saltaba las columnas siguientes.
+- **Aprobación de propuestas:** si ya está en el estado pedido, responde `ya_estaba` y no repite efectos (doble pulsación).
+- **Latido y vigía:** la app escribe `heartbeat.json` cada minuto. `PST_UTIL/vigia_salud.py` avisa por Telegram si no late en 5 min. Limite: no puede avisar si el PC está apagado.
+- **Copia de seguridad diaria** de la BBDD con la API de backup de SQLite, 14 copias (`PST_Core/utils/backup_db.py`).
+- **Estado en la cabecera:** `/api/health` y el indicador `EstadoSistemaWidget` (MT5, antigüedad de noticias y de la copia).
+- **Confirmación** antes de Quitar o Excluir un agente en el panel.
+- **Métricas por agente y por confianza:** `PST_LLM/metricas.py`.
+- **Ya existían, sin cambios:** límite diario por agente y de la flota (`ejecutar`), puerta de calendario (`calendario.bloqueo_entrada`), modo simulación por defecto (`--live` es opcional) y brazo base en sombra.
+- **Pendiente sin tocar:** `historico sembrado` (punto 6) es un mensaje de arranque con la tabla de avisos vacía, no un error. Habblaud: el Node que falla en el log es de otro PC.

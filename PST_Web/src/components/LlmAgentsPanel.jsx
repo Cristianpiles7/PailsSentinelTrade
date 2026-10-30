@@ -77,7 +77,14 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     return () => clearInterval(t)
   }, [recargar, habilitado])
 
+  // Acciones que paran o sacan un agente: se piden confirmar para no hacerlo por un clic de más.
+  const CONFIRMAR = {
+    desactivar: s => `¿Excluir ${s}? Se para y la rotación no lo volverá a poner hasta que lo actives a mano.`,
+    quitar: s => `¿Quitar ${s} del grupo? Le resta puntos un tiempo y puede volver.`,
+  }
+
   const accion = async (symbol, tipo, body) => {
+    if (CONFIRMAR[tipo] && !window.confirm(CONFIRMAR[tipo](symbol))) return
     setOcupado(o => ({ ...o, [symbol]: true }))
     setAviso('')
     try {

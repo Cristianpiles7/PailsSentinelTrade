@@ -204,12 +204,12 @@ def crear_propuesta(symbol, nuevo, resumen, motivo, evidencia, agent_run_id=None
     con = _con()
     try:
         cur = con.execute(
-            "INSERT INTO proposals (agent_run_id, kind, target, current_json, proposed_json, evidence_json, rationale, state)"
-            " VALUES (?,?,?,?,?,?,?, 'propuesta')",
+            "INSERT INTO proposals (agent_run_id, kind, target, current_json, proposed_json, evidence_json, rationale, state, created_at)"
+            " VALUES (?,?,?,?,?,?,?, 'propuesta', ?)",
             (agent_run_id, KIND, symbol, json.dumps({"criterio": act["texto"], "version": act["version"]}, ensure_ascii=False),
              json.dumps({"criterio": nuevo, "base_version": act["version"], "resumen": resumen, "diff": cambios},
                         ensure_ascii=False),
-             json.dumps(evidencia, ensure_ascii=False), motivo))
+             json.dumps(evidencia, ensure_ascii=False), motivo, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         pid = cur.lastrowid
         con.commit()
         viejas = con.execute("SELECT id, proposed_json FROM proposals WHERE kind=? AND target=? AND state='propuesta' "

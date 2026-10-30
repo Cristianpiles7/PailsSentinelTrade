@@ -28,6 +28,7 @@ import { StrategyLab } from './components/StrategyLab'
 import { PerformanceDashboard } from './components/PerformanceDashboard'
 import { NavItem } from './components/ui/NavItem'
 import { CalendarioRestringidoWidget } from './components/ui/CalendarioRestringidoWidget'
+import { EstadoSistemaWidget } from './components/ui/EstadoSistemaWidget'
 import { ActualizacionAviso } from './components/ui/ActualizacionAviso'
 import { Sparkline } from './components/ui/Sparkline'
 import { ProximityGauge } from './components/ui/ProximityGauge'
@@ -228,6 +229,7 @@ function App() {
   const [stratPerf, setStratPerf] = useState([])
   const [bucketData, setBucketData] = useState(null)
   const [hourlyData, setHourlyData] = useState([])
+  const [operaciones, setOperaciones] = useState([])
 
   const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
   const activeSymbols = symbols.filter(s => s.is_active)
@@ -415,6 +417,8 @@ function App() {
       setStratPerf(stratRes.data || [])
       setBucketData(buckRes.data || null)
       setHourlyData(hourlyRes.data || [])
+      const opsRes = await api.get(`${API_BASE}/performance/operaciones`)
+      setOperaciones(opsRes.data || [])
     } catch (err) { console.error(err) }
   }
 
@@ -969,6 +973,8 @@ function App() {
 
 
 
+          <EstadoSistemaWidget url={`${API_BASE}/health`} />
+
           <CalendarioRestringidoWidget url={`${API_BASE}/calendario/proximo`} />
 
           {/* News Guard Segment (Fase 50) */}
@@ -1073,12 +1079,9 @@ function App() {
 
         {currentView === 'performance' && (
           <PerformanceDashboard
-            perfData={perfData}
-            equityCurve={equityCurve}
+            operaciones={operaciones}
             stratPerf={stratPerf}
-            historyTrades={historyTrades}
             bucketData={bucketData}
-            hourlyData={hourlyData}
           />
         )}
 
