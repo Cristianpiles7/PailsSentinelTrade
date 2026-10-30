@@ -48,6 +48,38 @@ SESGO_REPETIR_H = 24              # un mismo sesgo no vuelve a consumir cuota an
 AVISO_SESGO_CADA_H = 24           # informe de sesgo a Telegram (una vez al día)
 RAZON = {0: "manual", 1: "movil", 2: "web", 3: "agente", 4: "STOP", 5: "TAKE PROFIT", 6: "stop-out"}
 
+# Disciplina del bucle (plan v3 fase 5)
+MIN_OPERACIONES = 20              # suelo duro de operaciones nuevas, aunque el ajuste diga menos: con menos todo es ruido
+HOLDOUT_H = 48                    # ultimas horas que el revisor NO ve: con ellas se valida fuera de muestra
+PRUEBA_DIAS = 14                  # tras aprobar, el criterio se mide 2 semanas (y no se toca ese simbolo mientras tanto)
+PRUEBA_MAX_DIAS = 28              # si a los 14 dias hay menos de PRUEBA_MIN_OPS operaciones, se espera hasta aqui
+PRUEBA_MIN_OPS = 5
+PRUEBA_MARGEN_R = 0.05            # el R medio nuevo debe caer mas que esto frente al anterior para revertir
+REVERTIDAS_MAX = 0.5              # si se revierten mas de la mitad (con >= REVERTIDAS_MIN_N), el bucle se detiene
+REVERTIDAS_MIN_N = 4
+
+
+def lados(texto):
+    """Lados de mercado que menciona un criterio: {'compra', 'venta'} (heuristica por palabras)."""
+    t = (texto or "").lower()
+    out = set()
+    if re.search(r"\b(compr\w*|buy|largos?|long)\b", t):
+        out.add("compra")
+    if re.search(r"\b(vend\w*|sell|cortos?|short)\b", t):
+        out.add("venta")
+    return out
+
+
+def lados_de_alerta(alerta):
+    """Lado que el vigia de sesgo dice que falta (sin_compras_en_alcista -> compra)."""
+    out = set()
+    for m in (alerta or {}).get("marcas", []):
+        if m.startswith("sin_compras"):
+            out.add("compra")
+        if m.startswith("sin_ventas"):
+            out.add("venta")
+    return out
+
 SISTEMA = """Eres el revisor del CRITERIO DE ENTRADA de un agente de trading (un LLM) que opera UN símbolo en una
 cuenta demo. El agente recibe en cada vela un prompt con una parte FIJA (formato, costes, reglas de cierre,
 campos del estado; te la doy como contexto, no la puedes cambiar) y una sección TRADING CRITERIA propia de
@@ -85,6 +117,13 @@ Reglas:
   entradas perdidas: úsala para detectar un lado que se queda fuera sin motivo, no solo las pérdidas.
 - 'clase': lo mismo para los demás símbolos de su misma clase (operaciones y holds). Sirve para tener más muestra
   cuando este símbolo tiene pocas operaciones. No copies una regla de otro símbolo sin que se vea en el suyo.
+- SIMETRÍA: el criterio debe cubrir compras Y ventas ('lados_que_cubre_el_criterio_actual'). Una propuesta que
+  añade una regla de venta para un régimen bajista debe decir qué hace el agente en el régimen alcista, y al revés;
+  si dejas sin cubrir un lado que el criterio ya cubría, la propuesta se descarta sola. En 'lado_contrario' explica
+  en una frase qué hace el agente con el lado que tu cambio NO toca (o con el régimen contrario).
+- No ves las últimas 48 h de operaciones: se guardan para comprobar tu propuesta fuera de muestra.
+- Un criterio aprobado se mide 2 semanas antes de poder tocar ese símbolo otra vez, y se revierte solo si empeora:
+  propón solo cambios que esperes que mejoren el R medio, no cambios por probar.
 - 'tickets_evidencia': los tickets de las operaciones que apoyan el cambio (y las ganadoras que afectaría).
 - 'resumen': una frase (máx. 200 caracteres) que diga qué cambia. 'motivo': el patrón, con números
   (cuántas operaciones, cuánto ganaron/perdieron), máx. 1200 caracteres.
@@ -98,8 +137,9 @@ SCHEMA = {
         "motivo": {"type": "string"},
         "criterio_nuevo": {"type": "string"},
         "tickets_evidencia": {"type": "array", "items": {"type": "integer"}},
+        "lado_contrario": {"type": "string"},
     },
-    "required": ["cambiar", "resumen", "motivo", "criterio_nuevo"],
+    "required": ["cambiar", "resumen", "motivo", "criterio_nuevo", "lado_contrario"],
 }
 
 
@@ -154,7 +194,8 @@ def operaciones_cerradas(mt5, symbol, desde=None):
         m = re.search(r"riesgo ~(\d+)", r["exec_result"] or "")
         riesgo = float(m.group(1)) if m else None
         s = sal[-1]
-        salida = "revisor" if "REVISOR" in (s.comment or "").upper() else RAZON.get(s.reason, str(s.reason))
+        coment = (s.comment or "").upper()
+        salida = "revisor" if "REVISOR" in coment else "regla" if "REGLA" in coment else RAZON.get(s.reason, str(s.reason))
         out.append({"ticket": r["ticket"], "abierta": r["ts"], "lado": r["action"], "marco": r["horizonte"],
                     "sl_atr_mult": r["sl_mult"], "tp_r": r["tp_r"], "confianza": r["confidence"],
                     "salida": salida, "minutos": int((s.time - ent[0].time) / 60), "neto_eur": round(neto, 2),
@@ -250,24 +291,41 @@ def _contexto_clase(mt5, symbol, clase):
     return {"nombre": clase, "otros_simbolos": otros}
 
 
+def en_prueba(act):
+    """Fecha hasta la que un criterio aprobado esta en periodo de prueba (no se toca el simbolo), o None."""
+    if not act.get("proposal_id") or not act.get("activado"):
+        return None
+    fin = datetime.strptime(act["activado"], "%Y-%m-%d %H:%M:%S") + timedelta(days=PRUEBA_DIAS)
+    return fin if datetime.now() < fin else None
+
+
 def revisar(mt5, symbol, cfg, forzar=False, seco=False):
     act = prompts.activo(symbol)
-    ops = operaciones_cerradas(mt5, symbol, act["activado"])
+    # Un cambio a la vez por simbolo (plan v3 fase 5): mientras el ultimo aprobado esta en prueba no se propone otro.
+    fin_prueba = en_prueba(act)
+    if fin_prueba and not forzar:
+        return f"{symbol}: criterio en periodo de prueba hasta {fin_prueba:%Y-%m-%d %H:%M}, todavía no"
+    ops_todas = operaciones_cerradas(mt5, symbol, act["activado"])
+    # Hold-out: el revisor no ve las ultimas HOLDOUT_H horas; con ellas se valida fuera de muestra.
+    corte = (datetime.now() - timedelta(hours=HOLDOUT_H)).strftime("%Y-%m-%d %H:%M:%S")
+    ops = [o for o in ops_todas if o["abierta"] < corte]
     nuevas = [o for o in ops if o["ticket"] not in _tickets_revisados(symbol, act["version"])]
+    minimo = max(cfg["min_operaciones"], MIN_OPERACIONES)
     # El sesgo cuenta aunque no haya operaciones cerradas: un agente que nunca compra no cierra compras.
     alerta = sesgo.analizar(dias=SESGO_DIAS)["alertas"].get(symbol)
     if alerta:
         ult = _ultima_revision(symbol)
         if ult and (datetime.now() - datetime.strptime(ult, "%Y-%m-%d %H:%M:%S")).total_seconds() < SESGO_REPETIR_H * 3600:
             return f"{symbol}: sesgo ya revisado en las últimas {SESGO_REPETIR_H} h"
-    if not forzar and not alerta and len(nuevas) < cfg["min_operaciones"]:
-        return f"{symbol}: {len(nuevas)}/{cfg['min_operaciones']} operaciones nuevas, todavía no"
+    if not forzar and not alerta and len(nuevas) < minimo:
+        return f"{symbol}: {len(nuevas)}/{minimo} operaciones nuevas, todavía no"
     if not ops and not alerta:
         return f"{symbol}: sin operaciones cerradas con el criterio actual"
     clase = next((s.clase for s in universo.UNIVERSO if s.symbol == symbol), None)
     contexto = ops[-cfg["max_operaciones_contexto"]:]
     entrada = {"symbol": symbol, "clase": clase, "criterio_actual": act["texto"],
                "criterio_activo_desde": act["activado"] or "desde el principio (criterio por defecto)",
+               "lados_que_cubre_el_criterio_actual": sorted(lados(act["texto"])),
                "resumen_con_criterio_actual": resumen(ops), "operaciones": contexto,
                "versiones_anteriores": _versiones_previas(mt5, symbol),
                "parte_fija_del_prompt": lt.PROMPT_FIJO}
@@ -283,13 +341,26 @@ def revisar(mt5, symbol, cfg, forzar=False, seco=False):
     if not d.get("cambiar") or (d.get("criterio_nuevo") or "").strip() == act["texto"].strip():
         _anotar_revision(symbol, act["version"], nuevas, f"sin cambio: {d.get('motivo', '')}")
         return f"{symbol}: sin cambio ({(d.get('resumen') or '')[:120]})"
-    ev = {**resumen(ops), "tickets": d.get("tickets_evidencia") or []}
-    if cfg.get("validar", True):
-        try:
-            ev["validacion"] = validacion_propuesta.validar_criterios(
-                mt5, symbol, act["texto"], d["criterio_nuevo"], dias=SESGO_DIAS, n=cfg.get("validacion_n", 20))
-        except Exception as e:
-            ev["validacion"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
+    # Simetria: una propuesta no puede dejar al simbolo sin un lado que ya cubria o que el vigia de sesgo echa en falta.
+    lados_nuevo = lados(d["criterio_nuevo"])
+    faltan = (lados(act["texto"]) | lados_de_alerta(alerta)) - lados_nuevo
+    if faltan:
+        _anotar_revision(symbol, act["version"], nuevas, f"descartada: el criterio propuesto deja sin {'/'.join(sorted(faltan))}")
+        return f"{symbol}: propuesta descartada (deja sin {'/'.join(sorted(faltan))})"
+    ev = {**resumen(ops), "tickets": d.get("tickets_evidencia") or [], "lado_contrario": d.get("lado_contrario"),
+          "lados": sorted(lados_nuevo), "asimetria": lados_nuevo != {"compra", "venta"}, "holdout_desde": corte}
+    # Validacion fuera de muestra OBLIGATORIA: solo decisiones posteriores al corte, que el revisor no vio. Sin veredicto
+    # de mejora la propuesta no llega a la bandeja (el ajuste `validar` ya no la desactiva).
+    try:
+        ev["validacion"] = validacion_propuesta.validar_criterios(
+            mt5, symbol, act["texto"], d["criterio_nuevo"], dias=SESGO_DIAS, n=cfg.get("validacion_n", 20), desde_local=corte)
+    except Exception as e:
+        _anotar_revision(symbol, act["version"], nuevas, f"descartada: validación no disponible ({type(e).__name__})")
+        return f"{symbol}: propuesta descartada (validación fallida: {type(e).__name__}: {str(e)[:100]})"
+    veredicto = ev["validacion"].get("veredicto", "")
+    if not veredicto.startswith("mejora"):
+        _anotar_revision(symbol, act["version"], nuevas, f"descartada: validación fuera de muestra: {veredicto}")
+        return f"{symbol}: propuesta descartada (fuera de muestra: {veredicto})"
     try:
         pid = prompts.crear_propuesta(symbol, d["criterio_nuevo"], (d.get("resumen") or "")[:200],
                                       (d.get("motivo") or "")[:1500], ev)
@@ -300,8 +371,101 @@ def revisar(mt5, symbol, cfg, forzar=False, seco=False):
     return f"{symbol}: propuesta #{pid} ({d.get('resumen', '')[:120]})"
 
 
+# ── Periodo de prueba: reversion automatica ──────────────────────────────────
+def _r_medio(ops):
+    v = [o["R"] for o in ops if o["R"] is not None]
+    return (sum(v) / len(v), len(v)) if v else (None, 0)
+
+
+def evaluar_prueba(mt5, symbol, ahora=None):
+    """Compara el R medio del criterio aprobado frente al anterior. Devuelve (decision, texto) con decision en
+    {'esperar', 'mantener', 'revertir'}, o None si el simbolo no esta en prueba / ya se evaluo."""
+    act = prompts.activo(symbol)
+    if not act.get("proposal_id") or not act.get("activado"):
+        return None
+    ahora = ahora or datetime.now()
+    edad = (ahora - datetime.strptime(act["activado"], "%Y-%m-%d %H:%M:%S")).days
+    if edad < PRUEBA_DIAS:
+        return None
+    con = prompts._con()
+    try:
+        hecho = con.execute("SELECT 1 FROM llm_prompt_revisiones WHERE proposal_id=? AND resultado LIKE 'prueba:%'",
+                            (act["proposal_id"],)).fetchone()
+    finally:
+        con.close()
+    if hecho:
+        return None
+    h = prompts.historial(symbol, limite=2)
+    previo = h[1] if len(h) > 1 else None
+    nuevas = operaciones_cerradas(mt5, symbol, act["activado"])
+    r_new, n_new = _r_medio(nuevas)
+    if n_new < PRUEBA_MIN_OPS:
+        if edad < PRUEBA_MAX_DIAS:
+            return "esperar", f"{n_new} operaciones en {edad} días: se espera hasta {PRUEBA_MAX_DIAS}"
+        return "mantener", f"sin datos suficientes tras {edad} días ({n_new} operaciones): se mantiene"
+    if previo:
+        antes = [o for o in operaciones_cerradas(mt5, symbol, previo["activado"]) if o["abierta"] < act["activado"]]
+    else:
+        antes = []
+    r_old, n_old = _r_medio(antes)
+    base = r_old if (r_old is not None and n_old >= PRUEBA_MIN_OPS) else 0.0
+    txt = (f"R medio {r_new:+.2f} ({n_new} ops) frente a {base:+.2f} del criterio anterior "
+           f"({n_old} ops{'' if n_old >= PRUEBA_MIN_OPS else '; sin muestra, se compara con 0'})")
+    if r_new < base - PRUEBA_MARGEN_R:
+        return "revertir", txt
+    return "mantener", txt
+
+
+def revision_prueba(mt5):
+    """Tras PRUEBA_DIAS de un criterio aprobado: si su R medio cae frente al anterior, se revierte solo y se avisa."""
+    con = prompts._con()
+    try:
+        simbolos = [r[0] for r in con.execute("SELECT DISTINCT symbol FROM llm_criterios WHERE proposal_id IS NOT NULL")]
+    finally:
+        con.close()
+    for sym in simbolos:
+        try:
+            res = evaluar_prueba(mt5, sym)
+            if res is None or res[0] == "esperar":
+                continue
+            decision, txt = res
+            act = prompts.activo(sym)
+            pid = act["proposal_id"]
+            if decision == "revertir":
+                prompts.revertir(pid, por="prueba automática")
+                c = prompts._con()
+                try:
+                    prompts._mover(c, pid, "viva", "revertida", "prueba automática")
+                finally:
+                    c.close()
+            _anotar_revision(sym, act["version"], [], f"prueba: {decision} · {txt}", pid)
+            print(f"[mejora] {sym}: prueba del criterio #{pid}: {'REVERTIDO' if decision == 'revertir' else 'se mantiene'} · {txt}",
+                  flush=True)
+            if decision == "revertir":
+                lt.telegram_enviar(f"↩️ {sym}: el criterio #{pid} se ha revertido solo tras {PRUEBA_DIAS} días.\n{txt}")
+        except Exception as e:
+            print(f"[mejora] {sym}: error en la prueba {type(e).__name__}: {e}", flush=True)
+
+
+def bucle_frenado():
+    """True si se revirtieron mas de la mitad de los criterios aprobados (§4 del plan): el bucle se detiene."""
+    con = prompts._con()
+    try:
+        est = dict(con.execute("SELECT state, COUNT(*) FROM proposals WHERE kind=? AND state IN ('viva','revertida') "
+                               "GROUP BY state", (prompts.KIND,)).fetchall())
+    finally:
+        con.close()
+    rev, viva = est.get("revertida", 0), est.get("viva", 0)
+    return (rev + viva) >= REVERTIDAS_MIN_N and rev / (rev + viva) > REVERTIDAS_MAX
+
+
 def pasada(mt5, cfg):
     hechas = 0
+    revision_prueba(mt5)
+    if bucle_frenado():
+        print("[mejora] más de la mitad de los criterios aprobados se han revertido: bucle detenido hasta revisarlo "
+              "(plan v3 §4). Para reanudarlo, resuelve las propuestas revertidas.", flush=True)
+        return
     con_sesgo = sorted(sesgo.analizar(dias=SESGO_DIAS)["alertas"])
     candidatos = con_sesgo + [s for s in simbolos_con_operaciones() if s not in con_sesgo]
     for sym in candidatos:

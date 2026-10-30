@@ -44,6 +44,7 @@ import prompts                        # criterio de entrada por simbolo, en BBDD
 import calendario                     # puerta de calendario FTMO (PST_LLM/calendario.py)
 import sesiones                       # paradas recurrentes del mercado: cierre antes del fin de semana (PST_LLM/sesiones.py)
 import registro                       # BBDD central: decisiones y agentes para la app
+import operaciones                    # una fila por operacion cerrada en llm_operaciones (PST_LLM/operaciones.py)
 import universo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))             # raíz del repo: para importar PST_Core
 from PST_Core.utils.reloj_mt5 import local_desde_mt5, broker_desde_mt5   # horas de MT5: ver utils/reloj_mt5
@@ -95,7 +96,17 @@ def configurar_agente(nombre, magic):
     NOMBRE = nombre
 RIESGO_PCT = 0.5            # % de equity arriesgado por operacion
 SL_MULT = (1.0, 3.0)        # el modelo elige dentro de este rango (x ATR)
-TP_R = (1.0, 4.0)           # y el TP como multiplo del riesgo
+TP_R = (1.8, 4.0)           # y el TP como multiplo del riesgo. Minimo 1,8 (plan v3 §1.2): tp_r <= 1,5 rendia -0,19 R
+# Marcos en los que se puede basar el stop. Semana del 23-30 oct: M1 -0,66 R, M5 -0,09 R, M15 +0,20 R (plan v3 §1.2).
+# M5 sigue en el snapshot para afinar la entrada, pero el stop no se mide con el.
+STOP_TFS = ("M15", "H1", "H4")
+# Costes y exposicion (plan v3 fase 2)
+MAX_COSTE_R = 0.10          # spread + comision ida y vuelta, como fraccion del R: por encima no se abre
+# Stop minimo por clase, en ATR de M15 (no del marco que elija el agente): si el stop sale mas corto se ensancha
+# (el lote baja, el riesgo no cambia). Valores iniciales: calibrar con el MAE de llm_operaciones.
+STOP_MIN_ATR_M15 = {"indice": 1.0, "accion_eeuu": 1.0, "forex": 1.0, "materias": 1.2, "cripto": 1.5}
+MAX_MISMO_LADO_CLASE = 3    # posiciones abiertas de la flota en el mismo lado y la misma clase
+MAX_MISMO_LADO_TOTAL = 5    # y en el mismo lado en total
 
 # En Windows, cada `claude` lanzado desde aqui abria una consola negra. CREATE_NO_WINDOW la evita:
 # el proceso sigue en el Administrador de tareas, pero sin ventana. En otros SO es 0 (sin efecto).
@@ -115,8 +126,9 @@ OUTPUT
 Reply ONLY with the JSON decision requested by the schema. 'action' is one of hold, buy, sell, close. With no
 open position choose hold, buy or sell; with an open position choose hold or close. Follow the TRADING CRITERIA
 section below to decide whether and where to enter.
-- 'timeframe': the timeframe whose structure justifies the trade. The stop distance (sl_atr_mult x ATR) is
-  measured on THAT timeframe's ATR, so a wider timeframe means a wider stop and a longer holding time.
+- 'timeframe': the timeframe whose structure justifies the trade, one of {", ".join(STOP_TFS)}. The stop distance
+  (sl_atr_mult x ATR) is measured on THAT timeframe's ATR, so a wider timeframe means a wider stop and a longer
+  holding time. Shorter timeframes (M1, M5) stay in the snapshot to time the entry but cannot carry the stop.
 - 'sl_atr_mult': stop distance in ATRs of that timeframe, between {SL_MULT[0]} and {SL_MULT[1]}.
 - 'tp_r': take-profit as a multiple of the risk, between {TP_R[0]} and {TP_R[1]}.
 - 'confidence': between 0 and 1.
@@ -130,8 +142,11 @@ TRADING CRITERIA (specific to this symbol, written in Spanish; it may be revised
 {{criterio}}
 
 COSTS AND SIZING (enforced by the system)
-- The system rejects any trade whose stop is less than ~{1 / MAX_SPREAD_SOBRE_STOP:.1f}x the spread.
+- The system rejects any trade whose stop is less than ~{1 / MAX_SPREAD_SOBRE_STOP:.1f}x the spread, or whose total
+  cost (spread + round-trip commission) is above {MAX_COSTE_R * 100:.0f}% of the risk.
   'spread_atr' (spread / ATR) is given per timeframe: avoid timeframes where it is high.
+- The fleet may hold at most {MAX_MISMO_LADO_CLASE} positions on the same side per asset class and {MAX_MISMO_LADO_TOTAL} on the
+  same side in total: check 'cartera' before proposing a trade that stacks the same exposure.
 - Risk per trade is sized by the system. You only choose the stop distance and the take-profit multiple.
 
 CLOSING RULES (enforced by the system)
@@ -139,6 +154,9 @@ CLOSING RULES (enforced by the system)
   left before a close is allowed.
 - After that, a close is accepted only if 'invalidated_by' names the CONCRETE structure that broke
   (timeframe + level or indicator).
+- 'invalidated_by' must name a structure on H1, H4 or D1. A break on M1, M5 or M15 never justifies a close.
+- The system manages the position itself: at +1R it moves the stop to the entry, and at +1.5R it closes half and
+  leaves the rest with the stop at +0.5R. Do not try to do that by hand; your only close is a real invalidation.
 - Being in a loss inside the stop is NOT a reason to close, and neither is a small bounce: the stop and the
   target exist to do that job.
 
@@ -161,7 +179,7 @@ DECISION_SCHEMA = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["hold", "buy", "sell", "close"]},
-        "timeframe": {"type": "string", "enum": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]},
+        "timeframe": {"type": "string", "enum": list(STOP_TFS)},
         "sl_atr_mult": {"type": "number", "minimum": SL_MULT[0], "maximum": SL_MULT[1]},
         "tp_r": {"type": "number", "minimum": TP_R[0], "maximum": TP_R[1]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -667,12 +685,20 @@ def calcular_orden(mt5, d, ind_por_tf, tick, info, cuenta, cadencia):
     El stop se mide con el ATR del marco que el agente eligio (si no es valido, el del reloj).
     """
     buy = d.get("action") == "buy"
-    tf = d.get("timeframe") if d.get("timeframe") in ind_por_tf else cadencia
+    # El stop solo se mide en marcos de STOP_TFS. Un marco corto (M1/M5) o ausente se lleva a M15 (se acota, no se rechaza).
+    tf = d.get("timeframe") if d.get("timeframe") in STOP_TFS else STOP_TFS[0]
+    if tf not in ind_por_tf:
+        return None, f"sin indicadores de {tf} para medir el stop"
     ind = ind_por_tf[tf]
     sl_mult = min(max(float(d.get("sl_atr_mult") or 1.5), SL_MULT[0]), SL_MULT[1])
     tp_r = min(max(float(d.get("tp_r") or 2.0), TP_R[0]), TP_R[1])
     precio = tick.ask if buy else tick.bid
     dist = ind["atr"] * sl_mult
+    # Stop minimo por clase, en ATR de M15: se ensancha (el lote baja, el riesgo no cambia).
+    min_atr = STOP_MIN_ATR_M15.get(clase_de(info.name))
+    if min_atr and "M15" in ind_por_tf and dist < min_atr * ind_por_tf["M15"]["atr"]:
+        dist = min_atr * ind_por_tf["M15"]["atr"]
+        sl_mult = dist / ind["atr"]
     # Regla dura de costes: medido el 2026-10-21, dos propuestas de ETH en M1 (stop ~2 puntos, spread
     # 0,6) salieron por stop en la vela siguiente. Un stop que el spread se come no se abre.
     spread = tick.ask - tick.bid
@@ -685,6 +711,13 @@ def calcular_orden(mt5, d, ind_por_tf, tick, info, cuenta, cadencia):
     perdida_1lote = mt5.order_calc_profit(mt5.ORDER_TYPE_BUY if buy else mt5.ORDER_TYPE_SELL, info.name, 1.0, precio, sl)
     if not perdida_1lote:
         return None, "no se pudo calcular el riesgo por lote"
+    # Coste total en R = spread + comision ida y vuelta, ambos entre el riesgo de 1 lote (no depende del tamano).
+    coste_spread = spread / dist
+    coste_comision = comision_por_lote(mt5, info.name) / abs(perdida_1lote)
+    coste_r = coste_spread + coste_comision
+    if coste_r > MAX_COSTE_R:
+        return None, (f"coste: spread {coste_spread * 100:.1f}% + comision {coste_comision * 100:.1f}% = "
+                      f"{coste_r * 100:.1f}% del R en {tf} (maximo {MAX_COSTE_R * 100:.0f}%)")
     riesgo = cuenta.equity * RIESGO_PCT / 100
     paso = info.volume_step
     lotes = max(info.volume_min, min(info.volume_max, int(riesgo / abs(perdida_1lote) / paso) * paso))
@@ -700,11 +733,46 @@ def calcular_orden(mt5, d, ind_por_tf, tick, info, cuenta, cadencia):
         if lotes < info.volume_min:
             return None, f"margen: ni el lote minimo cabe en el {MARGEN_MAX_ORDEN * 100:.0f}% del equity"
     return {"buy": buy, "precio": precio, "sl": sl, "tp": tp, "lotes": lotes, "tf": tf, "digits": info.digits,
-            "riesgo_eur": lotes * abs(perdida_1lote), "sl_mult": sl_mult, "tp_r": tp_r}, ""
+            "riesgo_eur": lotes * abs(perdida_1lote), "sl_mult": sl_mult, "tp_r": tp_r, "coste_r": coste_r}, ""
+
+
+_COMISION_LOTE = {}             # symbol -> (instante, EUR por lote ida y vuelta)
+
+
+def comision_por_lote(mt5, symbol, dias=30):
+    """Comision real del broker por lote, ida y vuelta, en moneda de la cuenta: comisiones de los deals de los
+    ultimos `dias` dias del simbolo entre los lotes abiertos. 0 si no hay historia (entonces solo cuenta el spread).
+    Se cachea 1 h por simbolo."""
+    previo = _COMISION_LOTE.get(symbol)
+    if previo and time.time() - previo[0] < 3600:
+        return previo[1]
+    deals = mt5.history_deals_get(datetime.now() - timedelta(days=dias), datetime.now() + timedelta(days=1), group=symbol) or []
+    lotes = sum(x.volume for x in deals if x.entry == 0)
+    valor = sum(abs(x.commission + getattr(x, "fee", 0.0)) for x in deals) / lotes if lotes else 0.0
+    _COMISION_LOTE[symbol] = (time.time(), valor)
+    return valor
+
+
+def clase_de(symbol):
+    return next((s.clase for s in universo.UNIVERSO if s.symbol == symbol), None)
+
+
+def exposicion_excedida(mt5, symbol, lado):
+    """Motivo por el que NO se abre por exposicion de la flota (mismo lado por clase y en total), o None."""
+    tipo = 0 if lado == "buy" else 1
+    mismo = [p for p in (mt5.positions_get() or []) if p.magic in MAGICS_FLOTA and p.type == tipo]
+    if len(mismo) >= MAX_MISMO_LADO_TOTAL:
+        return f"exposicion: la flota ya tiene {len(mismo)} posiciones {lado} (maximo {MAX_MISMO_LADO_TOTAL})"
+    clase = clase_de(symbol)
+    en_clase = sum(1 for p in mismo if clase_de(p.symbol) == clase) if clase else 0
+    if en_clase >= MAX_MISMO_LADO_CLASE:
+        return f"exposicion: la flota ya tiene {en_clase} posiciones {lado} en {clase} (maximo {MAX_MISMO_LADO_CLASE})"
+    return None
 
 
 MARGEN_LIBRE_MIN = 0.25         # tras abrir, el margen libre no puede bajar del 25% del equity
 MARGEN_MAX_ORDEN = 0.30         # una sola operacion no puede inmovilizar mas del 30% del equity en margen
+_ULTIMO_REGISTRO = {"t": 0.0}
 _ORDEN = {}                     # nombre -> ultima orden calculada en live (para el aviso de Telegram)
 
 
@@ -735,6 +803,10 @@ def bloqueo_cierre(p, invalidada_por, ahora_broker, min_cierre_min):
         return f"cierre bloqueado: lleva {min_abierta:.0f} min abierta (minimo {min_cierre_min})"
     if not invalidada_por or len(str(invalidada_por).strip()) < 10:
         return "cierre bloqueado: falta 'invalidated_by' con la invalidacion concreta (marco + nivel/indicador)"
+    # Plan v3 fase 3: el stop y el parcial los gestionan las reglas (gestion_salidas.py); el agente solo cierra si se
+    # rompio estructura en H1 o superior. Una rotura en M1-M15 es ruido para una operacion con stop en M15+.
+    if not re.search(r"\b(H1|H4|D1)\b", str(invalidada_por)):
+        return "cierre bloqueado: la invalidacion debe nombrar un marco H1, H4 o D1"
     return None
 
 
@@ -807,6 +879,10 @@ def ejecutar(mt5, d, ind, tick, info, pos, cuenta, args):
     if resta > 0:
         return False, f"enfriamiento: cerro hace menos de {args.enfriamiento_min} min (quedan {resta // 60 + 1} min)", None
 
+    exceso = exposicion_excedida(mt5, sym, accion)
+    if exceso:
+        return False, exceso, None
+
     o, motivo = calcular_orden(mt5, d, ind, tick, info, cuenta, args.timeframe)
     if o is None:
         return False, motivo, None
@@ -818,7 +894,7 @@ def ejecutar(mt5, d, ind, tick, info, pos, cuenta, args):
     ok, txt, ticket = enviar_orden(mt5, req, cuenta)
     dg = o["digits"]                      # decimales del simbolo (EURUSD salia como 1.12 / 1.12 / 1.12 en el log)
     return (ok, f"{accion} {o['lotes']:.2f} lotes @ {o['precio']:.{dg}f} · SL {o['sl']:.{dg}f} · TP {o['tp']:.{dg}f} · "
-                f"riesgo ~{o['riesgo_eur']:.0f} EUR · marco {o['tf']} · {txt}", ticket)
+                f"riesgo ~{o['riesgo_eur']:.0f} EUR · marco {o['tf']} · coste {o['coste_r'] * 100:.1f}% R · {txt}", ticket)
 
 
 # ── Avisos por Telegram ──────────────────────────────────────────────────────
@@ -1078,7 +1154,7 @@ def ciclo(mt5, args, con):
         # Simulacion: se guarda el nivel exacto que habria usado, para replicarlo a mano o juzgarlo.
         o, why = calcular_orden(mt5, d, ind, tick, info, mt5.account_info(), args.timeframe)
         texto = (f"SIM {accion.upper()} {o['lotes']:.2f} lotes @ {o['precio']:.{o['digits']}f} · SL {o['sl']:.{o['digits']}f} · "
-                 f"TP {o['tp']:.{o['digits']}f} · riesgo ~{o['riesgo_eur']:.0f} EUR · marco {o['tf']}") if o else f"SIM {accion}: rechazada ({why})"
+                 f"TP {o['tp']:.{o['digits']}f} · riesgo ~{o['riesgo_eur']:.0f} EUR · marco {o['tf']} · coste {o['coste_r'] * 100:.1f}% R") if o else f"SIM {accion}: rechazada ({why})"
     elif accion == "close":
         texto = "SIM: cerraria la posicion"
     rec = recortes(d)
@@ -1281,7 +1357,7 @@ def main():
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--resultados", action="store_true",
                     help="resultado real (MT5) de las operaciones de este agente y que habria pasado sin los cierres a mano")
-    ap.add_argument("--min-cierre-min", dest="min_cierre_min", type=int, default=30,
+    ap.add_argument("--min-cierre-min", dest="min_cierre_min", type=int, default=90,
                     help="minutos minimos que una operacion debe llevar abierta antes de aceptar un cierre a mano")
     ap.add_argument("--margen-sesion-min", dest="margen_sesion_min", type=int, default=30,
                     help="minutos antes de una parada larga del mercado (fin de semana) en los que se cierra lo abierto "
@@ -1351,6 +1427,9 @@ def main():
                 simbolo_ant, tf_ant, ultima = args.symbol, args.timeframe, None   # reiniciar el reloj de velas
                 mt5.symbol_select(args.symbol, True)
             prompt_actual(args.symbol)                 # criterio del simbolo (BBDD): cambio en caliente
+            if time.time() - _ULTIMO_REGISTRO["t"] > 300:      # operaciones cerradas -> llm_operaciones (solo las nuevas)
+                _ULTIMO_REGISTRO["t"] = time.time()
+                operaciones.registrar_agente(mt5, DB_FILE)
             if args.sesion_continua and args.enabled:
                 try:
                     _SESION.asegurar(args.model, args.effort, args.sala)

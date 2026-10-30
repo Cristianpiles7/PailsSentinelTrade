@@ -385,6 +385,11 @@ def _activos_ahora():
     flota = registro.estado()
     BLOQUEADOS.clear()
     BLOQUEADOS.update(x["symbol"] for x in flota if x["bloqueado"])
+    try:
+        import niveles
+        BLOQUEADOS.update(niveles.en_banquillo())     # banquillo (plan v3 fase 6): la rotacion no lo vuelve a poner
+    except Exception as e:
+        print(f"[rotacion] niveles: {type(e).__name__}: {e}", flush=True)
     return {x["symbol"]: x for x in flota if x["activo"]}
 
 
@@ -432,6 +437,12 @@ def ciclo(mt5, ranking_toca=False):
     # 4) Cada cadencia_ranking_min: recalcular las propuestas pendientes (huecos y reseleccion).
     if ranking_toca:
         _proponer_ranking(mt5, rank, _activos_ahora(), e, lim)
+        try:                                        # niveles por clase y simbolo (plan v3 fase 6), con las reglas fijas
+            import niveles
+            for c in niveles.evaluar(mt5, aplicar=True, avisar=_notificar):
+                _anotar("nivel", c[0], f"{c[1]} -> {c[2]}: {c[3]}", {})
+        except Exception as e:
+            print(f"[rotacion] niveles: {type(e).__name__}: {e}", flush=True)
     _guardar_estado(e)
     return len(_activos_ahora())
 

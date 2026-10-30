@@ -33,7 +33,7 @@ function MejoraAjustes({ api, API_BASE }) {
   }
 
   const numeros = [
-    { k: 'min_operaciones', etiqueta: 'Mín. operaciones', min: 1, max: 500,
+    { k: 'min_operaciones', etiqueta: 'Mín. operaciones', min: 20, max: 500,
       title: 'Operaciones cerradas nuevas de un símbolo (con su criterio actual) antes de que el agente lo revise' },
     { k: 'cadencia_min', etiqueta: 'Mirar cada (min)', min: 10, max: 1440,
       title: 'Cada cuántos minutos mira si algún símbolo llegó al mínimo' },

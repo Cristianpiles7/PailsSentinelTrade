@@ -50,6 +50,8 @@ NOMBRE_SALA = "Agente_LLM"
 _spec = importlib.util.spec_from_file_location("lt", rutas.PST_LLM_DIR / "llm_trader.py")
 lt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lt)
+import gestion_salidas                 # break-even y parcial por reglas (PST_LLM/gestion_salidas.py)
+import brazo_sombra                    # brazo base sin LLM en sombra (PST_LLM/brazo_sombra.py)
 
 REV_PROMPT = (
     "You are an independent RISK REVIEWER for a DEMO account. Another trader opened the position you "
@@ -77,10 +79,10 @@ REV_SCHEMA = {
     },
     "required": ["decision", "confidence", "reason"],
 }
-# confianza_minima 0.85 y min_cierre_min 30 desde el 2026-10-22: su unico cierre de la primera noche
+# confianza_minima 0.85 y min_cierre_min 30 desde el 2026-10-22 (90 desde el 2026-10-30, plan v3 fase 1): su unico cierre de la primera noche
 # (US500, a los 5 min, -32 EUR) habria dado +104 EUR de haberlo dejado (ver `llm_trader_flota.py --resultados`).
 CONFIG_DEFECTO = {"enabled": True, "intervalo_min": 5, "model": "haiku", "effort": "low", "cerrar": True,
-                  "confianza_minima": 0.85, "min_cierre_min": 30, "telegram": True, "reiniciar_cada": 6,
+                  "confianza_minima": 0.85, "min_cierre_min": 90, "salidas_reglas": True, "telegram": True, "reiniciar_cada": 6,
                   "tick_espera_s": 15}
 # DEAL_REASON de MT5: quien cerro la posicion
 RAZON_CIERRE = {4: "Stop loss", 5: "Take profit", 6: "Stop-out del broker", 0: "Manual", 1: "Móvil", 2: "Web"}
@@ -287,6 +289,7 @@ def main():
     con = db()
     sesion = lt.SesionContinua(prompt=REV_PROMPT, schema=REV_SCHEMA)
     ultima, abiertos_antes = {}, None
+    ultima_sombra = {"t": 0.0}
     try:
         cfg = cargar_config()
         print(f"[revisor] cada {cfg['intervalo_min']} min · {'CIERRA de verdad' if cfg['cerrar'] else 'solo avisa'} "
@@ -299,6 +302,14 @@ def main():
         while not (STOP_FILE.exists() or lt.STOP_GLOBAL.exists()):
             lt.mantener_despierto()
             cfg = cargar_config()
+            if cfg.get("salidas_reglas"):         # break-even a +1 R y parcial a +1,5 R: no depende del LLM (plan v3 fase 3)
+                try:
+                    gestion_salidas.gestionar(mt5, lt.MAGICS_FLOTA)
+                    if time.time() - ultima_sombra["t"] > 120:     # brazo base en sombra, por lotes (plan v3 fase 4)
+                        ultima_sombra["t"] = time.time()
+                        brazo_sombra.actualizar(mt5, lote=6)
+                except Exception as e:
+                    print(f"[revisor] salidas por reglas: {type(e).__name__}: {e}", flush=True)
             if cfg["enabled"]:
                 try:
                     sesion.asegurar(cfg["model"], cfg["effort"], NOMBRE_SALA)   # sala visible en Habblaud

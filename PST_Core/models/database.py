@@ -87,12 +87,16 @@ class PSTDatabase:
                 )
             ''')
             
-            try:
-                await db.execute("ALTER TABLE trades ADD COLUMN ticket INTEGER DEFAULT 0")
-                await db.execute("ALTER TABLE trades ADD COLUMN is_partial_closed INTEGER DEFAULT 0")
-                await db.execute("ALTER TABLE trades ADD COLUMN commission REAL DEFAULT 0")
-                await db.execute("ALTER TABLE trades ADD COLUMN swap REAL DEFAULT 0")
-            except: pass # Ya existen
+            # Cada ALTER en su propio try: si una columna ya existe no deben saltarse las demás
+            for col_def in (
+                "ticket INTEGER DEFAULT 0",
+                "is_partial_closed INTEGER DEFAULT 0",
+                "commission REAL DEFAULT 0",
+                "swap REAL DEFAULT 0",
+            ):
+                try:
+                    await db.execute(f"ALTER TABLE trades ADD COLUMN {col_def}")
+                except: pass # Ya existe
             
             # Tabla de Señales (Para analizar fiabilidad)
             await db.execute('''

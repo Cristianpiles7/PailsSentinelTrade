@@ -85,6 +85,12 @@ UNIVERSO = [
 ]
 
 
+# Clases que solo pueden operar en simulacion (siguen decidiendo, no envian ordenes). Cripto desde el 2026-10-30:
+# -735 EUR en la primera semana. Vuelve a demo cuando pase el criterio de plan v3 §3 fase 6 (>= 20 ops en
+# simulacion con R medio > 0 y coste <= 10 % del R): quitarla de aqui.
+CLASES_SOLO_SIMULACION = {"cripto"}
+
+
 def por_clase():
     out = {}
     for s in UNIVERSO:

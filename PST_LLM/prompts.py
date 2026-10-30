@@ -29,7 +29,7 @@ import rutas
 
 KIND = "prompt_simbolo"
 CONFIG = rutas.DATOS / ".agents" / "data" / "mejora_prompt_config.json"
-POR_DEFECTO = {"activo": True, "min_operaciones": 10, "modelo": "sonnet", "esfuerzo": "medium",
+POR_DEFECTO = {"activo": True, "min_operaciones": 20, "modelo": "sonnet", "esfuerzo": "medium",
                "cadencia_min": 60, "max_caracteres": 3000, "max_operaciones_contexto": 60,
                "validar": True, "validacion_n": 20}
 TIPOS = {"activo": bool, "min_operaciones": int, "modelo": str, "esfuerzo": str, "cadencia_min": int,
@@ -65,8 +65,8 @@ def guardar_ajustes(cambios):
         if k not in TIPOS:
             raise ValueError(f"ajuste desconocido: {k}")
         a[k] = TIPOS[k](v)
-    if not 1 <= a["min_operaciones"] <= 500:
-        raise ValueError("min_operaciones debe estar entre 1 y 500")
+    if not 20 <= a["min_operaciones"] <= 500:
+        raise ValueError("min_operaciones debe estar entre 20 y 500 (con menos, cualquier patron es ruido: plan v3 fase 5)")
     if a["modelo"] not in ("haiku", "sonnet", "opus"):
         raise ValueError("modelo debe ser haiku, sonnet u opus")
     if a["esfuerzo"] not in ("low", "medium", "high"):
