@@ -42,7 +42,7 @@ import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
 import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
 import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 import { AgentsOffice } from './components/AgentsOffice'
-import { LlmFila, LlmDecisionesModal, LlmLimitesBar, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
+import { LlmFila, LlmDecisionesModal, LlmLimitesBar, LlmScalpingPanel, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
 import { LlmCriterioPanel } from './components/LlmCriterioPanel'
 import { LlmSeguro } from './components/LlmOpinionCard'
 
@@ -1312,6 +1312,8 @@ function App() {
                   activosAhora={llm.agentes.filter(a => a.activo).length}
                   topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario}
                   cuotaTopes={llm.cuotaTopes} guardarCuotaTopes={llm.guardarCuotaTopes} />
+                <h3 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.2em] mt-2">Scalping (agente aparte)</h3>
+                <LlmScalpingPanel api={api} API_BASE={API_BASE} />
               </section>
               <section className="flex flex-col gap-3">
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Prompts de los agentes</h2>
@@ -2690,6 +2692,8 @@ function App() {
                               onModelo={llm.cambiarModelo}
                               onTimeframe={llm.cambiarTimeframe}
                               onFiltro={llm.cambiarFiltro}
+                              onRiesgo={llm.cambiarRiesgo}
+                              onEstrategia={llm.cambiarEstrategia}
                               onDecisiones={setLlmDecisiones}
                             />
                           )}

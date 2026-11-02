@@ -233,7 +233,10 @@ def ranking(mt5, ref_time):
     out = []
     lim = _limites()
     r_eur = _r_eur(mt5)
+    asignadas = registro.estrategias()
     for s in universo.UNIVERSO:
+        if asignadas.get(s.symbol, "flota") not in registro.INCLUYE_FLOTA:   # scalping o ninguna: fuera de la rotacion
+            continue
         if not abierto(mt5, s.symbol, ref_time):
             continue
         p = puntuar(mt5, s.symbol, r_eur)

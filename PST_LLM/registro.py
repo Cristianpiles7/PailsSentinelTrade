@@ -57,7 +57,25 @@ def central():
             pass                                   # ya existe
     con.execute("""CREATE TABLE IF NOT EXISTS llm_prompts (
         version TEXT PRIMARY KEY, texto TEXT, creado TEXT)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS llm_estrategia (
+        symbol TEXT PRIMARY KEY, estrategia TEXT NOT NULL, actualizado TEXT)""")
+    for sym, est in ESTRATEGIA_INICIAL.items():          # solo siembra: no pisa lo que se haya cambiado
+        con.execute("INSERT OR IGNORE INTO llm_estrategia (symbol, estrategia, actualizado) VALUES (?,?,?)",
+                    (sym, est, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    con.commit()
     return con
+
+
+# Estrategia de cada simbolo: una sola por simbolo. `flota` = su agente LLM de la flota (por defecto),
+# `scalping` = lo opera el agente de scalping (PST_LLM/scalping.py), `ninguna` = no opera nada.
+ESTRATEGIAS = ("flota", "scalping", "ambos", "ninguna")
+# Que estrategias incluye cada valor: `ambos` = flota y scalping a la vez (cada una con su magic y sus limites).
+INCLUYE_FLOTA = {"flota", "ambos"}
+INCLUYE_SCALPING = {"scalping", "ambos"}
+# Simbolos que puede llevar el scalping: los medidos sin comision (2026-11-02). Ampliar solo con comision medida.
+SIMBOLOS_SCALPING = ("US100.cash", "US30.cash", "US500.cash")
+ESTRATEGIA_INICIAL = {s: "scalping" for s in SIMBOLOS_SCALPING}
+SCALPING_DB = DATA / "llm_scalping.db"
 
 
 def guardar_prompt(version, texto):
@@ -164,6 +182,9 @@ def activar(symbol, live=True, origen="manual"):
     s = _simbolo(symbol)
     if s is None:
         raise ValueError(f"{symbol} no esta en el universo (PST_LLM/universo.py)")
+    est = estrategia_de(symbol)
+    if est not in INCLUYE_FLOTA:
+        raise RuntimeError(f"{symbol} tiene la estrategia '{est}': no se activa el agente de la flota")
     # Niveles (plan v3 fase 6): solo opera de verdad si su clase y el simbolo estan en `operativo` (ver niveles.py).
     # Un simbolo nuevo entra en prueba (simulacion) hasta que gane el operativo con evidencia.
     import niveles
@@ -349,6 +370,7 @@ def estado():
         filas = {}
         coste = {}
     out = []
+    asignadas = estrategias()
     for s in simbolos_disponibles():
         nombre = nombre_agente(s.symbol)
         fila = filas.get(s.symbol)
@@ -360,7 +382,9 @@ def estado():
         out.append({
             "symbol": s.symbol, "clase": s.clase, "modelo": _modelo_de_config(nombre, s.modelo),
             "timeframe": _config_de(nombre, "timeframe", "M5"), "magic": s.magic, "nombre": nombre,
+            "estrategia": asignadas.get(s.symbol, "flota"),
             "activo": activo, "live": live, "sin_filtro": _sin_filtro_de(nombre),
+            "riesgo_pct": _config_de(nombre, "riesgo_pct", RIESGO_DEFECTO),
             "vivo": vivo, "pid": vivos.get(nombre), "actualizado": fila[3] if fila else None,
             "origen": (fila[4] if fila and fila[4] else "manual"), "bloqueado": bool(fila and fila[5]),
             "coste_usd": coste.get(s.symbol, 0.0),
@@ -454,6 +478,103 @@ def cambiar_filtro(symbol, sin_filtro):
     cfg["sin_filtro"] = bool(sin_filtro)
     f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return {"symbol": symbol, "sin_filtro": bool(sin_filtro)}
+
+
+# Riesgo por operacion, en % de equity, por agente. Mismo rango que RIESGO_LIMITES de llm_trader.py.
+RIESGO_PERMITIDO = (0.05, 1.0)
+RIESGO_DEFECTO = 0.5          # igual que RIESGO_PCT de llm_trader.py
+
+
+def cambiar_riesgo(symbol, riesgo_pct):
+    """% de equity arriesgado por operacion de este agente. Se relee en su siguiente vuelta: no hace falta reiniciarlo."""
+    if _simbolo(symbol) is None:
+        raise ValueError(f"{symbol} no esta en el universo")
+    try:
+        valor = float(riesgo_pct)
+    except (TypeError, ValueError):
+        raise ValueError("riesgo no valido: debe ser un numero")
+    if not RIESGO_PERMITIDO[0] <= valor <= RIESGO_PERMITIDO[1]:
+        raise ValueError(f"riesgo fuera de rango: usa entre {RIESGO_PERMITIDO[0]} y {RIESGO_PERMITIDO[1]} % de equity")
+    f = _ficheros(None).ficheros(nombre_agente(symbol))
+    if not f["config"].is_file():
+        raise ValueError(f"{symbol} no tiene configuracion: activalo primero")
+    cfg = json.loads(f["config"].read_text(encoding="utf-8-sig"))
+    cfg["riesgo_pct"] = round(valor, 3)
+    f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    return {"symbol": symbol, "riesgo_pct": cfg["riesgo_pct"]}
+
+
+def estrategias():
+    """{simbolo: estrategia} de los simbolos con estrategia explicita. Sin fila = `flota`."""
+    con = central()
+    try:
+        return {r[0]: r[1] for r in con.execute("SELECT symbol, estrategia FROM llm_estrategia")}
+    finally:
+        con.close()
+
+
+def estrategia_de(symbol):
+    return estrategias().get(symbol, "flota")
+
+
+def simbolos_con(estrategia):
+    """Simbolos que incluyen esa estrategia: `scalping` incluye tambien los de `ambos`, y `flota` los de `ambos`."""
+    incluye = {"flota": INCLUYE_FLOTA, "scalping": INCLUYE_SCALPING}.get(estrategia, {estrategia})
+    return sorted(s for s, e in estrategias().items() if e in incluye)
+
+
+def _operaciones_scalping_abiertas(symbol):
+    """Operaciones simuladas o reales del scalping que siguen abiertas en este simbolo."""
+    if not SCALPING_DB.is_file():
+        return 0
+    con = sqlite3.connect(SCALPING_DB, timeout=15)
+    try:
+        return con.execute("SELECT COUNT(*) FROM operaciones WHERE estado='abierta' AND symbol=?", (symbol,)).fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0                                   # la tabla aun no existe: nada abierto
+    finally:
+        con.close()
+
+
+def fijar_estrategia(symbol, estrategia):
+    """
+    Cambia la estrategia de un simbolo. Reglas:
+    - scalping y ambos solo en SIMBOLOS_SCALPING.
+    - Para dejar de incluir la flota (scalping o ninguna), su agente no puede estar activo.
+    - Para dejar de incluir el scalping (flota o ninguna), no puede haber operaciones de scalping abiertas.
+    """
+    if _simbolo(symbol) is None:
+        raise ValueError(f"{symbol} no esta en el universo ni en la app")
+    if estrategia not in ESTRATEGIAS:
+        raise ValueError(f"estrategia no valida: {estrategia} (usa {', '.join(ESTRATEGIAS)})")
+    if estrategia in INCLUYE_SCALPING and symbol not in SIMBOLOS_SCALPING:
+        raise ValueError(f"{symbol} no esta permitido para scalping (solo {', '.join(SIMBOLOS_SCALPING)})")
+    actual = estrategia_de(symbol)
+    if actual == estrategia:
+        return {"symbol": symbol, "estrategia": estrategia, "cambio": False}
+    if actual in INCLUYE_FLOTA and estrategia not in INCLUYE_FLOTA:
+        nombre = nombre_agente(symbol)
+        if nombre in _ficheros(None).procesos_corriendo() or _activo_en_registro(symbol):
+            raise ValueError(f"{symbol} tiene el agente de la flota activo: desactívalo antes de cambiar la estrategia")
+    if actual in INCLUYE_SCALPING and estrategia not in INCLUYE_SCALPING and _operaciones_scalping_abiertas(symbol):
+        raise ValueError(f"{symbol} tiene operaciones de scalping abiertas: ciérralas antes de cambiar la estrategia")
+    con = central()
+    try:
+        con.execute("INSERT OR REPLACE INTO llm_estrategia (symbol, estrategia, actualizado) VALUES (?,?,?)",
+                    (symbol, estrategia, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        con.commit()
+    finally:
+        con.close()
+    return {"symbol": symbol, "estrategia": estrategia, "cambio": True}
+
+
+def _activo_en_registro(symbol):
+    con = central()
+    try:
+        fila = con.execute("SELECT activo FROM llm_agentes WHERE symbol=?", (symbol,)).fetchone()
+    finally:
+        con.close()
+    return bool(fila and fila[0])
 
 
 # Tope global de llamadas al dia, para todos los agentes. 0 = sin tope. Lo lee cada agente en cada vuelta.

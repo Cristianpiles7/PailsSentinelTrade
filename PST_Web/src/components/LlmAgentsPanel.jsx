@@ -147,6 +147,30 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     }
   }
 
+  const cambiarRiesgo = async (symbol, riesgoPct) => {
+    setOcupado(o => ({ ...o, [symbol]: true }))
+    try {
+      await api.post(`${API_BASE}/llm/agentes/${encodeURIComponent(symbol)}/riesgo`, { riesgo_pct: riesgoPct })
+      await recargar()
+    } catch (e) {
+      setError(`${symbol}: ${e?.response?.data?.detail || 'no se pudo cambiar el riesgo'}`)
+    } finally {
+      setOcupado(o => ({ ...o, [symbol]: false }))
+    }
+  }
+
+  const cambiarEstrategia = async (symbol, estrategia) => {
+    setOcupado(o => ({ ...o, [symbol]: true }))
+    try {
+      await api.post(`${API_BASE}/llm/agentes/${encodeURIComponent(symbol)}/estrategia`, { estrategia })
+      await recargar()
+    } catch (e) {
+      setError(`${symbol}: ${e?.response?.data?.detail || 'no se pudo cambiar la estrategia'}`)
+    } finally {
+      setOcupado(o => ({ ...o, [symbol]: false }))
+    }
+  }
+
   const cambiarFiltro = async (symbol, sinFiltro) => {
     setOcupado(o => ({ ...o, [symbol]: true }))
     try {
@@ -193,7 +217,7 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     }
   }
 
-  return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, cambiarFiltro,
+  return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, cambiarFiltro, cambiarRiesgo, cambiarEstrategia,
     recargar, limites, guardarLimites, topeDiario, guardarTopeDiario, cuotaTopes, guardarCuotaTopes }
 }
 
@@ -357,14 +381,50 @@ export function LlmLimitesBar({ limites, guardar, activosAhora, topeDiario, guar
 const CAMPO = 'w-full text-[11px] font-bold uppercase bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1.5 disabled:opacity-40 focus:outline-none focus:border-indigo-500/60'
 const BOTON = 'flex-1 flex items-center justify-center gap-1 text-[11px] font-bold uppercase py-1.5 rounded-lg border transition-colors disabled:opacity-40'
 
-export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onTimeframe, onFiltro }) {
+// Riesgo por operacion (% de equity). Los valores de la lista son los habituales; el actual se añade si no esta.
+const RIESGOS = [0.1, 0.25, 0.5, 0.75, 1]
+
+// Estrategia del simbolo: una sola. Con `scalping` el agente de la flota no opera este simbolo.
+const ESTRATEGIAS = [['flota', 'Agente de flota'], ['scalping', 'Scalping'], ['ambos', 'Ambas (flota + scalping)'], ['ninguna', 'Ninguna']]
+
+export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onTimeframe, onFiltro, onRiesgo, onEstrategia }) {
+  const riesgoActual = agente.riesgo_pct ?? 0.5
+  const opcionesRiesgo = RIESGOS.includes(riesgoActual) ? RIESGOS : [...RIESGOS, riesgoActual].sort((a, b) => a - b)
+  const estrategia = agente.estrategia || 'flota'
   const estado = agente.activo ? (agente.live ? 'Demo · opera' : 'Simulación') : 'Apagado'
   const colorEstado = agente.activo
     ? (agente.live ? 'bg-rose-500/15 text-rose-300 border-rose-500/30' : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30')
     : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/60'
 
+  const selectorEstrategia = onEstrategia && (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Estrategia</span>
+      <select value={estrategia} disabled={ocupado} onChange={e => onEstrategia(agente.symbol, e.target.value)}
+        title="Qué estrategia opera este símbolo (solo una a la vez)" className={CAMPO}>
+        {ESTRATEGIAS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+      </select>
+    </label>
+  )
+
+  if (estrategia === 'scalping' || estrategia === 'ninguna') {
+    return (
+      <div onClick={e => e.stopPropagation()} className="flex flex-col gap-2.5 rounded-xl border border-zinc-800/70 bg-zinc-950/60 p-3">
+        {selectorEstrategia}
+        <p className="text-[11px] text-zinc-500">
+          {estrategia === 'scalping'
+            ? 'Lo opera el agente de scalping (configuración en Ajustes › Flota LLM). El agente de la flota no entra aquí.'
+            : 'Sin estrategia: este símbolo no opera.'}
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div onClick={e => e.stopPropagation()} className="flex flex-col gap-2.5 rounded-xl border border-zinc-800/70 bg-zinc-950/60 p-3">
+      {selectorEstrategia}
+      {estrategia === 'ambos' && (
+        <p className="text-[11px] text-zinc-500">También opera el scalping en este símbolo, con su propio magic y sus límites.</p>
+      )}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Bot size={13} className="text-indigo-400" />
@@ -398,6 +458,16 @@ export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onT
           </select>
         </label>
       </div>
+
+      {onRiesgo && (
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Riesgo por operación</span>
+          <select value={riesgoActual} disabled={ocupado} onChange={e => onRiesgo(agente.symbol, Number(e.target.value))}
+            title="Porcentaje de tu equity que arriesga cada operación de este agente" className={CAMPO}>
+            {opcionesRiesgo.map(r => <option key={r} value={r}>{r}% del equity</option>)}
+          </select>
+        </label>
+      )}
 
       {onFiltro && (
         <button disabled={ocupado} onClick={() => onFiltro(agente.symbol, !agente.sin_filtro)}
@@ -512,6 +582,87 @@ export function LlmDecisionesModal({ symbol, api, API_BASE, onCerrar }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Ajustes del agente de scalping (PST_LLM/scalping.py). Los simbolos no van aqui: cada simbolo elige su
+// estrategia en su tarjeta. Cadencia 0 = continuo. Guarda todo de una vez y el agente lo relee en su siguiente vuelta.
+const CAMPOS_SCALPING = [
+  { clave: 'cadencia_s', etiqueta: 'Cadencia (s)', min: 0, max: 600, step: 1, ayuda: '0 = continuo: al acabar una vuelta empieza la siguiente' },
+  { clave: 'pausa_minima_s', etiqueta: 'Pausa mínima (s)', min: 1, max: 60, step: 1, ayuda: 'Pausa entre vueltas, aunque la cadencia sea 0' },
+  { clave: 'riesgo_pct', etiqueta: 'Riesgo por operación (%)', min: 0.05, max: 1, step: 0.05, ayuda: '% de equity que arriesga cada operación' },
+  { clave: 'max_hold_min', etiqueta: 'Tiempo máximo (min)', min: 1, max: 240, step: 1, ayuda: 'Pasado este tiempo la operación se cierra sola' },
+  { clave: 'max_abiertas', etiqueta: 'Operaciones abiertas', min: 1, max: 5, step: 1, ayuda: 'A la vez, en todos los símbolos de scalping' },
+  { clave: 'max_perdida_dia_r', etiqueta: 'Parada diaria (R)', min: 0.5, max: 20, step: 0.5, ayuda: 'Si el día suma esta pérdida en R, no se abre nada más' },
+  { clave: 'max_llamadas_dia', etiqueta: 'Llamadas al día', min: 0, max: 100000, step: 100, ayuda: 'Tope propio del scalping (0 = sin tope)' },
+]
+
+export function LlmScalpingPanel({ api, API_BASE }) {
+  const [cfg, setCfg] = useState(null)
+  const [aviso, setAviso] = useState('')
+  const [guardando, setGuardando] = useState(false)
+
+  const cargar = useCallback(async () => {
+    try {
+      const r = await api.get(`${API_BASE}/llm/scalping`)
+      setCfg(r.data)
+    } catch (e) {
+      setAviso('No se pudo leer la configuración del scalping')
+    }
+  }, [api, API_BASE])
+
+  useEffect(() => { cargar() }, [cargar])
+
+  if (!cfg) return <p className="text-[11px] text-zinc-500">{aviso || 'Cargando scalping…'}</p>
+
+  const set = (clave, valor) => setCfg(c => ({ ...c, [clave]: valor }))
+
+  const guardar = async () => {
+    setGuardando(true)
+    setAviso('')
+    try {
+      const cambios = Object.fromEntries(
+        [...CAMPOS_SCALPING.map(c => c.clave), 'enabled', 'live'].map(k => [k, cfg[k]]))
+      const r = await api.put(`${API_BASE}/llm/scalping`, cambios)
+      setCfg(r.data)
+      setAviso('Guardado. El agente lo aplica en su siguiente vuelta.')
+    } catch (e) {
+      setAviso(e?.response?.data?.detail || 'No se pudo guardar')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-zinc-800/70 bg-zinc-950/60 p-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+          <input type="checkbox" checked={!!cfg.enabled} onChange={e => set('enabled', e.target.checked)} />
+          Activo
+        </label>
+        <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-400"
+          title="Simulación: no envía órdenes. Demo: opera de verdad en la cuenta demo">
+          <input type="checkbox" checked={!!cfg.live} onChange={e => set('live', e.target.checked)} />
+          Operar en demo (si no, simulación)
+        </label>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {CAMPOS_SCALPING.map(c => (
+          <label key={c.clave} className="flex flex-col gap-1" title={c.ayuda}>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{c.etiqueta}</span>
+            <input type="number" min={c.min} max={c.max} step={c.step} value={cfg[c.clave] ?? ''}
+              onChange={e => set(c.clave, e.target.value === '' ? '' : Number(e.target.value))} className={CAMPO} />
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center gap-3">
+        <button onClick={guardar} disabled={guardando}
+          className={`${BOTON} flex-none px-4 border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10`}>
+          Guardar scalping
+        </button>
+        {aviso && <span className="text-[11px] text-zinc-400">{aviso}</span>}
+      </div>
     </div>
   )
 }

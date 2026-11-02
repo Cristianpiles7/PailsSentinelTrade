@@ -95,7 +95,8 @@ def configurar_agente(nombre, magic):
     CONFIG_FILE = DATA_DIR / f"llm_trader{suf}.json"
     MAGIC = magic
     NOMBRE = nombre
-RIESGO_PCT = 0.5            # % de equity arriesgado por operacion
+RIESGO_PCT = 0.5            # % de equity arriesgado por operacion (por defecto; cada agente lo cambia en su config)
+RIESGO_LIMITES = (0.05, 1.0)  # rango permitido para riesgo_pct, en % de equity
 SL_MULT = (1.0, 3.0)        # el modelo elige dentro de este rango (x ATR)
 TP_R = (1.8, 4.0)           # y el TP como multiplo del riesgo. Minimo 1,8 (plan v3 §1.2): tp_r <= 1,5 rendia -0,19 R
 # Marcos en los que se puede basar el stop. Semana del 23-30 oct: M1 -0,66 R, M5 -0,09 R, M15 +0,20 R (plan v3 §1.2).
@@ -241,7 +242,7 @@ CONFIG_CLAVES = {"enabled": bool, "symbol": str, "timeframe": str, "model": str,
                  "live": bool, "sin_filtro": bool, "max_llamadas_dia": int, "max_perdida_dia": float,
                  "sesion_continua": bool, "reiniciar_cada": int, "telegram": bool, "aviso_cooldown_min": int,
                  "timeframes_analisis": list, "max_perdida_flota_dia": float, "equity_minima": float,
-                 "enfriamiento_min": int, "min_cierre_min": int, "margen_sesion_min": int}
+                 "enfriamiento_min": int, "min_cierre_min": int, "margen_sesion_min": int, "riesgo_pct": float}
 TF_SEGUNDOS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
 # "timeframe" es CADA CUANTO se llama al agente (el reloj). "timeframes_analisis" son los marcos
 # que ve en cada llamada; el agente elige en cual se apoya cada operacion.
@@ -250,6 +251,7 @@ TF_ANALISIS_DEFECTO = ["M5", "M15", "H1", "H4", "D1"]
 
 def aplicar_config(args):
     """Vuelca el fichero sobre args. Devuelve la lista de cambios (para avisar por consola)."""
+    global RIESGO_PCT
     if not CONFIG_FILE.is_file():
         return []
     try:
@@ -271,6 +273,9 @@ def aplicar_config(args):
                 continue
             if k == "timeframe" and v not in TF_SEGUNDOS:
                 continue
+            if k == "riesgo_pct":
+                v = min(max(v, RIESGO_LIMITES[0]), RIESGO_LIMITES[1])
+                RIESGO_PCT = v                     # calcular_orden lee este global en cada operacion
             if getattr(args, k, None) != v:
                 cambios.append(f"{k}: {getattr(args, k, None)} -> {v}")
                 setattr(args, k, v)

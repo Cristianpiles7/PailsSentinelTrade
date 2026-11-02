@@ -25,8 +25,9 @@ if _LLM not in sys.path:
     sys.path.insert(0, _LLM)
 
 import calendario     # noqa: E402  (PST_LLM/calendario.py)
-import registro       # noqa: E402  (PST_LLM/registro.py)
-import universo       # noqa: E402
+import registro         # noqa: E402  (PST_LLM/registro.py)
+import scalping_config  # noqa: E402  (PST_LLM/scalping_config.py)
+import universo         # noqa: E402
 
 router = APIRouter(tags=["LLM"])
 logger = logging.getLogger("PST-Calendario")
@@ -177,6 +178,45 @@ async def cambiar_filtro_agente(symbol: str, body: FiltroRequest):
     _validar(symbol)
     try:
         return await asyncio.to_thread(registro.cambiar_filtro, symbol, body.sin_filtro)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class RiesgoRequest(BaseModel):
+    riesgo_pct: float         # % de equity arriesgado por operacion de este agente (0,05 a 1)
+
+
+@router.post("/api/llm/agentes/{symbol}/riesgo")
+async def cambiar_riesgo_agente(symbol: str, body: RiesgoRequest):
+    _validar(symbol)
+    try:
+        return await asyncio.to_thread(registro.cambiar_riesgo, symbol, body.riesgo_pct)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class EstrategiaRequest(BaseModel):
+    estrategia: str           # flota | scalping | ninguna
+
+
+@router.post("/api/llm/agentes/{symbol}/estrategia")
+async def cambiar_estrategia_simbolo(symbol: str, body: EstrategiaRequest):
+    _validar(symbol)
+    try:
+        return await asyncio.to_thread(registro.fijar_estrategia, symbol, body.estrategia)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/llm/scalping")
+async def leer_scalping():
+    return await asyncio.to_thread(scalping_config.leer)
+
+
+@router.put("/api/llm/scalping")
+async def guardar_scalping(cambios: dict):
+    try:
+        return await asyncio.to_thread(scalping_config.guardar, cambios)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
