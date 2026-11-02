@@ -833,15 +833,15 @@ function App() {
 
 
 
-      <div className="fixed top-0 left-20 right-0 h-20 border-b border-white/5 bg-[#050505]/40 backdrop-blur-3xl z-40 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-6 px-8 shadow-2xl">
-        <div className="row-start-1 col-start-2 min-w-0 flex flex-col items-center text-center pointer-events-none select-none">
+      <div className="fixed top-0 left-20 right-0 h-20 border-b border-white/5 bg-[#050505]/40 backdrop-blur-3xl z-40 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-6 shadow-2xl">
+        <div className="row-start-1 col-start-2 min-w-0 hidden xl:flex flex-col items-center text-center pointer-events-none select-none">
           <span className="max-w-full truncate text-lg font-semibold text-white tracking-tight leading-tight">{tituloPagina}</span>
           <span className="max-w-full truncate text-[11px] font-medium text-zinc-500 tracking-wide">{subtituloPagina}</span>
         </div>
 
 
 
-        <div className="row-start-1 col-start-1 flex items-center gap-3 bg-white/[0.03] border border-white/10 px-4 py-2.5 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
+        <div className="row-start-1 col-start-1 min-w-0 flex items-center gap-2.5 bg-white/[0.03] border border-white/10 px-3.5 py-2 rounded-2xl overflow-x-auto shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
 
 
 
@@ -849,11 +849,11 @@ function App() {
 
 
 
-            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Core Balance</span>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider leading-none mb-1 whitespace-nowrap">Core Balance</span>
 
 
 
-            <span className="text-base font-bold text-white  tracking-tighter">{account?.balance?.toLocaleString() || '0.00'}€</span>
+            <span className="text-sm font-bold text-white tabular-nums whitespace-nowrap">{account?.balance?.toLocaleString() || '0.00'}€</span>
 
 
 
@@ -861,7 +861,7 @@ function App() {
 
 
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
+          <div className="w-px h-8 bg-zinc-800/50" />
 
 
 
@@ -869,11 +869,11 @@ function App() {
 
 
 
-            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Active Equity</span>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider leading-none mb-1 whitespace-nowrap">Active Equity</span>
 
 
 
-            <span className="text-base font-bold text-white  tracking-tighter">{account?.equity?.toLocaleString() || '0.00'}€</span>
+            <span className="text-sm font-bold text-white tabular-nums whitespace-nowrap">{account?.equity?.toLocaleString() || '0.00'}€</span>
 
 
 
@@ -881,7 +881,7 @@ function App() {
 
 
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
+          <div className="w-px h-8 bg-zinc-800/50" />
 
 
 
@@ -889,11 +889,11 @@ function App() {
 
 
 
-            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Active Fleet PnL</span>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider leading-none mb-1 whitespace-nowrap">Active Fleet PnL</span>
 
 
 
-            <span className={`text-base font-bold  tracking-tighter ${account?.active_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            <span className={`text-sm font-bold tabular-nums whitespace-nowrap ${account?.active_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
 
 
 
@@ -909,7 +909,7 @@ function App() {
 
 
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
+          <div className="w-px h-8 bg-zinc-800/50" />
 
 
 
@@ -921,7 +921,7 @@ function App() {
 
 
 
-              <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none">Day Performance</span>
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider leading-none whitespace-nowrap">Day Performance</span>
 
 
 
@@ -933,7 +933,7 @@ function App() {
 
 
 
-            <span className={`text-base font-bold  tracking-tighter ${account?.daily_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            <span className={`text-sm font-bold tabular-nums whitespace-nowrap ${account?.daily_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
 
 
 
@@ -949,27 +949,27 @@ function App() {
 
 
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
+          <div className="w-px h-8 bg-zinc-800/50" />
 
           <div className="flex flex-col" title="Coste acumulado de la flota LLM a precio de API (no es lo que se paga con la suscripción)">
-            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">LLM · coste API</span>
-            <span className="text-base font-bold text-white  tracking-tighter">
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider leading-none mb-1 whitespace-nowrap">LLM · coste API</span>
+            <span className="text-sm font-bold text-white tabular-nums whitespace-nowrap">
               {llm.costeTotal != null ? `$${llm.costeTotal.toFixed(2)}` : '—'}
             </span>
           </div>
 
-          <div className="w-px h-8 bg-zinc-800/50 mx-1" />
+          <div className="w-px h-8 bg-zinc-800/50" />
 
           <div className="flex flex-col" title={llm.cuota?.disponible ? `Ventana 5h reinicia ${new Date(llm.cuota.cinco_h_reset * 1000).toLocaleString()} · semanal reinicia ${new Date(llm.cuota.semanal_reset * 1000).toLocaleString()}` : 'Sin dato de cuota (habblaud)'}>
-            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">Cuota Claude 5h / sem</span>
-            <span className={`text-base font-bold  tracking-tighter ${llm.cuota?.cinco_h >= 60 || llm.cuota?.semanal >= 70 ? 'text-rose-500' : 'text-white'}`}>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider leading-none mb-1 whitespace-nowrap">Cuota Claude 5h / sem</span>
+            <span className={`text-sm font-bold tabular-nums whitespace-nowrap ${llm.cuota?.cinco_h >= 60 || llm.cuota?.semanal >= 70 ? 'text-rose-500' : 'text-white'}`}>
               {llm.cuota?.disponible ? `${llm.cuota.cinco_h ?? '—'}% / ${llm.cuota.semanal ?? '—'}%` : '—'}
             </span>
           </div>
 
         </div>
 
-        <div className="row-start-1 col-start-3 justify-self-end flex items-center gap-8">
+        <div className="row-start-1 col-start-3 justify-self-end flex items-center gap-4 min-w-0">
 
 
 
@@ -2693,6 +2693,7 @@ function App() {
                               onTimeframe={llm.cambiarTimeframe}
                               onFiltro={llm.cambiarFiltro}
                               onRiesgo={llm.cambiarRiesgo}
+                              onRiesgoScalping={llm.cambiarRiesgoScalping}
                               onEstrategia={llm.cambiarEstrategia}
                               onDecisiones={setLlmDecisiones}
                             />

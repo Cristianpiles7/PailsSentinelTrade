@@ -383,6 +383,7 @@ def estado():
             "symbol": s.symbol, "clase": s.clase, "modelo": _modelo_de_config(nombre, s.modelo),
             "timeframe": _config_de(nombre, "timeframe", "M5"), "magic": s.magic, "nombre": nombre,
             "estrategia": asignadas.get(s.symbol, "flota"),
+            "riesgo_scalping": _riesgo_scalping(s.symbol),
             "activo": activo, "live": live, "sin_filtro": _sin_filtro_de(nombre),
             "riesgo_pct": _config_de(nombre, "riesgo_pct", RIESGO_DEFECTO),
             "vivo": vivo, "pid": vivos.get(nombre), "actualizado": fila[3] if fila else None,
@@ -502,6 +503,11 @@ def cambiar_riesgo(symbol, riesgo_pct):
     cfg["riesgo_pct"] = round(valor, 3)
     f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return {"symbol": symbol, "riesgo_pct": cfg["riesgo_pct"]}
+
+
+def _riesgo_scalping(symbol):
+    import scalping_config
+    return scalping_config.riesgo_de(symbol)
 
 
 def estrategias():

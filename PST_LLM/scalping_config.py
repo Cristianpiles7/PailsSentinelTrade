@@ -18,7 +18,8 @@ DEFECTO = {
     "live": False,                  # False = simulacion. True = orden real, solo en cuenta DEMO
     "cadencia_s": 60,               # cada cuantos segundos se llama a cada simbolo. 0 = continuo
     "pausa_minima_s": 1,            # pausa minima entre vueltas aunque la cadencia sea 0 o ya se cumpla
-    "riesgo_pct": 0.25,             # % de equity arriesgado por operacion
+    "riesgo_pct": 0.25,             # % de equity arriesgado por operacion (si el simbolo no tiene el suyo)
+    "riesgo_por_simbolo": {},       # {simbolo: %} de equity por operacion, por simbolo de scalping
     "max_hold_min": 20,             # tiempo maximo dentro de la operacion; despues se cierra
     "max_abiertas": 2,              # operaciones simultaneas, en todos los simbolos del scalping
     "max_perdida_dia_r": 3.0,       # si el dia suma -R, no se abre nada mas
@@ -76,6 +77,20 @@ def guardar(cambios):
             if valor not in ESFUERZOS:
                 raise ValueError(f"esfuerzo no valido: {valor} (usa {', '.join(ESFUERZOS)})")
             limpio[clave] = valor
+        elif clave == "riesgo_por_simbolo":
+            if not isinstance(valor, dict):
+                raise ValueError("riesgo_por_simbolo debe ser un objeto {simbolo: %}")
+            lo, hi = RANGOS["riesgo_pct"]
+            mapa = {}
+            for sym, pct in valor.items():
+                try:
+                    v = float(pct)
+                except (TypeError, ValueError):
+                    raise ValueError(f"riesgo de {sym} debe ser un numero")
+                if not lo <= v <= hi:
+                    raise ValueError(f"riesgo de {sym} fuera de rango: usa entre {lo} y {hi}")
+                mapa[sym] = round(v, 4)
+            limpio[clave] = mapa
         elif clave in RANGOS:
             lo, hi = RANGOS[clave]
             try:
@@ -93,3 +108,21 @@ def guardar(cambios):
     DATA.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(actual, indent=2), encoding="utf-8")
     return leer()
+
+
+def riesgo_de(symbol, cfg=None):
+    """% de equity por operacion de este simbolo: el suyo si lo tiene, si no el general del scalping."""
+    cfg = cfg or leer()
+    return float((cfg.get("riesgo_por_simbolo") or {}).get(symbol, cfg["riesgo_pct"]))
+
+
+def fijar_riesgo_simbolo(symbol, riesgo_pct):
+    """Cambia el riesgo de un simbolo de scalping. Lanza ValueError si el valor no vale."""
+    try:
+        valor = float(riesgo_pct)
+    except (TypeError, ValueError):
+        raise ValueError("riesgo no valido: debe ser un numero")
+    mapa = dict(leer().get("riesgo_por_simbolo") or {})
+    mapa[symbol] = valor
+    guardar({"riesgo_por_simbolo": mapa})
+    return {"symbol": symbol, "riesgo_pct": riesgo_de(symbol)}

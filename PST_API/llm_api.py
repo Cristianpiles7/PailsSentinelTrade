@@ -221,6 +221,21 @@ async def guardar_scalping(cambios: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class RiesgoScalpingRequest(BaseModel):
+    riesgo_pct: float         # % de equity por operacion de scalping en este simbolo (0,05 a 1)
+
+
+@router.post("/api/llm/agentes/{symbol}/riesgo-scalping")
+async def cambiar_riesgo_scalping(symbol: str, body: RiesgoScalpingRequest):
+    _validar(symbol)
+    if symbol not in registro.simbolos_con("scalping"):
+        raise HTTPException(status_code=400, detail=f"{symbol} no tiene scalping: asignale la estrategia primero")
+    try:
+        return await asyncio.to_thread(scalping_config.fijar_riesgo_simbolo, symbol, body.riesgo_pct)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class TopeDiarioRequest(BaseModel):
     max_llamadas_dia: int     # llamadas al modelo por dia, para todos los agentes. 0 = sin tope
 

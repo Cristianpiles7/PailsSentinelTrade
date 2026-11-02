@@ -159,6 +159,18 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     }
   }
 
+  const cambiarRiesgoScalping = async (symbol, riesgoPct) => {
+    setOcupado(o => ({ ...o, [symbol]: true }))
+    try {
+      await api.post(`${API_BASE}/llm/agentes/${encodeURIComponent(symbol)}/riesgo-scalping`, { riesgo_pct: riesgoPct })
+      await recargar()
+    } catch (e) {
+      setError(`${symbol}: ${e?.response?.data?.detail || 'no se pudo cambiar el riesgo del scalping'}`)
+    } finally {
+      setOcupado(o => ({ ...o, [symbol]: false }))
+    }
+  }
+
   const cambiarEstrategia = async (symbol, estrategia) => {
     setOcupado(o => ({ ...o, [symbol]: true }))
     try {
@@ -217,7 +229,7 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
     }
   }
 
-  return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, cambiarFiltro, cambiarRiesgo, cambiarEstrategia,
+  return { agentes, costeTotal, cuota, error, aviso, ocupado, accion, cambiarModelo, cambiarTimeframe, cambiarFiltro, cambiarRiesgo, cambiarRiesgoScalping, cambiarEstrategia,
     recargar, limites, guardarLimites, topeDiario, guardarTopeDiario, cuotaTopes, guardarCuotaTopes }
 }
 
@@ -387,10 +399,21 @@ const RIESGOS = [0.1, 0.25, 0.5, 0.75, 1]
 // Estrategia del simbolo: una sola. Con `scalping` el agente de la flota no opera este simbolo.
 const ESTRATEGIAS = [['flota', 'Agente de flota'], ['scalping', 'Scalping'], ['ambos', 'Ambas (flota + scalping)'], ['ninguna', 'Ninguna']]
 
-export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onTimeframe, onFiltro, onRiesgo, onEstrategia }) {
+export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onTimeframe, onFiltro, onRiesgo, onRiesgoScalping, onEstrategia }) {
   const riesgoActual = agente.riesgo_pct ?? 0.5
   const opcionesRiesgo = RIESGOS.includes(riesgoActual) ? RIESGOS : [...RIESGOS, riesgoActual].sort((a, b) => a - b)
   const estrategia = agente.estrategia || 'flota'
+  const riesgoScalping = agente.riesgo_scalping ?? 0.25
+  const opcionesRiesgoScalping = RIESGOS.includes(riesgoScalping) ? RIESGOS : [...RIESGOS, riesgoScalping].sort((a, b) => a - b)
+  const selectorRiesgoScalping = onRiesgoScalping && (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Riesgo · scalping</span>
+      <select value={riesgoScalping} disabled={ocupado} onChange={e => onRiesgoScalping(agente.symbol, Number(e.target.value))}
+        title="Porcentaje de tu equity que arriesga cada operación de scalping en este símbolo" className={CAMPO}>
+        {opcionesRiesgoScalping.map(r => <option key={r} value={r}>{r}% del equity</option>)}
+      </select>
+    </label>
+  )
   const estado = agente.activo ? (agente.live ? 'Demo · opera' : 'Simulación') : 'Apagado'
   const colorEstado = agente.activo
     ? (agente.live ? 'bg-rose-500/15 text-rose-300 border-rose-500/30' : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30')
@@ -410,6 +433,7 @@ export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onT
     return (
       <div onClick={e => e.stopPropagation()} className="flex flex-col gap-2.5 rounded-xl border border-zinc-800/70 bg-zinc-950/60 p-3">
         {selectorEstrategia}
+        {estrategia === 'scalping' && selectorRiesgoScalping}
         <p className="text-[11px] text-zinc-500">
           {estrategia === 'scalping'
             ? 'Lo opera el agente de scalping (configuración en Ajustes › Flota LLM). El agente de la flota no entra aquí.'
@@ -425,6 +449,7 @@ export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onT
       {estrategia === 'ambos' && (
         <p className="text-[11px] text-zinc-500">También opera el scalping en este símbolo, con su propio magic y sus límites.</p>
       )}
+      {estrategia === 'ambos' && selectorRiesgoScalping}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Bot size={13} className="text-indigo-400" />
@@ -461,7 +486,7 @@ export function LlmFila({ agente, ocupado, onAccion, onDecisiones, onModelo, onT
 
       {onRiesgo && (
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Riesgo por operación</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{estrategia === 'ambos' ? 'Riesgo · flota' : 'Riesgo por operación'}</span>
           <select value={riesgoActual} disabled={ocupado} onChange={e => onRiesgo(agente.symbol, Number(e.target.value))}
             title="Porcentaje de tu equity que arriesga cada operación de este agente" className={CAMPO}>
             {opcionesRiesgo.map(r => <option key={r} value={r}>{r}% del equity</option>)}

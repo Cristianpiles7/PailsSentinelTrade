@@ -233,7 +233,7 @@ def calcular(mt5, symbol, lado, snap, cfg, sl_atr, tp_r, cuenta):
     coste_r = spread / dist + lt.comision_por_lote(mt5, info.name) / abs(perdida_1lote)
     if coste_r > cfg["max_coste_r"]:
         return None, f"coste {coste_r * 100:.1f}% del R (maximo {cfg['max_coste_r'] * 100:.0f}%)"
-    riesgo = cuenta.equity * cfg["riesgo_pct"] / 100
+    riesgo = cuenta.equity * scalping_config.riesgo_de(info.name, cfg) / 100
     paso = info.volume_step
     lotes = max(info.volume_min, min(info.volume_max, math.floor(riesgo / abs(perdida_1lote) / paso) * paso))
     if lotes * abs(perdida_1lote) > riesgo * 2:
