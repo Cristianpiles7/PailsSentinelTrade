@@ -258,8 +258,8 @@ function App() {
   }, [isAuthenticated])
 
   // Polling solo con la ventana visible: en segundo plano no hace falta refrescar nada
-  usePollingWhenVisible(fetchData, 3000, isAuthenticated)
-  usePollingWhenVisible(fetchLogs, 10000, isAuthenticated)
+  usePollingWhenVisible(() => fetchData(), 3000, isAuthenticated)
+  usePollingWhenVisible(() => fetchLogs(), 10000, isAuthenticated)
   usePollingWhenVisible(() => {
     fetchAnalytics();
     fetchHistory();
