@@ -9,7 +9,7 @@ import axios from 'axios'
 
 import {
   TrendingUp, TrendingDown, Wallet, Activity, BarChart3, Settings, ShieldCheck,
-  ArrowUpRight, RefreshCw, Power, Target, Clock, ShieldAlert, BookMarked,
+  ArrowUpRight, RefreshCw, Power, Target, Clock, BookMarked,
   Image as ImageIcon, FileText, ChevronRight, Save, X, MoreVertical, LayoutDashboard,
   LayoutGrid, History, ShoppingCart, Zap, Trash2, ChevronUp, ChevronDown, Cpu,
   Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, SlidersHorizontal
@@ -215,8 +215,6 @@ function App() {
   const [logs, setLogs] = useState([])
   const [isMuted, setIsMuted] = useState(false)
   const [replayTrade, setReplayTrade] = useState(null)
-  const [upcomingNews, setUpcomingNews] = useState([])
-  const [isNewsBlocked, setIsNewsBlocked] = useState(false)
   const prevTicketsRef = useRef(new Set()) // tickets abiertos en el último fetch, para detectar aperturas/cierres nuevos
 
   // -- FASE 51-53 EXPANSION --
@@ -254,7 +252,6 @@ function App() {
     fetchPerformance();
     fetchHistory();
     fetchLogs();
-    fetchNews();
   }, [isAuthenticated])
 
   // Polling solo con la ventana visible: en segundo plano no hace falta refrescar nada
@@ -263,7 +260,6 @@ function App() {
   usePollingWhenVisible(() => {
     fetchAnalytics();
     fetchHistory();
-    fetchNews();
   }, 10000, isAuthenticated)
 
   // Alertas de posiciones reales (2026-09-02): sustituye al sistema de alertas por "score" del
@@ -488,27 +484,6 @@ function App() {
       addToast(`${symbol} ${encender ? 'activado' : 'desactivado'}`, 'success')
       fetchData()
     } catch (err) { addToast('Error updating status', 'error') }
-  }
-
-  const fetchNews = async () => {
-    try {
-      const res = await api.get(`${API_BASE}/news/upcoming`)
-      setUpcomingNews(res.data.upcoming || [])
-      setIsNewsBlocked(res.data.is_global_block || false)
-    } catch (err) {
-      console.error("Error fetching news:", err)
-    }
-  }
-
-  const getNewsCountdown = (timeIso) => {
-    if (!timeIso) return ""
-    const target = new Date(timeIso)
-    const diff = target - new Date()
-    if (diff <= 0) return "IMM"
-    const mins = Math.floor(diff / 60000)
-    const hours = Math.floor(mins / 60)
-    if (hours > 0) return `${hours}h ${mins % 60}m`
-    return `${mins}m`
   }
 
   const fetchAnalytics = async () => {
@@ -959,33 +934,13 @@ function App() {
 
         </div>
 
-        <div className="row-start-1 col-start-3 justify-self-end flex items-center gap-4 min-w-0">
+        <div className="row-start-1 col-start-3 justify-self-end flex items-center gap-4 min-w-max">
 
 
 
           <EstadoSistemaWidget url={`${API_BASE}/health`} />
 
           <CalendarioRestringidoWidget url={`${API_BASE}/calendario/proximo`} />
-
-          {/* News Guard Segment (Fase 50) */}
-          {upcomingNews.length > 0 && (
-            <div className={`flex items-center gap-4 bg-zinc-900/50 px-5 py-2.5 rounded-2xl border transition-all duration-500 ${isNewsBlocked ? 'border-rose-500/40 bg-rose-500/5' : 'border-zinc-800/50'}`}>
-              <ShieldAlert size={16} className={isNewsBlocked ? 'text-rose-400 animate-pulse' : 'text-zinc-500'} />
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">
-                  {isNewsBlocked ? 'NEWS BLOCK ACTIVE' : 'UPCOMING NEWS'}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-bold ${isNewsBlocked ? 'text-rose-400' : 'text-zinc-300'} truncate max-w-[150px]`}>
-                    {upcomingNews[0].country} {upcomingNews[0].title}
-                  </span>
-                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md bg-zinc-800 border border-white/5 ${isNewsBlocked ? 'text-rose-300' : 'text-indigo-400'}`}>
-                    {getNewsCountdown(upcomingNews[0].time_utc)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
 
           <div className="flex items-center gap-6">
 
