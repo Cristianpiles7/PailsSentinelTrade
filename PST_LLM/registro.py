@@ -398,13 +398,17 @@ def estado():
         coste = {}
     out = []
     asignadas = estrategias()
+    # Scalping: el estado de sus simbolos es el del proceso (fijos, no los toca la flota ni la rotacion)
+    import scalping_proceso
+    scal_syms = set(simbolos_con("scalping"))
+    scal_on = scalping_proceso.pid_corriendo() is not None and scalping_proceso.intencion_encendida()
     for s in simbolos_disponibles():
         nombre = nombre_agente(s.symbol)
         fila = filas.get(s.symbol)
         vivo = nombre in vivos
         # Un agente que corre aunque no tenga fila (arrancado antes de existir este registro) cuenta
         # como activo; el modo sale de su fichero de configuracion.
-        activo = bool(fila and fila[1]) or vivo
+        activo = scal_on if s.symbol in scal_syms else (bool(fila and fila[1]) or vivo)
         live = bool(fila[2]) if fila else _live_de_config(nombre, s.symbol)
         out.append({
             "symbol": s.symbol, "clase": s.clase, "modelo": _modelo_de_config(nombre, s.modelo, s.symbol),
@@ -584,6 +588,8 @@ def fijar_estrategia(symbol, estrategia):
         raise ValueError(f"{symbol} no esta en el universo ni en la app")
     if estrategia not in ESTRATEGIAS:
         raise ValueError(f"estrategia no valida: {estrategia} (usa {', '.join(ESTRATEGIAS)})")
+    if symbol in SIMBOLOS_SCALPING and estrategia not in INCLUYE_SCALPING:
+        raise ValueError(f"{symbol} es fijo del scalping: no se le puede quitar esa estrategia")
     if estrategia in INCLUYE_SCALPING and symbol not in SIMBOLOS_SCALPING:
         raise ValueError(f"{symbol} no esta permitido para scalping (solo {', '.join(SIMBOLOS_SCALPING)})")
     actual = estrategia_de(symbol)

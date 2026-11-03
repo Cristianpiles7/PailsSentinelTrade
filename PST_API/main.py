@@ -237,7 +237,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.62",
+    version="2.6.64",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -1458,6 +1458,8 @@ def start_app():
     threading.Thread(target=_arrancar_agentes_llm, daemon=True).start()
     # Agente puntuador de la home (PST_LLM/puntuador.py): propio, no es de la flota de trading.
     _arrancar_puntuador()
+    # Scalping: se relanza si el usuario lo dejo encendido (mismo criterio que los agentes de la flota)
+    threading.Thread(target=_arrancar_scalping, daemon=True).start()
 
     # Lanzar ventana nativa única apuntando al puerto dinámico
     webview.create_window(
@@ -1533,6 +1535,23 @@ def _detener_agentes_llm():
         logger.info("🤖 Agentes LLM parados al cerrar la app")
     except Exception:
         logger.exception("❌ No se pudieron parar los agentes LLM al cerrar")
+    try:
+        import scalping_proceso
+        # La intencion (enabled) no cambia: al abrir la app vuelve a arrancar
+        scalping_proceso.parar()
+        logger.info("🤖 Scalping parado al cerrar la app")
+    except Exception:
+        logger.exception("❌ No se pudo parar el scalping al cerrar")
+
+
+def _arrancar_scalping():
+    try:
+        import scalping_proceso
+        pid = scalping_proceso.arrancar_si_encendido()
+        if pid:
+            logger.info(f"🤖 Scalping arrancado al abrir la app (PID {pid})")
+    except Exception:
+        logger.exception("❌ No se pudo arrancar el scalping al abrir")
 
 if __name__ == "__main__":
     start_app()

@@ -393,7 +393,8 @@ def _activos_ahora():
         BLOQUEADOS.update(niveles.en_banquillo())     # banquillo (plan v3 fase 6): la rotacion no lo vuelve a poner
     except Exception as e:
         print(f"[rotacion] niveles: {type(e).__name__}: {e}", flush=True)
-    return {x["symbol"]: x for x in flota if x["activo"]}
+    # Solo la flota: los simbolos de scalping son fijos y nunca entran en la rotacion ni se les quita nada.
+    return {x["symbol"]: x for x in flota if x["activo"] and x["estrategia"] in registro.INCLUYE_FLOTA}
 
 
 def ciclo(mt5, ranking_toca=False):

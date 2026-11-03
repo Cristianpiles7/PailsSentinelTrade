@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Layers, Bot, Activity } from 'lucide-react'
 import { ConfigForm } from './ConfigForm'
+import { LlmCriterioPanel } from './LlmCriterioPanel'
 
 // Una pantalla por estrategia. Pestañas: Resumen (que hace y como va), Simbolos (los agentes de esa
 // estrategia, con su configuracion propia desplegable) y Configuracion (parametros de la estrategia).
@@ -22,7 +23,7 @@ function Stat({ etiqueta, valor }) {
   )
 }
 
-function FilaSimbolo({ agente, estrategia, esquema, API_BASE, api, abierta, onAbrir, posiciones }) {
+function FilaSimbolo({ agente, estrategia, esquema, API_BASE, api, abierta, onAbrir, posiciones, activo }) {
   const [valores, setValores] = useState(null)
   const [error, setError] = useState('')
 
@@ -45,7 +46,6 @@ function FilaSimbolo({ agente, estrategia, esquema, API_BASE, api, abierta, onAb
     setValores(r.data.valores)
   }
 
-  const activo = agente.activo
   return (
     <div className={`${TARJETA} flex flex-col gap-3 ${activo ? '' : 'opacity-60'}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -108,6 +108,26 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
       .catch(() => setConfigEst(null))
   }, [api, API_BASE, activa, seccion])
 
+  const [scal, setScal] = useState(null)
+  const [ocupadoScal, setOcupadoScal] = useState(false)
+  const cargarScal = useCallback(() => {
+    api.get(`${API_BASE}/estrategias/scalping/estado`).then(r => setScal(r.data)).catch(() => {})
+  }, [api, API_BASE])
+  useEffect(() => { cargarScal() }, [cargarScal])
+
+  const accionScal = async (ruta) => {
+    setOcupadoScal(true)
+    setError('')
+    try {
+      const r = await api.post(`${API_BASE}/estrategias/scalping/${ruta}`)
+      setScal(r.data)
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'No se pudo cambiar el agente de scalping')
+    } finally {
+      setOcupadoScal(false)
+    }
+  }
+
   const estrategia = estrategias.find(e => e.id === activa)
   const agentesDe = useMemo(() => (estrategia ? agentes.filter(a => incluye(a, estrategia.id)) : []), [agentes, estrategia])
   const posicionesPor = useMemo(() => Object.fromEntries((symbols || []).map(s => [s.symbol, s.open_positions || 0])), [symbols])
@@ -157,6 +177,30 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
             <Stat etiqueta="Ordenes reales" valor={reales} />
             <Stat etiqueta="Posiciones abiertas" valor={totalPosiciones} />
           </div>
+          {estrategia.id === 'scalping' && scal && (
+            <div className={`${TARJETA} flex flex-wrap items-center justify-between gap-4`}>
+              <div className="flex flex-col gap-1">
+                <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Agente de scalping</p>
+                <p className={`text-sm font-bold uppercase tracking-wider ${scal.corriendo ? 'text-emerald-300' : 'text-zinc-400'}`}>
+                  {ocupadoScal ? 'Cambiando…' : scal.corriendo ? `En marcha (PID ${scal.pid})` : 'Parado'}
+                </p>
+                <p className="text-[11px] text-zinc-600 font-bold uppercase tracking-wider">
+                  {scal.encendido ? 'Se relanza al abrir la app' : 'No se relanza al abrir la app'}
+                </p>
+              </div>
+              {scal.corriendo ? (
+                <button disabled={ocupadoScal} onClick={() => accionScal('parar')}
+                  className="text-[11px] font-bold uppercase tracking-widest px-4 py-2 rounded-xl border border-rose-500/50 text-rose-300 disabled:opacity-40">
+                  Parar
+                </button>
+              ) : (
+                <button disabled={ocupadoScal} onClick={() => accionScal('arrancar')}
+                  className="text-[11px] font-bold uppercase tracking-widest px-4 py-2 rounded-xl border border-emerald-500/50 text-emerald-300 disabled:opacity-40">
+                  Arrancar
+                </button>
+              )}
+            </div>
+          )}
           <p className="text-[11px] text-zinc-600 font-bold uppercase tracking-wider">
             Para cambiar el comportamiento de un símbolo, ábrelo en la pestaña Símbolos. Los parámetros comunes están en Configuración.
           </p>
@@ -169,6 +213,7 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
           {agentesDe.map(a => (
             <FilaSimbolo key={`${estrategia.id}-${a.symbol}`} agente={a} estrategia={estrategia.id} esquema={esquema}
               API_BASE={API_BASE} api={api} abierta={abierto === a.symbol}
+              activo={estrategia.id === 'scalping' ? !!(scal && scal.corriendo && scal.encendido) : !!a.activo}
               onAbrir={sym => setAbierto(abierto === sym ? null : sym)} posiciones={posicionesPor[a.symbol] || 0} />
           ))}
         </div>
@@ -184,6 +229,13 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
             ? <ConfigForm definiciones={defsEstrategia} valores={configEst} onGuardar={guardarEstrategia}
                 vacio="Esta estrategia no tiene parámetros propios: sus símbolos se configuran en la pestaña Símbolos" />
             : <p className="text-[11px] text-zinc-600 font-bold uppercase tracking-wider">Cargando…</p>}
+        </div>
+      )}
+
+      {seccion === 'config' && estrategia.id === 'flota' && (
+        <div className="flex flex-col gap-3">
+          <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Prompts de los símbolos</p>
+          <LlmCriterioPanel api={api} API_BASE={API_BASE} agentes={agentesDe} />
         </div>
       )}
     </div>

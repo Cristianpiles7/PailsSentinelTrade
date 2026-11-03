@@ -29,6 +29,7 @@ if _LLM not in sys.path:
 
 import config_store   # noqa: E402  (PST_LLM/config_store.py)
 import registro       # noqa: E402  (PST_LLM/registro.py)
+import scalping_proceso  # noqa: E402  (PST_LLM/scalping_proceso.py)
 
 router = APIRouter(tags=["Estrategias"])
 logger = logging.getLogger("PST-Config")
@@ -149,6 +150,26 @@ async def guardar_simbolo(estrategia: str, symbol: str, body: CambiosRequest):
     await _guardar(estrategia, symbol, body)
     return {"estrategia": estrategia, "simbolo": symbol,
             "valores": await asyncio.to_thread(_valores, estrategia, symbol)}
+
+
+@router.get("/api/estrategias/scalping/estado")
+async def estado_scalping():
+    return await asyncio.to_thread(scalping_proceso.estado)
+
+
+@router.post("/api/estrategias/scalping/arrancar")
+async def arrancar_scalping():
+    # La intencion queda guardada: al abrir la app se relanza solo
+    await _guardar("scalping", "", CambiosRequest(cambios={"enabled": True}))
+    await asyncio.to_thread(scalping_proceso.arrancar)
+    return await asyncio.to_thread(scalping_proceso.estado)
+
+
+@router.post("/api/estrategias/scalping/parar")
+async def parar_scalping():
+    await _guardar("scalping", "", CambiosRequest(cambios={"enabled": False}))
+    await asyncio.to_thread(scalping_proceso.parar)
+    return await asyncio.to_thread(scalping_proceso.estado)
 
 
 @router.get("/api/config/divergencias")
