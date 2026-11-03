@@ -31,6 +31,7 @@ import numpy as np
 
 import calendario
 import llm_trader as lt
+import prompts
 import registro
 import scalping_config
 
@@ -67,7 +68,7 @@ SCHEMA = {
     "required": ["decisions"],
 }
 
-PROMPT = """ROLE
+PROMPT_FIJO = """ROLE
 You are a discretionary SCALPER on a DEMO account. You trade index CFDs, holding positions for minutes.
 You are called once per cycle with one state per symbol. Decide each symbol on its own. Most decisions
 should be 'hold'.
@@ -83,17 +84,23 @@ buy or sell. With an open position choose hold or close.
 RULES
 - M1 includes the candle still forming ('vela_en_formacion': true). You may enter on it at any moment; you do
   not wait for the minute to close. M5 and M15 are closed candles and give the structure.
-- Enter only on a PULLBACK: price pulled back to the M1 EMA20 and resumed in the trend direction. Do not enter
-  on breakouts or impulse candles.
-- M5 must confirm: price on the trade side of M5 EMA20, M5 ADX at least 20, and DI on the trade side.
-- Skip choppy markets: M5 ADX below 20 means hold.
-- Do not chase: if the last M1 candle already moved more than 0.5 ATR(M1) in your direction, hold.
-- With an open position, close only if the M1 structure that justified it broke against you.
 - The system closes the position by itself after max_hold_min minutes and enforces spread and cost limits.
   You do not need to manage time.
 - The index CFDs move together. Do not open the same direction on several symbols just because one setup
   appears; each symbol needs its own structure.
+
+CRITERIO POR SIMBOLO
+Each symbol has its own entry criterion below. Apply to each symbol only its own criterion, and only the
+symbols in the input 'symbols' list.
+{criterios}
 """
+
+
+def montar_prompt(simbolos):
+    """Prompt del lote: la parte fija y el criterio de cada simbolo, leido de la BBDD en cada llamada."""
+    bloques = [f"{s}:\n{prompts.texto_seguro(prompts.clave_scalping(s)).strip()}" for s in simbolos]
+    return PROMPT_FIJO.replace("{criterios}", "\n\n".join(bloques))
+
 
 _ULT_TICK = {}          # simbolo -> (ultimo tick visto, instante local)
 _ULT_AVISO_ERROR = {"t": 0.0}
@@ -215,7 +222,7 @@ def abiertas_recientes(con, symbol, n=5):
 def preguntar(estados, cfg):
     """Una llamada para todos los simbolos del lote. Devuelve (decision del lote, uso de la llamada)."""
     cmd = [lt._resolve_claude(), "-p", "--model", cfg["model"], "--effort", cfg["effort"],
-           "--json-schema", json.dumps(SCHEMA), "--system-prompt", PROMPT, "--tools", "",
+           "--json-schema", json.dumps(SCHEMA), "--system-prompt", montar_prompt([e["symbol"] for e in estados]), "--tools", "",
            "--strict-mcp-config", "--permission-prompts", "none", "--output-format", "json",
            json.dumps({"symbols": estados}, separators=(",", ":"))]
     t0 = time.time()

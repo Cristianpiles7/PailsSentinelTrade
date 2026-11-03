@@ -40,6 +40,23 @@ CRITERIO_DEFECTO = """- Por defecto, quédate fuera (hold). La mayoría de las v
 - Usa los marcos altos para la dirección y los bajos para el momento de entrada.
 - No operes contra los marcos altos sin una razón clara."""
 
+# Scalping: un criterio por simbolo, guardado con la clave "scalping:<simbolo>" para que no se mezcle con
+# la flota (un mismo simbolo podria pasar de una estrategia a otra). Sin fila, usa este por defecto.
+PREFIJO_SCALPING = "scalping:"
+CRITERIO_SCALPING_DEFECTO = """- Entra solo en un PULLBACK: el precio volvió a la EMA20 de M1 y reanuda la dirección de la tendencia. No entres en rupturas ni en velas de impulso.
+- M5 debe confirmar: precio al lado de la operación de su EMA20, ADX de M5 de al menos 20 y DI a favor.
+- Mercado sin tendencia: si el ADX de M5 está por debajo de 20, quédate fuera.
+- No persigas: si la última vela M1 ya se movió más de 0.5 ATR(M1) a tu favor, quédate fuera.
+- Con posición abierta, cierra solo si la estructura de M1 que la justificó se rompió en tu contra."""
+
+
+def clave_scalping(symbol):
+    return PREFIJO_SCALPING + symbol
+
+
+def defecto_de(clave):
+    return CRITERIO_SCALPING_DEFECTO if clave.startswith(PREFIJO_SCALPING) else CRITERIO_DEFECTO
+
 
 # ── Ajustes ──────────────────────────────────────────────────────────────────
 def ajustes():
@@ -114,7 +131,8 @@ def activo(symbol):
     finally:
         con.close()
     if f is None:
-        return {"texto": CRITERIO_DEFECTO, "version": version_de(CRITERIO_DEFECTO), "activado": None,
+        defecto = defecto_de(symbol)
+        return {"texto": defecto, "version": version_de(defecto), "activado": None,
                 "por": "defecto", "defecto": True, "proposal_id": None}
     return {"texto": f["texto"], "version": f["version"], "activado": f["activado"], "por": f["por"],
             "defecto": False, "proposal_id": f["proposal_id"]}
@@ -126,7 +144,7 @@ def texto_seguro(symbol):
         return activo(symbol)["texto"]
     except Exception as e:
         print(f"[prompts] no se pudo leer el criterio de {symbol}, uso el de por defecto: {e}", flush=True)
-        return CRITERIO_DEFECTO
+        return defecto_de(symbol)
 
 
 def historial(symbol, limite=30):
@@ -171,7 +189,7 @@ def guardar(symbol, texto, por="usuario", proposal_id=None):
 
 
 def restaurar_defecto(symbol, por="usuario"):
-    return guardar(symbol, CRITERIO_DEFECTO, por=por)
+    return guardar(symbol, defecto_de(symbol), por=por)
 
 
 # ── Diferencias ──────────────────────────────────────────────────────────────
@@ -280,7 +298,7 @@ def revertir(pid, por="usuario"):
     act = activo(p["target"])
     if act.get("proposal_id") != pid:
         return "el criterio ya cambió después: no se toca"
-    previo = json.loads(p["current_json"] or "{}").get("criterio") or CRITERIO_DEFECTO
+    previo = json.loads(p["current_json"] or "{}").get("criterio") or defecto_de(p["target"])
     guardar(p["target"], previo, por=f"revertida #{pid} ({por})")
     return "revertida: vuelve el criterio anterior"
 

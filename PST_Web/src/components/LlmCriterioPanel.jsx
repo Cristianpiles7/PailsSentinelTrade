@@ -74,8 +74,10 @@ function MejoraAjustes({ api, API_BASE }) {
   )
 }
 
-export function LlmCriterioPanel({ api, API_BASE, agentes }) {
+// `agentes` trae la clave del criterio en `symbol` (scalping: "scalping:<simbolo>"); se muestra sin el prefijo.
+export function LlmCriterioPanel({ api, API_BASE, agentes, mejora = true, descripcion }) {
   const simbolos = [...new Set((agentes || []).map(a => a.symbol))].sort()
+  const etiqueta = s => s.replace(/^scalping:/, '')
   const [symbol, setSymbol] = useState('')
   const [datos, setDatos] = useState(null)
   const [texto, setTexto] = useState('')
@@ -118,17 +120,16 @@ export function LlmCriterioPanel({ api, API_BASE, agentes }) {
       <div className="flex flex-col gap-1">
         <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">Criterio de cada agente</p>
         <p className="text-xs text-zinc-500 leading-relaxed">
-          La parte del prompt que decide cuándo entrar, una por símbolo. Formato, costes y reglas de cierre son fijos.
-          El agente de mejora propone cambios cuando un símbolo lleva el mínimo de operaciones nuevas; se aprueban en la bandeja o en Telegram.
+          {descripcion || 'La parte del prompt que decide cuándo entrar, una por símbolo. Formato, costes y reglas de cierre son fijos. El agente de mejora propone cambios cuando un símbolo lleva el mínimo de operaciones nuevas; se aprueban en la bandeja o en Telegram.'}
         </p>
       </div>
 
-      <MejoraAjustes api={api} API_BASE={API_BASE} />
+      {mejora && <MejoraAjustes api={api} API_BASE={API_BASE} />}
 
       <div className="flex flex-col gap-3 border-t border-zinc-800/80 pt-4">
         <div className="flex flex-wrap items-center gap-3">
           <select value={symbol} onChange={e => setSymbol(e.target.value)} className={`${CAMPO} w-auto`}>
-            {simbolos.map(s => <option key={s} value={s}>{s}</option>)}
+            {simbolos.map(s => <option key={s} value={s}>{etiqueta(s)}</option>)}
           </select>
           {datos && (
             <span className="text-[11px] text-zinc-500">

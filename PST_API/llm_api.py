@@ -345,19 +345,28 @@ class MejoraPromptRequest(BaseModel):
     max_operaciones_contexto: int | None = None  # operaciones que ve como mucho en cada revision
 
 
+def _validar_criterio(clave):
+    # Scalping llega como "scalping:<simbolo>" (ver prompts.clave_scalping): se valida el simbolo sin el prefijo.
+    if clave.startswith(prompts.PREFIJO_SCALPING):
+        if clave[len(prompts.PREFIJO_SCALPING):] not in registro.SIMBOLOS_SCALPING:
+            raise HTTPException(status_code=400, detail=f"{clave} no es un simbolo de scalping")
+        return clave
+    return _validar(clave)
+
+
 @router.get("/api/llm/criterio/{symbol}")
 async def leer_criterio(symbol: str):
-    _validar(symbol)
+    _validar_criterio(symbol)
     act = await asyncio.to_thread(prompts.activo, symbol)
     hist = await asyncio.to_thread(prompts.historial, symbol, 30)
     pend = await asyncio.to_thread(prompts.pendiente_de, symbol)
-    return {**act, "historial": hist, "propuesta_pendiente": pend, "defecto_texto": prompts.CRITERIO_DEFECTO,
+    return {**act, "historial": hist, "propuesta_pendiente": pend, "defecto_texto": prompts.defecto_de(symbol),
             "max_caracteres": prompts.ajustes()["max_caracteres"]}
 
 
 @router.put("/api/llm/criterio/{symbol}")
 async def guardar_criterio(symbol: str, body: CriterioRequest):
-    _validar(symbol)
+    _validar_criterio(symbol)
     try:
         await asyncio.to_thread(prompts.guardar, symbol, body.texto, "usuario")
     except ValueError as e:

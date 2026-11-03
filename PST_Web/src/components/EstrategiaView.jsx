@@ -250,6 +250,15 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
         </div>
       )}
 
+      {seccion === 'config' && estrategia.id === 'scalping' && (
+        <div className="flex flex-col gap-3">
+          <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Criterio de entrada por símbolo</p>
+          <LlmCriterioPanel api={api} API_BASE={API_BASE} mejora={false}
+            descripcion="Reglas de entrada de cada símbolo de scalping. Formato, límites de riesgo y reglas de cierre son fijos y no se editan aquí. Cambios desde la siguiente vuelta del agente."
+            agentes={agentesDe.map(a => ({ symbol: `scalping:${a.symbol}` }))} />
+        </div>
+      )}
+
       {seccion === 'config' && (
         <div className={`${TARJETA} flex flex-col gap-5`}>
           <div className="flex flex-col gap-1">
