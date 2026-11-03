@@ -60,6 +60,11 @@ if __name__ == "__main__":
     try:
         logger.info("🚀 Iniciando Pails Sentinel Trade (PST)...")
         start_app()
+    except SystemExit as e:
+        # sys.exit(1) de start_app no pasa por el except Exception de abajo: se registra aquí
+        if e.code not in (0, None):
+            logger.critical(f"❌ Arranque abortado con código {e.code}")
+        raise
     except Exception as e:
         logger.critical(f"❌ FALLO CRÍTICO EN EL ARRANQUE: {e}", exc_info=True)
         try:

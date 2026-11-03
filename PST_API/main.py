@@ -1463,7 +1463,13 @@ def start_app():
     limpiar_restos_actualizacion()
 
     def run_server():
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        # En el exe no hay consola: log_config=None deja que uvicorn use el logging raiz (PST_Startup.log)
+        # y access_log=False evita volcar cada peticion (y su URL) al log.
+        try:
+            uvicorn.run(app, host=host, port=port, log_level="info", log_config=None, access_log=False)
+        except BaseException:
+            logger.exception("❌ El servidor de la API se ha caído")
+            raise
 
     # Iniciar servidor en segundo plano
     t = threading.Thread(target=run_server, daemon=True)
@@ -1480,7 +1486,7 @@ def start_app():
             time.sleep(0.5)
             
     if not server_ready:
-        print("El servidor falló al iniciar en el puerto", port)
+        logger.critical(f"❌ La API no abre el puerto {port} en 20 s. Ver los errores justo encima de esta línea.")
         sys.exit(1)
 
     # Espejo de habblaud (puerto propio, sin X-Frame-Options) para la pestaña Oficina.
