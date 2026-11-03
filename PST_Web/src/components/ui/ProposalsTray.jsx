@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { Inbox, Check, X, Eye, RefreshCw, AlertTriangle } from 'lucide-react'
+import { usePollingWhenVisible } from '../../hooks/usePolling'
 
 /**
  * Bandeja de propuestas de la flota de agentes.
@@ -89,9 +90,8 @@ export function ProposalsTray({ pollMs = 20000 }) {
 
   useEffect(() => {
     cargar()
-    const id = setInterval(cargar, pollMs)
-    return () => clearInterval(id)
-  }, [cargar, pollMs])
+  }, [cargar])
+  usePollingWhenVisible(cargar, pollMs)
 
   const decidir = async (id, state) => {
     try {

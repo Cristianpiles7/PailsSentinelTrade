@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import { Activity } from 'lucide-react'
+import { usePollingWhenVisible } from '../../hooks/usePolling'
 
 // Estado de la app en la cabecera: MT5, antigüedad del calendario de noticias y de la última copia de la BBDD.
 // Se consulta /api/health (PST_API/main.py). Si la API no responde, lo dice en vez de quedarse con datos viejos.
@@ -39,9 +40,8 @@ export function EstadoSistemaWidget({ url }) {
 
   useEffect(() => {
     cargar()
-    const refresco = setInterval(cargar, REFRESCO_MS)
-    return () => clearInterval(refresco)
   }, [url])
+  usePollingWhenVisible(cargar, REFRESCO_MS)
 
   if (error) {
     return (

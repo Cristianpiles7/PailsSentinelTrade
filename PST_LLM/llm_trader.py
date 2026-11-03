@@ -240,7 +240,8 @@ def db():
 CONFIG_FILE = DATA_DIR / "llm_trader.json"
 CONFIG_CLAVES = {"enabled": bool, "symbol": str, "timeframe": str, "model": str, "effort": str,
                  "live": bool, "sin_filtro": bool, "max_llamadas_dia": int, "max_perdida_dia": float,
-                 "sesion_continua": bool, "reiniciar_cada": int, "telegram": bool, "aviso_cooldown_min": int,
+                 "sesion_continua": bool, "sesion_gracia_min": int, "reiniciar_cada": int,
+                 "telegram": bool, "aviso_cooldown_min": int,
                  "timeframes_analisis": list, "max_perdida_flota_dia": float, "equity_minima": float,
                  "enfriamiento_min": int, "min_cierre_min": int, "margen_sesion_min": int, "riesgo_pct": float}
 TF_SEGUNDOS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
@@ -675,10 +676,28 @@ class SesionContinua:
 _SESION = SesionContinua()
 
 
-def preguntar(estado, args):
-    if args.sesion_continua:
+_SESION_ULTIMA_POS = {"t": 0.0}    # ultima vez que este agente vio una posicion suya abierta
+
+
+def sesion_necesaria(mt5, args):
+    """
+    La sesion `claude` abierta solo compensa mientras el agente tiene una posicion (ahi importa el
+    contexto de la operacion). Sin posicion, cada decision va por `claude -p` y no queda ningun
+    proceso residente. Tras cerrar la posicion se mantiene `sesion_gracia_min` minutos para no
+    abrir y cerrar la sesion en cada vela.
+    """
+    if not (args.sesion_continua and args.enabled):
+        return False
+    if any(p.magic == MAGIC for p in (mt5.positions_get(symbol=args.symbol) or [])):
+        _SESION_ULTIMA_POS["t"] = time.time()
+        return True
+    return time.time() - _SESION_ULTIMA_POS["t"] < args.sesion_gracia_min * 60
+
+
+def preguntar(estado, args, mt5):
+    if sesion_necesaria(mt5, args):
         return _SESION.preguntar(estado, args.model, args.effort, args.sala, args.reiniciar_cada)
-    _SESION.cerrar()               # por si se acaba de apagar el modo continuo desde el fichero
+    _SESION.cerrar()               # sin posicion (o modo continuo apagado): sesion suelta
     return preguntar_suelto(estado, args.model, args.effort, args.sala)
 
 
@@ -1151,7 +1170,7 @@ def ciclo(mt5, args, con):
         return
 
     try:
-        d, uso = preguntar(estado, args)
+        d, uso = preguntar(estado, args, mt5)
     except Exception as e:
         print(f"[{ts}] error del agente: {e}", flush=True)
         log_decision(con, ts=ts, symbol=args.symbol, mode=modo, model=args.model, llm_called=1,
@@ -1350,7 +1369,9 @@ def main():
                     help="sala en Habblaud: los analistas con la misma sala salen juntos, como un equipo")
     ap.add_argument("--magic", type=int, default=109001, help="magic number de sus operaciones (uno por agente)")
     ap.add_argument("--sesion-continua", dest="sesion_continua", action="store_true",
-                    help="un unico proceso claude abierto entre decisiones (visible fijo en Habblaud)")
+                    help="proceso claude abierto solo mientras hay posicion (visible en Habblaud); sin posicion, decisiones sueltas")
+    ap.add_argument("--sesion-gracia-min", dest="sesion_gracia_min", type=int, default=15,
+                    help="minutos que la sesion sigue abierta tras cerrar la ultima posicion del agente")
     ap.add_argument("--reiniciar-cada", dest="reiniciar_cada", type=int, default=12,
                     help="en sesion continua, reiniciar tras N decisiones (0 = nunca); acota el historial")
     ap.add_argument("--live", action="store_true", help="enviar ordenes reales (solo cuenta demo)")
@@ -1445,12 +1466,12 @@ def main():
             if time.time() - _ULTIMO_REGISTRO["t"] > 300:      # operaciones cerradas -> llm_operaciones (solo las nuevas)
                 _ULTIMO_REGISTRO["t"] = time.time()
                 operaciones.registrar_agente(mt5, DB_FILE)
-            if args.sesion_continua and args.enabled:
+            if sesion_necesaria(mt5, args):
                 try:
                     _SESION.asegurar(args.model, args.effort, args.sala)
                 except Exception as e:
                     print(f"[llm_trader] no se pudo abrir la sesion: {e}", flush=True)
-            elif not args.sesion_continua:
+            else:
                 _SESION.cerrar()
             try:                                       # en cada vuelta, tambien con el agente parado
                 vigilar_sesion(mt5, args, con)

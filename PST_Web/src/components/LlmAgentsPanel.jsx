@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Bot, Power, PlayCircle, List, X } from 'lucide-react'
+import { usePollingWhenVisible } from '../hooks/usePolling'
 
 // Flota LLM integrada en las tarjetas de simbolos: cada tarjeta con agente muestra una fila
 // compacta (modelo, modo, latido, acciones). Las decisiones se abren en un modal para no
@@ -71,11 +72,9 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
   }, [api, API_BASE])
 
   useEffect(() => {
-    if (!habilitado) return
-    recargar()
-    const t = setInterval(recargar, 30000)
-    return () => clearInterval(t)
+    if (habilitado) recargar()
   }, [recargar, habilitado])
+  usePollingWhenVisible(recargar, 30000, habilitado)
 
   // Acciones que paran o sacan un agente: se piden confirmar para no hacerlo por un clic de más.
   const CONFIRMAR = {

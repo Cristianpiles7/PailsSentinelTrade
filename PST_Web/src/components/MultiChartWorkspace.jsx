@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { TradingChart } from './TradingChart';
+import { usePollingWhenVisible } from '../hooks/usePolling';
 import { LayoutGrid, Maximize2, Settings, RefreshCw, X } from 'lucide-react';
 
 const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
@@ -17,28 +18,31 @@ export function MultiChartWorkspace({ symbols, api }) {
     const timeframe = 'M1'; // Multi-chart se asume que es para scalping rápido (M1)
 
     // Polling de datos para las 4 gráficas
-    useEffect(() => {
-        const fetchAllData = async () => {
-            const newData = {};
-            for (const slot of slots) {
-                if (!slot.symbol) continue;
-                try {
-                    const resp = await api.get(`${API_BASE}/ohlc/${slot.symbol}?timeframe=${timeframe}`);
-                    newData[slot.symbol] = resp.data || [];
-                } catch (err) {
-                    console.error(`Error fetching data for ${slot.symbol}`, err);
-                }
+    const fetchAllData = useCallback(async () => {
+        const newData = {};
+        for (const slot of slots) {
+            if (!slot.symbol) continue;
+            try {
+                const resp = await api.get(`${API_BASE}/ohlc/${slot.symbol}?timeframe=${timeframe}`);
+                newData[slot.symbol] = resp.data || [];
+            } catch (err) {
+                console.error(`Error fetching data for ${slot.symbol}`, err);
             }
-            setChartData(prev => ({ ...prev, ...newData }));
-        };
-
-        // Carga Inicial
-        fetchAllData();
-
-        // Polling cada 5 segundos (más agresivo porque son varios gráficos en M1)
-        const timer = setInterval(fetchAllData, 5000);
-        return () => clearInterval(timer);
+        }
+        // Solo se actualiza el gráfico cuyo contenido ha cambiado; si no, nada se re-renderiza
+        setChartData(prev => {
+            const cambiados = Object.keys(newData).filter(s => JSON.stringify(prev[s]) !== JSON.stringify(newData[s]));
+            return cambiados.length ? { ...prev, ...Object.fromEntries(cambiados.map(s => [s, newData[s]])) } : prev;
+        });
     }, [slots, api, timeframe]);
+
+    // Carga inicial al cambiar de slots
+    useEffect(() => {
+        fetchAllData();
+    }, [fetchAllData]);
+
+    // Polling cada 10 segundos, solo con la ventana visible
+    usePollingWhenVisible(fetchAllData, 10000);
 
     const handleSymbolChange = (slotId, newSymbol) => {
         setSlots(slots.map(s => s.id === slotId ? { ...s, symbol: newSymbol } : s));

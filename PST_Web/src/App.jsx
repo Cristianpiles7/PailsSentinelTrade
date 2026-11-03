@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { usePollingWhenVisible, conservarSiIgual } from './hooks/usePolling'
 
 
 
@@ -246,34 +247,24 @@ function App() {
   const [tituloPagina, subtituloPagina] = tituloVista(currentView, selectedSymbol)
 
   // ENGINE: Sincronización Automática (FASE 43)
+  // Carga inicial inmediata
   useEffect(() => {
     if (!isAuthenticated) return;
-
-    // Carga inicial inmediata
     fetchData();
     fetchPerformance();
     fetchHistory();
     fetchLogs();
     fetchNews();
-
-    // Polling rápido cada 3 segundos para datos críticos
-    const syncTimer = setInterval(() => {
-      fetchData();
-      fetchLogs();
-    }, 3000);
-
-    // Polling medio cada 10 segundos para datos analíticos e históricos
-    const analyticsTimer = setInterval(() => {
-      fetchAnalytics();
-      fetchHistory();
-      fetchNews();
-    }, 10000);
-
-    return () => {
-      clearInterval(syncTimer);
-      clearInterval(analyticsTimer);
-    }
   }, [isAuthenticated])
+
+  // Polling solo con la ventana visible: en segundo plano no hace falta refrescar nada
+  usePollingWhenVisible(fetchData, 3000, isAuthenticated)
+  usePollingWhenVisible(fetchLogs, 10000, isAuthenticated)
+  usePollingWhenVisible(() => {
+    fetchAnalytics();
+    fetchHistory();
+    fetchNews();
+  }, 10000, isAuthenticated)
 
   // Alertas de posiciones reales (2026-09-02): sustituye al sistema de alertas por "score" del
   // motor de trading retirado -- ahora avisa de aperturas/cierres reales detectados por el
@@ -338,21 +329,20 @@ function App() {
   }
 
   // SURVEILLANCE: Carga de Gráficos y Telemetría (FASE 44)
-  useEffect(() => {
-    if (!isAuthenticated || currentView !== 'surveillance' || !selectedSymbol) return;
+  const vigilandoSimbolo = isAuthenticated && currentView === 'surveillance' && !!selectedSymbol
 
-    // Carga inmediata
+  // Carga inmediata
+  useEffect(() => {
+    if (!vigilandoSimbolo) return;
     fetchOhlc(selectedSymbol, selectedTimeframe);
     fetchTelemetry(selectedSymbol);
+  }, [vigilandoSimbolo, selectedSymbol, selectedTimeframe])
 
-    // Polling de 10s para gráficos y telemetría detallada
-    const survTimer = setInterval(() => {
-      fetchOhlc(selectedSymbol, selectedTimeframe);
-      fetchTelemetry(selectedSymbol);
-    }, 10000);
-
-    return () => clearInterval(survTimer);
-  }, [isAuthenticated, currentView, selectedSymbol, selectedTimeframe])
+  // Polling de 10s para gráficos y telemetría detallada
+  usePollingWhenVisible(() => {
+    fetchOhlc(selectedSymbol, selectedTimeframe);
+    fetchTelemetry(selectedSymbol);
+  }, 10000, vigilandoSimbolo)
 
 
 
@@ -381,21 +371,21 @@ function App() {
     const loadAccount = async () => {
       try {
         const res = await api.get(`${API_BASE}/account`);
-        setAccount(res.data);
+        setAccount(prev => conservarSiIgual(prev, res.data));
       } catch (e) { console.error("Account fetch failed:", e.message); }
     };
 
     const loadTrades = async () => {
       try {
         const res = await api.get(`${API_BASE}/trades/active`);
-        setTrades(res.data);
+        setTrades(prev => conservarSiIgual(prev, res.data));
       } catch (e) { console.error("Trades fetch failed:", e.message); }
     };
 
     const loadSymbols = async () => {
       try {
         const res = await api.get(`${API_BASE}/symbols`);
-        setSymbols(res.data);
+        setSymbols(prev => conservarSiIgual(prev, res.data));
       } catch (e) { console.error("Symbols fetch failed:", e.message); }
     };
 
@@ -425,14 +415,14 @@ function App() {
   const fetchHistory = async () => {
     try {
       const resp = await api.get(`${API_BASE}/history?limit=30`)
-      setHistoryTrades(resp.data || [])
+      setHistoryTrades(prev => conservarSiIgual(prev, resp.data || []))
     } catch (err) { console.error(err) }
   }
 
   const fetchLogs = async () => {
     try {
       const resp = await api.get(`${API_BASE}/logs?limit=50`)
-      setLogs(resp.data.logs || [])
+      setLogs(prev => conservarSiIgual(prev, resp.data.logs || []))
     } catch (err) { console.error(err) }
   }
 
@@ -441,7 +431,7 @@ function App() {
     try {
       // Ajuste de ruta (FASE 44): la API escucha en /ohlc/{symbol}
       const resp = await api.get(`${API_BASE}/ohlc/${sym}?timeframe=${tf}`)
-      setOhlc(resp.data || [])
+      setOhlc(prev => conservarSiIgual(prev, resp.data || []))
     } catch (err) { console.error(err) }
   }
 
@@ -524,7 +514,7 @@ function App() {
   const fetchAnalytics = async () => {
     try {
       const resp = await api.get(`${API_BASE}/performance/analytics`)
-      setAnalyticsData(resp.data)
+      setAnalyticsData(prev => conservarSiIgual(prev, resp.data))
     } catch (err) { console.error("Error fetching analytics:", err) }
   }
 

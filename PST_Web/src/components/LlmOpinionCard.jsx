@@ -1,10 +1,13 @@
-import { Component, useEffect, useState } from 'react'
+import { Component, useEffect, useRef, useState } from 'react'
 import { Bot } from 'lucide-react'
+import { usePollingWhenVisible } from '../hooks/usePolling'
 
 // Lo ultimo que dijo el agente LLM sobre este simbolo. Sale en el hueco de inteligencia del grafico.
 export function LlmOpinionCard({ api, API_BASE, symbol, onHistorial }) {
   const [dec, setDec] = useState(null)
   const [sinAgente, setSinAgente] = useState(false)
+  // El poll usa siempre la carga del simbolo actual; las respuestas de un simbolo anterior se descartan.
+  const cargarRef = useRef(null)
 
   useEffect(() => {
     let vivo = true
@@ -20,10 +23,12 @@ export function LlmOpinionCard({ api, API_BASE, symbol, onHistorial }) {
         setDec(null)
       }
     }
+    cargarRef.current = cargar
     cargar()
-    const t = setInterval(cargar, 60000)
-    return () => { vivo = false; clearInterval(t) }
+    return () => { vivo = false }
   }, [api, API_BASE, symbol])
+
+  usePollingWhenVisible(() => cargarRef.current?.(), 60000)
 
   if (sinAgente) {
     return (
