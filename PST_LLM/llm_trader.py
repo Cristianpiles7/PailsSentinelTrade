@@ -44,6 +44,7 @@ import prompts                        # criterio de entrada por simbolo, en BBDD
 import calendario                     # puerta de calendario FTMO (PST_LLM/calendario.py)
 import sesiones                       # paradas recurrentes del mercado: cierre antes del fin de semana (PST_LLM/sesiones.py)
 import registro                       # BBDD central: decisiones y agentes para la app
+import config_store                   # configuracion en BBDD (PST_LLM/config_store.py); manda sobre el JSON
 import operaciones                    # una fila por operacion cerrada en llm_operaciones (PST_LLM/operaciones.py)
 import universo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))             # raíz del repo: para importar PST_Core
@@ -260,6 +261,8 @@ def aplicar_config(args):
     except Exception as e:
         print(f"[llm_trader] config ilegible, se ignora: {e}", flush=True)
         return []
+    # La BBDD manda sobre el JSON (config_store): lo guardado desde la app o migrado.
+    cfg.update(config_store.overlay("flota", cfg.get("symbol")))
     cambios = []
     for k, tipo in CONFIG_CLAVES.items():
         if k in cfg:

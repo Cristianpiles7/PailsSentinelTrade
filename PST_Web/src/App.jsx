@@ -12,7 +12,7 @@ import {
   ArrowUpRight, RefreshCw, Power, Target, Clock, BookMarked,
   Image as ImageIcon, FileText, ChevronRight, Save, X, MoreVertical, LayoutDashboard,
   LayoutGrid, History, ShoppingCart, Zap, Trash2, ChevronUp, ChevronDown, Cpu,
-  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, SlidersHorizontal
+  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, SlidersHorizontal, Layers
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -43,9 +43,10 @@ import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
 import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
 import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 import { AgentsOffice } from './components/AgentsOffice'
-import { LlmFila, LlmDecisionesModal, LlmLimitesBar, LlmScalpingPanel, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
+import { LlmFila, LlmDecisionesModal, LlmLimitesBar, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
 import { LlmCriterioPanel } from './components/LlmCriterioPanel'
 import { LlmSeguro } from './components/LlmOpinionCard'
+import { EstrategiaView } from './components/EstrategiaView'
 
 
 
@@ -94,8 +95,9 @@ const TITULOS_VISTA = {
   multichart: ['Multi-Chart', 'Vigilancia simultánea'],
   strategylab: ['Strategy Lab', 'Backtesting con datos reales de MT5'],
   agents: ['Oficina de agentes', 'Flota LLM y habblaud'],
-  ajustes: ['Ajustes', 'Rotación de la flota LLM y agente puntuador de la home'],
-  config: ['Matriz de símbolos', 'Dashboard y agente LLM por símbolo · agrupados por clase'],
+  estrategias: ['Estrategias', 'Una pantalla por estrategia: resumen, símbolos y configuración'],
+  ajustes: ['Ajustes', 'Límites globales, prompts y agente puntuador de la home'],
+  config: ['Símbolos', 'Todos los símbolos por clase · filtra por estrategia'],
 }
 
 function tituloVista(vista, simbolo) {
@@ -151,6 +153,11 @@ function App() {
   const llm = useLlmAgentes(api, API_BASE, isAuthenticated)
   const [filtroSimbolos, setFiltroSimbolos] = useState('todos')
   const [filtroClase, setFiltroClase] = useState('todos')
+  const [filtroEstrategia, setFiltroEstrategia] = useState('todas')
+  const [estrategiasApi, setEstrategiasApi] = useState([])
+  useEffect(() => {
+    if (isAuthenticated) api.get(`${API_BASE}/estrategias`).then(r => setEstrategiasApi(r.data)).catch(() => {})
+  }, [isAuthenticated])
   const [llmDecisiones, setLlmDecisiones] = useState(null)
 
 
@@ -209,7 +216,6 @@ function App() {
 
 
   // -- FASE 35 RISK PROFILES --
-  const [riskProfiles, setRiskProfiles] = useState([])
   const [selectedProfileId, setSelectedProfileId] = useState('')
   const [newProfileName, setNewProfileName] = useState('')
   const [logs, setLogs] = useState([])
@@ -436,13 +442,6 @@ function App() {
     try {
       const resp = await api.get(`${API_BASE}/symbols/${sym}/telemetry`)
       setTelemetry(resp.data)
-    } catch (err) { console.error(err) }
-  }
-
-  const fetchProfiles = async () => {
-    try {
-      const resp = await api.get(`${API_BASE}/config/risk_profiles`)
-      setRiskProfiles(resp.data)
     } catch (err) { console.error(err) }
   }
 
@@ -751,6 +750,13 @@ function App() {
           />
           <NavItem
             showLabel
+            icon={<Layers size={24} />}
+            active={currentView === 'estrategias'}
+            onClick={() => setCurrentView('estrategias')}
+            label="Estrategias"
+          />
+          <NavItem
+            showLabel
             icon={<SlidersHorizontal size={24} />}
             active={currentView === 'ajustes'}
             onClick={() => setCurrentView('ajustes')}
@@ -774,7 +780,7 @@ function App() {
 
 
 
-            label="Matrix"
+            label="Símbolos"
 
 
 
@@ -1248,17 +1254,21 @@ function App() {
           </div>
         )}
 
+        {currentView === 'estrategias' && (
+          <div className="w-full h-full overflow-y-auto px-4 md:px-8 pt-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <EstrategiaView api={api} API_BASE={API_BASE} agentes={llm.agentes} symbols={symbols} />
+          </div>
+        )}
+
         {currentView === 'ajustes' && (
           <div className="w-full h-full overflow-y-auto px-4 md:px-8 pt-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700">
             <div className="max-w-5xl mx-auto flex flex-col gap-8">
               <section className="flex flex-col gap-3">
-                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Flota LLM</h2>
+                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Límites globales</h2>
                 <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
                   activosAhora={llm.agentes.filter(a => a.activo).length}
                   topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario}
                   cuotaTopes={llm.cuotaTopes} guardarCuotaTopes={llm.guardarCuotaTopes} />
-                <h3 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.2em] mt-2">Scalping (agente aparte)</h3>
-                <LlmScalpingPanel api={api} API_BASE={API_BASE} />
               </section>
               <section className="flex flex-col gap-3">
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Prompts de los agentes</h2>
@@ -2561,6 +2571,16 @@ function App() {
               {llm.error && <p className="text-[11px] text-rose-400 mb-4">{llm.error}</p>}
               {llm.aviso && <p className="text-[11px] text-zinc-400 mb-4">{llm.aviso}</p>}
 
+              {/* Filtro por estrategia (las que devuelve la API) */}
+              <div className="flex items-center gap-2 mb-4">
+                {[['todas', 'Todas'], ...estrategiasApi.map(e => [e.id, e.nombre])].map(([v, t]) => (
+                  <button key={v} onClick={() => setFiltroEstrategia(v)}
+                    className={`text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl border transition-all ${filtroEstrategia === v ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+
               {/* Filtro: todos los simbolos, solo los que tienen agente LLM, o solo los que lo tienen activo */}
               <div className="flex items-center gap-2 mb-6">
                 {[['todos', 'Todos'], ['llm', 'Con agente LLM'], ['activos', 'Activos LLM']].map(([v, t]) => (
@@ -2582,7 +2602,12 @@ function App() {
               </div>
 
               {/* Grupos por clase de mercado (orden fijo); dentro de cada grupo, alfabetico */}
-              {agruparTarjetas(symbols, llm.agentes, filtroSimbolos, filtroClase).map(({ grupo, items }) => (
+              {agruparTarjetas(
+                filtroEstrategia === 'todas' ? symbols : symbols.filter(s => {
+                  const a = llm.agentes.find(x => x.symbol === s.symbol)
+                  return a && (a.estrategia === filtroEstrategia || a.estrategia === 'ambos')
+                }),
+                llm.agentes, filtroSimbolos, filtroClase).map(({ grupo, items }) => (
                 <section key={grupo} className="mb-8">
                   <div className="flex items-center gap-3 mb-4">
                     <p className="text-xs text-zinc-500 font-bold uppercase tracking-[0.25em]">{grupo}</p>

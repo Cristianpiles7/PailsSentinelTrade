@@ -32,6 +32,7 @@ from pathlib import Path
 import numpy as np
 
 import llm_trader as lt               # reutiliza el comando `claude -p`, el cwd de los agentes y el parseo
+import config_store                   # topes del puntuador en BBDD (PST_LLM/config_store.py)
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -131,19 +132,25 @@ def validar(cfg):
 
 
 def leer_config():
-    """Configuracion vigente. Si el fichero esta roto, se usan los valores por defecto."""
+    """Configuracion vigente. Si el fichero esta roto, se usan los valores por defecto. La BBDD manda en los topes."""
     try:
-        return validar({**DEFECTOS, **json.loads(CONFIG_FILE.read_text(encoding="utf-8"))})
+        cfg = validar({**DEFECTOS, **json.loads(CONFIG_FILE.read_text(encoding="utf-8"))})
     except FileNotFoundError:
-        return dict(DEFECTOS)
+        cfg = dict(DEFECTOS)
     except Exception as e:
         _log(f"config ilegible, uso valores por defecto: {e}")
-        return dict(DEFECTOS)
+        cfg = dict(DEFECTOS)
+    cfg["cuota_max_5h"] = config_store.valor_o("puntuador_cuota_max_5h", cfg["cuota_max_5h"], config_store.GLOBAL)
+    cfg["cuota_max_semanal"] = config_store.valor_o("puntuador_cuota_max_semanal", cfg["cuota_max_semanal"],
+                                                    config_store.GLOBAL)
+    return cfg
 
 
 def guardar_config(cambios):
     """Aplica cambios parciales, valida y escribe. Devuelve la configuracion resultante."""
     nueva = validar({**leer_config(), **{k: v for k, v in cambios.items() if v is not None}})
+    config_store.guardar(config_store.GLOBAL, "", {"puntuador_cuota_max_5h": nueva["cuota_max_5h"],
+                                                   "puntuador_cuota_max_semanal": nueva["cuota_max_semanal"]})
     tmp = CONFIG_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(nueva, indent=2), encoding="utf-8")
     os.replace(tmp, CONFIG_FILE)

@@ -25,6 +25,7 @@ REPO_ROOT = rutas.DATOS
 sys.path.insert(0, str(Path(__file__).resolve().parent))     # para importar universo y llm_trader_flota
 
 import universo                                               # noqa: E402
+import config_store                                           # noqa: E402  (configuracion en BBDD)
 
 DATA = REPO_ROOT / ".agents" / "data"
 SCRIPT = rutas.PST_LLM_DIR / "llm_trader.py"
@@ -404,14 +405,14 @@ def estado():
         # Un agente que corre aunque no tenga fila (arrancado antes de existir este registro) cuenta
         # como activo; el modo sale de su fichero de configuracion.
         activo = bool(fila and fila[1]) or vivo
-        live = bool(fila[2]) if fila else _live_de_config(nombre)
+        live = bool(fila[2]) if fila else _live_de_config(nombre, s.symbol)
         out.append({
-            "symbol": s.symbol, "clase": s.clase, "modelo": _modelo_de_config(nombre, s.modelo),
-            "timeframe": _config_de(nombre, "timeframe", "M5"), "magic": s.magic, "nombre": nombre,
+            "symbol": s.symbol, "clase": s.clase, "modelo": _modelo_de_config(nombre, s.modelo, s.symbol),
+            "timeframe": _config_de(nombre, "timeframe", "M5", s.symbol), "magic": s.magic, "nombre": nombre,
             "estrategia": asignadas.get(s.symbol, "flota"),
             "riesgo_scalping": _riesgo_scalping(s.symbol),
-            "activo": activo, "live": live, "sin_filtro": _sin_filtro_de(nombre),
-            "riesgo_pct": _config_de(nombre, "riesgo_pct", RIESGO_DEFECTO),
+            "activo": activo, "live": live, "sin_filtro": _sin_filtro_de(nombre, s.symbol),
+            "riesgo_pct": _config_de(nombre, "riesgo_pct", RIESGO_DEFECTO, s.symbol),
             "vivo": vivo, "pid": vivos.get(nombre), "actualizado": fila[3] if fila else None,
             "origen": (fila[4] if fila and fila[4] else "manual"), "bloqueado": bool(fila and fila[5]),
             "coste_usd": coste.get(s.symbol, 0.0),
@@ -427,12 +428,20 @@ def coste_total():
     return total or 0.0
 
 
-def _live_de_config(nombre):
+def _store(clave, valor_json, simbolo):
+    """Lo que manda la BBDD (config_store) si lo tiene para ese simbolo; si no, el valor del JSON del agente."""
+    if simbolo is None:
+        return valor_json
+    return config_store.valor_o(clave, valor_json, "flota", simbolo)
+
+
+def _live_de_config(nombre, simbolo=None):
     try:
         f = _ficheros(None).ficheros(nombre)
-        return bool(json.loads(f["config"].read_text(encoding="utf-8-sig")).get("live"))
+        valor = json.loads(f["config"].read_text(encoding="utf-8-sig")).get("live")
     except Exception:
-        return False
+        valor = None
+    return bool(_store("live", valor, simbolo))
 
 
 MODELOS_PERMITIDOS = ("haiku", "sonnet", "opus")
@@ -440,12 +449,14 @@ MODELOS_PERMITIDOS = ("haiku", "sonnet", "opus")
 TIMEFRAMES_PERMITIDOS = ("M1", "M5", "M15", "M30", "H1", "H4", "D1")
 
 
-def _config_de(nombre, campo, por_defecto):
+def _config_de(nombre, campo, por_defecto, simbolo=None):
     try:
         f = _ficheros(None).ficheros(nombre)
-        return json.loads(f["config"].read_text(encoding="utf-8-sig")).get(campo) or por_defecto
+        valor = json.loads(f["config"].read_text(encoding="utf-8-sig")).get(campo)
     except Exception:
-        return por_defecto
+        valor = None
+    valor = _store(campo, valor, simbolo)
+    return valor if valor not in (None, "") else por_defecto
 
 
 def cambiar_timeframe(symbol, timeframe):
@@ -457,18 +468,17 @@ def cambiar_timeframe(symbol, timeframe):
     f = _ficheros(None).ficheros(nombre_agente(symbol))
     if not f["config"].is_file():
         raise ValueError(f"{symbol} no tiene configuracion: activalo primero")
-    cfg = json.loads(f["config"].read_text(encoding="utf-8-sig"))
-    cfg["timeframe"] = timeframe
-    f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    config_store.guardar("flota", symbol, {"timeframe": timeframe})
     return {"symbol": symbol, "timeframe": timeframe}
 
 
-def _modelo_de_config(nombre, por_defecto):
+def _modelo_de_config(nombre, por_defecto, simbolo=None):
     try:
         f = _ficheros(None).ficheros(nombre)
-        return json.loads(f["config"].read_text(encoding="utf-8-sig")).get("model") or por_defecto
+        valor = json.loads(f["config"].read_text(encoding="utf-8-sig")).get("model")
     except Exception:
-        return por_defecto
+        valor = None
+    return _store("model", valor, simbolo) or por_defecto
 
 
 def cambiar_modelo(symbol, modelo):
@@ -480,18 +490,17 @@ def cambiar_modelo(symbol, modelo):
     f = _ficheros(None).ficheros(nombre_agente(symbol))
     if not f["config"].is_file():
         raise ValueError(f"{symbol} no tiene configuracion: activalo primero")
-    cfg = json.loads(f["config"].read_text(encoding="utf-8-sig"))
-    cfg["model"] = modelo
-    f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    config_store.guardar("flota", symbol, {"model": modelo})
     return {"symbol": symbol, "modelo": modelo}
 
 
-def _sin_filtro_de(nombre):
+def _sin_filtro_de(nombre, simbolo=None):
     try:
         f = _ficheros(None).ficheros(nombre)
-        return bool(json.loads(f["config"].read_text(encoding="utf-8-sig")).get("sin_filtro", True))
+        valor = json.loads(f["config"].read_text(encoding="utf-8-sig")).get("sin_filtro", True)
     except Exception:
-        return True
+        valor = True
+    return bool(_store("sin_filtro", valor, simbolo))
 
 
 def cambiar_filtro(symbol, sin_filtro):
@@ -501,9 +510,7 @@ def cambiar_filtro(symbol, sin_filtro):
     f = _ficheros(None).ficheros(nombre_agente(symbol))
     if not f["config"].is_file():
         raise ValueError(f"{symbol} no tiene configuracion: activalo primero")
-    cfg = json.loads(f["config"].read_text(encoding="utf-8-sig"))
-    cfg["sin_filtro"] = bool(sin_filtro)
-    f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    config_store.guardar("flota", symbol, {"sin_filtro": bool(sin_filtro)})
     return {"symbol": symbol, "sin_filtro": bool(sin_filtro)}
 
 
@@ -525,10 +532,8 @@ def cambiar_riesgo(symbol, riesgo_pct):
     f = _ficheros(None).ficheros(nombre_agente(symbol))
     if not f["config"].is_file():
         raise ValueError(f"{symbol} no tiene configuracion: activalo primero")
-    cfg = json.loads(f["config"].read_text(encoding="utf-8-sig"))
-    cfg["riesgo_pct"] = round(valor, 3)
-    f["config"].write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    return {"symbol": symbol, "riesgo_pct": cfg["riesgo_pct"]}
+    guardado = config_store.guardar("flota", symbol, {"riesgo_pct": round(valor, 3)})
+    return {"symbol": symbol, "riesgo_pct": guardado["riesgo_pct"]}
 
 
 def _riesgo_scalping(symbol):
@@ -615,16 +620,17 @@ LLM_GLOBAL = DATA / "llm_global.json"
 
 def leer_tope_diario():
     try:
-        return max(0, int(json.loads(LLM_GLOBAL.read_text(encoding="utf-8-sig")).get("max_llamadas_dia", 0)))
+        json_val = max(0, int(json.loads(LLM_GLOBAL.read_text(encoding="utf-8-sig")).get("max_llamadas_dia", 0)))
     except (FileNotFoundError, ValueError, TypeError):
-        return 0
+        json_val = 0
+    return int(config_store.valor_o("max_llamadas_dia", json_val, config_store.GLOBAL))
 
 
 def guardar_tope_diario(valor):
     valor = int(valor)
     if valor < 0:
         raise ValueError("el tope de llamadas no puede ser negativo (0 = sin tope)")
-    LLM_GLOBAL.write_text(json.dumps({"max_llamadas_dia": valor}, indent=2), encoding="utf-8")
+    config_store.guardar(config_store.GLOBAL, "", {"max_llamadas_dia": valor})
     return {"max_llamadas_dia": valor}
 
 
@@ -647,16 +653,14 @@ def leer_topes_cuota():
             out[k] = int(guardado.get(k, v))
         except (TypeError, ValueError):
             out[k] = v
-    return out
+    g = config_store.GLOBAL
+    return {"max_5h": int(config_store.valor_o("cuota_tope_5h", out["max_5h"], g)),
+            "max_semanal": int(config_store.valor_o("cuota_tope_semanal", out["max_semanal"], g))}
 
 
 def guardar_topes_cuota(max_5h, max_semanal):
-    nuevos = {"max_5h": int(max_5h), "max_semanal": int(max_semanal)}
-    for k, v in nuevos.items():
-        if not 10 <= v <= 100:
-            raise ValueError(f"{k} debe estar entre 10 y 100")
-    CUOTA_TOPES.write_text(json.dumps(nuevos, indent=2), encoding="utf-8")
-    return nuevos
+    config_store.guardar(config_store.GLOBAL, "", {"cuota_tope_5h": int(max_5h), "cuota_tope_semanal": int(max_semanal)})
+    return {"max_5h": int(max_5h), "max_semanal": int(max_semanal)}
 
 
 def decisiones(symbol, limite=50):

@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """
-Agente de scalping LLM: un proceso aparte de la flota. Llama al modelo cada minuto sobre pocos indices
-sin comision medida (US100, US30, US500) y opera en M1 con stops en ATR de M1.
+Agente de scalping LLM: un proceso aparte de la flota. Cada vuelta reune los simbolos que necesitan
+decision (US100, US30, US500) y los manda en UNA sola llamada al modelo; la respuesta trae una decision
+por simbolo. Opera en M1 con stops en ATR de M1.
 
 Separado de la flota a proposito: su propio magic (110101, fuera de MAGICS_FLOTA), su propia config
 (.agents/data/llm_scalping.json), su propia BBDD (llm_scalping.db) y su propio prompt. No cuenta para los
@@ -12,7 +13,7 @@ Arranca en SIMULACION: registra la operacion que habria abierto, la sigue con la
 o tiempo) y mide el R. live=true en la config solo opera en cuenta DEMO.
 
 Uso:
-  python PST_LLM/scalping.py            # bucle continuo (una vuelta por minuto)
+  python PST_LLM/scalping.py            # bucle continuo (una vuelta cada cadencia_s segundos)
   python PST_LLM/scalping.py --once     # una vuelta y sale
   python PST_LLM/scalping.py --estado   # resumen de operaciones y R, sin tocar MT5
 Parar: crear .agents/data/llm_scalping.STOP
@@ -47,22 +48,34 @@ SIMBOLOS_PERMITIDOS = registro.SIMBOLOS_SCALPING      # medidos sin comision (20
 SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["hold", "buy", "sell", "close"]},
-        "sl_atr_mult": {"type": "number", "minimum": 1.0, "maximum": 2.0},
-        "tp_r": {"type": "number", "minimum": 2.0, "maximum": 3.0},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "reason": {"type": "string"},
+        "decisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "action": {"type": "string", "enum": ["hold", "buy", "sell", "close"]},
+                    "sl_atr_mult": {"type": "number", "minimum": 1.0, "maximum": 2.0},
+                    "tp_r": {"type": "number", "minimum": 2.0, "maximum": 3.0},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "reason": {"type": "string"},
+                },
+                "required": ["symbol", "action", "reason"],
+            },
+        },
     },
-    "required": ["action", "reason"],
+    "required": ["decisions"],
 }
 
 PROMPT = """ROLE
-You are a discretionary SCALPER on a DEMO account. You trade one index CFD at a time, holding positions for
-minutes. You are called once per minute for each symbol. Most calls should be 'hold'.
+You are a discretionary SCALPER on a DEMO account. You trade index CFDs, holding positions for minutes.
+You are called once per cycle with one state per symbol. Decide each symbol on its own. Most decisions
+should be 'hold'.
 
 OUTPUT
-Reply ONLY with the JSON decision requested by the schema. 'action' is hold, buy, sell or close. With no open
-position choose hold, buy or sell. With an open position choose hold or close.
+Reply ONLY with the JSON requested by the schema: 'decisions', one entry per symbol of the input 'symbols'
+list, each with its 'symbol' name. 'action' is hold, buy, sell or close. With no open position choose hold,
+buy or sell. With an open position choose hold or close.
 - 'sl_atr_mult': stop distance in ATR(14) of the M1 timeframe, between 1.0 and 2.0.
 - 'tp_r': take profit as a multiple of the stop distance, between 2.0 and 3.0.
 - 'reason': one short sentence, in English, naming the structure you trade.
@@ -78,9 +91,12 @@ RULES
 - With an open position, close only if the M1 structure that justified it broke against you.
 - The system closes the position by itself after max_hold_min minutes and enforces spread and cost limits.
   You do not need to manage time.
+- The index CFDs move together. Do not open the same direction on several symbols just because one setup
+  appears; each symbol needs its own structure.
 """
 
 _ULT_TICK = {}          # simbolo -> (ultimo tick visto, instante local)
+_ULT_AVISO_ERROR = {"t": 0.0}
 
 
 leer_config = scalping_config.leer
@@ -117,10 +133,6 @@ def r_del_dia(con):
     fila = con.execute("SELECT COALESCE(SUM(r_real),0) FROM operaciones WHERE estado='cerrada' AND cerrada >= ?",
                        (hoy(),)).fetchone()
     return fila[0] or 0.0
-
-
-def llamadas_hoy(con):
-    return con.execute("SELECT COUNT(*) FROM decisiones WHERE llamada=1 AND ts >= ?", (hoy(),)).fetchone()[0]
 
 
 def abiertas(con, symbol=None):
@@ -200,15 +212,26 @@ def abiertas_recientes(con, symbol, n=5):
     return [dict(zip(cols, f)) for f in filas]
 
 
-def preguntar(estado, cfg):
+def preguntar(estados, cfg):
+    """Una llamada para todos los simbolos del lote. Devuelve (decision del lote, uso de la llamada)."""
     cmd = [lt._resolve_claude(), "-p", "--model", cfg["model"], "--effort", cfg["effort"],
            "--json-schema", json.dumps(SCHEMA), "--system-prompt", PROMPT, "--tools", "",
            "--strict-mcp-config", "--permission-prompts", "none", "--output-format", "json",
-           json.dumps(estado, separators=(",", ":"))]
+           json.dumps({"symbols": estados}, separators=(",", ":"))]
     t0 = time.time()
     r = lt.ejecutar_claude(cmd, lt.cwd_agente(NOMBRE))
     env = json.loads(r.stdout)
     return lt._decision(env), lt._uso(env, time.time() - t0)
+
+
+def decisiones_por_simbolo(lote):
+    """{simbolo: decision}. Lo que el modelo no contesta se trata como hold en el que lo llame."""
+    return {x.get("symbol"): x for x in (lote.get("decisions") or []) if isinstance(x, dict)}
+
+
+def repartir_uso(uso, n):
+    """El coste y los tokens de una llamada de lote se reparten entre los simbolos que la compartieron."""
+    return {k: (v if k == "duration_s" or v is None else v / n) for k, v in uso.items()}
 
 
 def calcular(mt5, symbol, lado, snap, cfg, sl_atr, tp_r, cuenta):
@@ -275,9 +298,6 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
     return True, (f"{modo.upper()} {o['lado']} {o['lotes']:.2f} lotes @ {o['precio']:.{o['digits']}f} · "
                   f"SL {o['sl']:.{o['digits']}f} · TP {o['tp']:.{o['digits']}f} · riesgo ~{o['riesgo_eur']:.0f} EUR · "
                   f"coste {o['coste_r'] * 100:.1f}% R")
-
-
-_ULT_AVISO_ERROR = {"t": 0.0}
 
 
 def avisar(texto):
@@ -376,11 +396,20 @@ def enfriamiento_tras_stop(con, symbol, cfg):
     return (datetime.now() - datetime.strptime(fila[1], "%Y-%m-%d %H:%M:%S")).total_seconds() < minutos * 60
 
 
-def procesar(mt5, con, cfg, symbol, cuenta):
+def sin_llamada(con, symbol, modo, ts, motivo):
+    print(f"[{ts}] {symbol} sin llamada: {motivo}", flush=True)
+    con.execute("INSERT INTO decisiones (ts, symbol, modo, llamada, motivo, accion, resultado) VALUES (?,?,?,0,?,'-',?)",
+                (ts, symbol, modo, motivo, motivo))
+    con.commit()
+
+
+def preparar(mt5, con, cfg, symbol):
+    """Vigila lo abierto y mira si este simbolo necesita decision en esta vuelta.
+    Devuelve (symbol, snap, pos) si la necesita, o None."""
     snap = snapshot(mt5, symbol)
     if snap is None:
         print(f"[scalping] {symbol}: sin velas suficientes", flush=True)
-        return
+        return None
     tick = snap["tick"]
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     modo = "live" if cfg["live"] else "sim"
@@ -402,30 +431,16 @@ def procesar(mt5, con, cfg, symbol, cuenta):
         motivo_sin = calendario.bloqueo_entrada(symbol)[1]
     elif not pos and enfriamiento_tras_stop(con, symbol, cfg):
         motivo_sin = f"enfriamiento: stop en {symbol} hace menos de {cfg['cooldown_tras_stop_min']} min"
-    elif llamadas_hoy(con) >= cfg["max_llamadas_dia"]:
-        motivo_sin = f"tope de {cfg['max_llamadas_dia']} llamadas/dia de este agente"
-    else:
-        ok, why, _ = lt.cuota_ok()
-        if not ok:
-            motivo_sin = f"freno de cuota: {why}"
     if motivo_sin:
-        print(f"[{ts}] {symbol} sin llamada: {motivo_sin}", flush=True)
-        con.execute("INSERT INTO decisiones (ts, symbol, modo, llamada, motivo, accion, resultado) VALUES (?,?,?,0,?,'-',?)",
-                    (ts, symbol, modo, motivo_sin, motivo_sin))
-        con.commit()
-        return
-    # 3. El modelo decide.
-    try:
-        d, uso = preguntar(estado_llm(con, symbol, snap, cfg, pos), cfg)
-    except Exception as e:
-        print(f"[{ts}] {symbol} error del agente: {e}", flush=True)
-        if time.time() - _ULT_AVISO_ERROR["t"] > 1800:
-            _ULT_AVISO_ERROR["t"] = time.time()
-            avisar(f"SCALPING · error del agente en {symbol}: {str(e)[:200]}")
-        con.execute("INSERT INTO decisiones (ts, symbol, modo, llamada, accion, resultado) VALUES (?,?,?,1,'error',?)",
-                    (ts, symbol, modo, str(e)[:300]))
-        con.commit()
-        return
+        sin_llamada(con, symbol, modo, ts, motivo_sin)
+        return None
+    return symbol, snap, pos
+
+
+def ejecutar(mt5, con, cfg, symbol, d, snap, pos, cuenta, uso, ts):
+    """Aplica la decision del modelo para un simbolo y la anota en la BBDD."""
+    tick = snap["tick"]
+    modo = "live" if cfg["live"] else "sim"
     accion = d.get("action", "hold")
     ejecutada, resultado = False, "-"
     if accion == "close" and pos:
@@ -450,6 +465,29 @@ def procesar(mt5, con, cfg, symbol, cuenta):
     con.commit()
     print(f"[{ts}] {symbol} {accion.upper()} | {d.get('reason', '')} | {resultado} | "
           f"coste={uso.get('cost_usd')}", flush=True)
+
+
+def decidir_lote(mt5, con, cfg, pendientes, cuenta):
+    """Una sola llamada al modelo para todos los simbolos pendientes; luego se ejecuta la decision de cada uno."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    modo = "live" if cfg["live"] else "sim"
+    try:
+        lote, uso = preguntar([estado_llm(con, s, snap, cfg, pos) for s, snap, pos in pendientes], cfg)
+    except Exception as e:
+        print(f"[{ts}] error del agente: {e}", flush=True)
+        if time.time() - _ULT_AVISO_ERROR["t"] > 1800:
+            _ULT_AVISO_ERROR["t"] = time.time()
+            avisar(f"SCALPING · error del agente: {str(e)[:200]}")
+        for symbol, _, _ in pendientes:
+            con.execute("INSERT INTO decisiones (ts, symbol, modo, llamada, accion, resultado) VALUES (?,?,?,1,'error',?)",
+                        (ts, symbol, modo, str(e)[:300]))
+        con.commit()
+        return
+    por_simbolo = decisiones_por_simbolo(lote)
+    reparto = repartir_uso(uso, len(pendientes))
+    for symbol, snap, pos in pendientes:
+        d = por_simbolo.get(symbol, {"action": "hold", "reason": "el modelo no contesto a este simbolo"})
+        ejecutar(mt5, con, cfg, symbol, d, snap, pos, cuenta, reparto, ts)
 
 
 def resumen():
@@ -500,14 +538,28 @@ def main():
             simbolos = simbolos_activos()
             if not simbolos:
                 print("[scalping] ningun simbolo con estrategia scalping", flush=True)
+            pendientes = []
             for symbol in simbolos:
                 if not mt5.symbol_select(symbol, True):
                     print(f"[scalping] {symbol} no disponible", flush=True)
                     continue
                 try:
-                    procesar(mt5, con, cfg, symbol, cuenta)
+                    listo = preparar(mt5, con, cfg, symbol)
+                    if listo:
+                        pendientes.append(listo)
                 except Exception as e:           # un simbolo que falla no para a los demas
                     print(f"[scalping] {symbol} error: {e}", flush=True)
+            if pendientes:
+                ok, why, _ = lt.cuota_ok()       # solo se mira si hay algo que decidir; no en cada vuelta
+                if not ok:
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    for symbol, _, _ in pendientes:
+                        sin_llamada(con, symbol, "live" if cfg["live"] else "sim", ts, f"freno de cuota: {why}")
+                else:
+                    try:
+                        decidir_lote(mt5, con, cfg, pendientes, cuenta)
+                    except Exception as e:
+                        print(f"[scalping] lote error: {e}", flush=True)
             if args.once:
                 break
             espera = cfg["cadencia_s"] - (time.time() - inicio)

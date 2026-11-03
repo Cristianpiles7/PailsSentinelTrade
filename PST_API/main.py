@@ -30,6 +30,7 @@ from PST_API.habblaud_proxy import router as habblaud_router, start_mirror_in_th
 from PST_API.agents_api import router as agents_router
 from PST_API.llm_api import router as llm_router
 from PST_API.puntuador_api import router as puntuador_router
+from PST_API.estrategias_api import router as estrategias_router
 from PST_API.updater_api import router as updater_router, limpiar_restos as limpiar_restos_actualizacion
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
@@ -1126,33 +1127,6 @@ async def get_system_logs(limit: int = 50):
     except Exception as e:
         return APIResponse(status="error", message=str(e))
 
-@app.get("/api/news/upcoming", tags=["Monitor"])
-async def get_upcoming_news():
-    """Retorna eventos de alto impacto proyectados (Fase 50)."""
-    try:
-        from PST_Core.engine.news_manager import news_guard
-        upcoming = news_guard.get_upcoming_high_impact(limit=3)
-        # Convertir objetos datetime a strings ISO para JSON
-        safe_upcoming = []
-        for e in upcoming:
-            safe_upcoming.append({
-                "title": e['title'],
-                "country": e['country'],
-                "time": e['time_utc'].isoformat(),
-                "impact": e['impact']
-            })
-        
-        # Verificar si hay bloqueo global activo (para cualquier símbolo clave)
-        is_blocked, _ = news_guard.is_news_blocked("ALL")
-        
-        return {
-            "upcoming": safe_upcoming,
-            "is_global_block": is_blocked
-        }
-    except Exception as e:
-        logger.error(f"❌ Error en news/upcoming: {e}")
-        return {"upcoming": [], "is_global_block": False}
-
 @app.delete("/api/trades/close/{symbol}", response_model=APIResponse, tags=["Trading"])
 async def close_symbol_trades(symbol: str):
     """Cierra todas las posiciones abiertas para un símbolo."""
@@ -1200,156 +1174,6 @@ async def close_symbol_trades(symbol: str):
 
 # ── FASE 34: MATRIX EDITOR ────────────────────────────────────────────────────
 from pydantic import BaseModel as _BM, Field as _F
-
-class SymbolParamsUpdate(_BM):
-    lot_size: float        = _F(None, ge=0.01, le=100.0)
-    sl_mult: float         = _F(None, ge=0.5,  le=10.0)
-    tp_mult: float         = _F(None, ge=1.0,  le=20.0)
-    score_threshold: float = _F(None, ge=0.0,  le=100.0)
-    risk_mode: str         = _F(None) # LOTS, PCT, MONEY
-    risk_value: float      = _F(None)
-    min_rr: float          = _F(None, ge=1.0,  le=5.0)
-
-@app.get("/api/symbols/{symbol}/params", tags=["Config"])
-async def get_symbol_params(symbol: str):
-    """Devuelve los parámetros de trading individuales de un símbolo (Matrix Editor)."""
-    params = await db.get_symbol_params(symbol)
-    return {"symbol": symbol, **params}
-
-@app.put("/api/symbols/{symbol}/params", tags=["Config"])
-async def update_symbol_params(symbol: str, body: SymbolParamsUpdate):
-    """Actualiza los parámetros de trading de un símbolo en tiempo real (Matrix Editor)."""
-    ok = await db.update_symbol_params(
-        symbol,
-        lot_size=body.lot_size,
-        sl_mult=body.sl_mult,
-        tp_mult=body.tp_mult,
-        score_threshold=body.score_threshold,
-        risk_mode=body.risk_mode,
-        risk_value=body.risk_value,
-        min_rr=body.min_rr,
-    )
-    if not ok:
-        raise HTTPException(status_code=500, detail="Error actualizando parámetros")
-    return {"symbol": symbol, "status": "updated"}
-
-@app.get("/api/matrix", tags=["Config"])
-async def get_matrix_data():
-    """Devuelve la configuración completa de todos los símbolos para el Matrix Editor."""
-    symbols_cfg = await db.get_all_symbols_config()
-    radar_data = await db.get_radar_data()
-    result = []
-    for s in symbols_cfg:
-        sym = s["symbol"]
-        params = await db.get_symbol_params(sym) # Carga globales del símbolo
-        radar = radar_data.get(sym, {})
-        
-        # Obtener configuración real de estrategias desde la DB (is_active, risk, sl/tp overrides)
-        strategies_db = await db.get_symbol_strategies(sym)
-        
-        # Procesar factores (radar) y mezclar con configuración (DB)
-        raw_factors = radar.get('factors', {})
-        factors_map = {}
-        
-        # Primero, asegurar que todas las estrategias registradas en la DB aparezcan
-        for s_name, s_cfg in strategies_db.items():
-            # Riesgo específico para Scalper Pro: 5€, resto 25€ (si no hay config en DB)
-            default_risk = 5.0 if "Scalper" in s_name else 25.0
-            
-            factors_map[s_name] = {
-                "score": 0.0,
-                "is_active": bool(s_cfg.get("is_active", 0)), 
-                "risk_mode": s_cfg.get("risk_mode", "MONEY"),
-                "risk_value": s_cfg.get("risk_value", default_risk),
-                "sl_mult": s_cfg.get("sl_mult", 2.5),
-                "tp_mult": s_cfg.get("tp_mult", 6.0),
-                "score_threshold": s_cfg.get("score_threshold", 80.0),
-                "use_trailing": bool(s_cfg.get("use_trailing", 1)), # Activado por defecto (1)
-                "use_breakeven": bool(s_cfg.get("use_breakeven", 1)), # Activado por defecto (1)
-                "be_mult": s_cfg.get("be_mult", 2.0),
-                "ts_mult": s_cfg.get("ts_mult", 2.5),
-                "min_rr": s_cfg.get("min_rr", 1.5),
-                "filter_profile": s_cfg.get("filter_profile")  # Fase 3: perfil de filtros JSON (PrecisionScalping)
-            }
-            
-        # Segundos, actualizar con puntuaciones reales del radar
-        if isinstance(raw_factors, dict):
-            for s_name, s_data in raw_factors.items():
-                score = s_data.get("score", 0.0) if isinstance(s_data, dict) else 0.0
-                if s_name in factors_map:
-                    factors_map[s_name]["score"] = score
-                else:
-                    factors_map[s_name] = {
-                        "score": score,
-                        "is_active": True # Si no está en DB pero está en radar, por defecto activa
-                    }
-        
-        result.append({
-            "symbol": sym,
-            "is_active": bool(s.get("is_active", 1)),
-            "type": s.get("type", ""),
-            **params,
-            "factors_map": factors_map
-        })
-    return result
-
-class SymbolStatusUpdate(_BM):
-    symbol: str
-    is_active: bool
-
-@app.post("/api/config/symbol", tags=["Config"])
-async def update_symbol_status(update: SymbolStatusUpdate):
-    """Activa o desactiva un símbolo en la matriz."""
-    ok = await db.set_symbol_active(update.symbol, update.is_active)
-    if not ok:
-        raise HTTPException(status_code=500, detail="Error actualizando el estado del símbolo")
-    return {"status": "success"}
-
-class StrategyConfigUpdate(_BM):
-    symbol: str
-    strategy: str
-    is_active: bool = _F(None)
-    risk_mode: str = _F(None)
-    risk_value: float = _F(None)
-    sl_mult: float = _F(None)
-    tp_mult: float = _F(None)
-    score_threshold: float = _F(None)
-    use_trailing: bool = _F(None)
-    use_breakeven: bool = _F(None)
-    be_mult: float = _F(None)
-    ts_mult: float = _F(None)
-    min_rr: float = _F(None)
-    filter_profile: str = _F(None)   # Fase 3: JSON de perfil de filtros (PrecisionScalping)
-
-@app.post("/api/config/strategy", tags=["Config"])
-async def update_strategy_config(update: StrategyConfigUpdate):
-    """Actualiza la configuración detallada de una estrategia para un símbolo."""
-    # Validación defensiva: si llega filter_profile, debe ser JSON válido.
-    if update.filter_profile is not None:
-        try:
-            import json as _json
-            _json.loads(update.filter_profile)
-        except Exception:
-            raise HTTPException(status_code=400, detail="filter_profile no es JSON válido")
-    ok = await db.set_symbol_strategy(
-        update.symbol,
-        update.strategy,
-        is_active=update.is_active,
-        risk_mode=update.risk_mode,
-        risk_value=update.risk_value,
-        sl_mult=update.sl_mult,
-        tp_mult=update.tp_mult,
-        score_threshold=update.score_threshold,
-        use_trailing=update.use_trailing,
-        use_breakeven=update.use_breakeven,
-        be_mult=update.be_mult,
-        ts_mult=update.ts_mult,
-        min_rr=update.min_rr,
-        filter_profile=update.filter_profile
-    )
-    if not ok:
-        raise HTTPException(status_code=500, detail="Error actualizando estrategia")
-    return {"status": "success"}
 
 class UserLevelPoint(BaseModel):
     time: int = None
@@ -1444,6 +1268,7 @@ app.include_router(habblaud_router)
 app.include_router(agents_router)
 app.include_router(llm_router)
 app.include_router(puntuador_router)
+app.include_router(estrategias_router)
 app.include_router(updater_router)
 
 if os.path.isdir(react_dist_path):
