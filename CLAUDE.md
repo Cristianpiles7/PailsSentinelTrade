@@ -29,6 +29,10 @@ Hay dos mundos separados. No los mezcles.
 - **Aquí se edita, se hace commit, tag y push.** Los comandos git van con `cd` a `repo\`.
 - Es público (el launcher consulta la API sin token), así que nada de secretos en el repo.
 
+### Copia que NO se usa: `G:\Mi unidad\PST_DATA_ROOT\`
+- Hay un `PST_MASTER.exe` en esa carpeta de Google Drive. **No se usa. Nunca abrirlo.** La app real es `C:\Users\crist\Desktop\PailsSentinelTrade\PST_MASTER.exe`.
+- Si aparece un proceso `PST_MASTER.exe` desde `G:\`, es un resto que no hay que arrancar ni tomar como referencia.
+
 ## 2. Cómo se publica una versión (tag → Release)
 
 Idioma del historial: `vX.Y.Z - descripción en una línea`. Ver también `repo\.claude\commands\release.md` y `repo\.agents\workflows\release.md`.
