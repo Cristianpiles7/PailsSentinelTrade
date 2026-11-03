@@ -49,7 +49,7 @@ SCHEMA = {
     "properties": {
         "action": {"type": "string", "enum": ["hold", "buy", "sell", "close"]},
         "sl_atr_mult": {"type": "number", "minimum": 1.0, "maximum": 2.0},
-        "tp_r": {"type": "number", "minimum": 1.5, "maximum": 3.0},
+        "tp_r": {"type": "number", "minimum": 2.0, "maximum": 3.0},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "reason": {"type": "string"},
     },
@@ -64,15 +64,17 @@ OUTPUT
 Reply ONLY with the JSON decision requested by the schema. 'action' is hold, buy, sell or close. With no open
 position choose hold, buy or sell. With an open position choose hold or close.
 - 'sl_atr_mult': stop distance in ATR(14) of the M1 timeframe, between 1.0 and 2.0.
-- 'tp_r': take profit as a multiple of the stop distance, between 1.5 and 3.0.
+- 'tp_r': take profit as a multiple of the stop distance, between 2.0 and 3.0.
 - 'reason': one short sentence, in English, naming the structure you trade.
 
 RULES
 - M1 includes the candle still forming ('vela_en_formacion': true). You may enter on it at any moment; you do
   not wait for the minute to close. M5 and M15 are closed candles and give the structure.
-- Enter only when M1 and M5 agree: price above EMA20 on both for a buy, below for a sell.
+- Enter only on a PULLBACK: price pulled back to the M1 EMA20 and resumed in the trend direction. Do not enter
+  on breakouts or impulse candles.
+- M5 must confirm: price on the trade side of M5 EMA20, M5 ADX at least 20, and DI on the trade side.
 - Skip choppy markets: M5 ADX below 20 means hold.
-- Do not chase: if the last M1 candle already moved more than 1.0 ATR(M1) in your direction, hold.
+- Do not chase: if the last M1 candle already moved more than 0.5 ATR(M1) in your direction, hold.
 - With an open position, close only if the M1 structure that justified it broke against you.
 - The system closes the position by itself after max_hold_min minutes and enforces spread and cost limits.
   You do not need to manage time.
@@ -279,10 +281,27 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
                   f"coste {o['coste_r'] * 100:.1f}% R")
 
 
+_ULT_AVISO_ERROR = {"t": 0.0}
+
+
+def avisar(texto):
+    """Aviso por Telegram (texto plano; de 00:00 a 08:00 llega en silencio). Si Telegram falla, el agente sigue."""
+    try:
+        ok, detalle = lt.telegram_enviar(texto)
+        if not ok:
+            print(f"[scalping] telegram no enviado: {detalle}", flush=True)
+    except Exception as e:
+        print(f"[scalping] telegram error: {type(e).__name__}", flush=True)
+
+
 def cerrar_fila(con, fila, precio, motivo, r):
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     con.execute("""UPDATE operaciones SET estado='cerrada', cerrada=?, precio_cierre=?, motivo_cierre=?, r_real=?
-                   WHERE id=?""", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), precio, motivo, round(r, 3), fila["id"]))
+                   WHERE id=?""", (ahora, precio, motivo, round(r, 3), fila["id"]))
     con.commit()
+    total_r = con.execute("SELECT COALESCE(SUM(r_real),0) FROM operaciones WHERE estado='cerrada'").fetchone()[0]
+    avisar(f"SCALPING · cierre {fila['symbol']} {fila['lado'].upper()} · {motivo} · {r:+.2f} R · "
+           f"abierta {fila['abierta'][11:16]}, cerrada {ahora[11:16]} · acumulado {total_r:+.2f} R ({fila['modo']})")
 
 
 def r_de_precio(fila, precio):
@@ -349,6 +368,18 @@ def cerrar_live(mt5, con, fila, snap, motivo):
     return f"{motivo} {'ok' if ok else 'NO enviado: ' + txt}"
 
 
+def enfriamiento_tras_stop(con, symbol, cfg):
+    """True si el ultimo cierre de este simbolo fue un stop hace menos de cooldown_tras_stop_min minutos."""
+    minutos = cfg.get("cooldown_tras_stop_min", 0)
+    if not minutos:
+        return False
+    fila = con.execute("SELECT motivo_cierre, cerrada FROM operaciones WHERE estado='cerrada' AND symbol=? "
+                       "ORDER BY id DESC LIMIT 1", (symbol,)).fetchone()
+    if not fila or fila[0] != "stop":
+        return False
+    return (datetime.now() - datetime.strptime(fila[1], "%Y-%m-%d %H:%M:%S")).total_seconds() < minutos * 60
+
+
 def procesar(mt5, con, cfg, symbol, cuenta):
     snap = snapshot(mt5, symbol)
     if snap is None:
@@ -373,6 +404,8 @@ def procesar(mt5, con, cfg, symbol, cuenta):
         motivo_sin = "mercado sin cotizaciones nuevas (20 min)"
     elif not pos and calendario.bloqueo_entrada(symbol)[0]:
         motivo_sin = calendario.bloqueo_entrada(symbol)[1]
+    elif not pos and enfriamiento_tras_stop(con, symbol, cfg):
+        motivo_sin = f"enfriamiento: stop en {symbol} hace menos de {cfg['cooldown_tras_stop_min']} min"
     elif llamadas_hoy(con) >= cfg["max_llamadas_dia"]:
         motivo_sin = f"tope de {cfg['max_llamadas_dia']} llamadas/dia de este agente"
     else:
@@ -390,6 +423,9 @@ def procesar(mt5, con, cfg, symbol, cuenta):
         d, uso = preguntar(estado_llm(con, symbol, snap, cfg, pos), cfg)
     except Exception as e:
         print(f"[{ts}] {symbol} error del agente: {e}", flush=True)
+        if time.time() - _ULT_AVISO_ERROR["t"] > 1800:
+            _ULT_AVISO_ERROR["t"] = time.time()
+            avisar(f"SCALPING · error del agente en {symbol}: {str(e)[:200]}")
         con.execute("INSERT INTO decisiones (ts, symbol, modo, llamada, accion, resultado) VALUES (?,?,?,1,'error',?)",
                     (ts, symbol, modo, str(e)[:300]))
         con.commit()
@@ -406,6 +442,8 @@ def procesar(mt5, con, cfg, symbol, cuenta):
             resultado, ejecutada = "SIM cierre por el agente", True
     elif accion in ("buy", "sell") and not pos:
         ejecutada, resultado = abrir(mt5, con, cfg, symbol, d, snap, cuenta)
+        if ejecutada:
+            avisar(f"SCALPING · apertura {symbol} {accion.upper()} · {resultado}")
     elif accion in ("buy", "sell") and pos:
         resultado = "ya hay posicion: se ignora abrir"
     con.execute("""INSERT INTO decisiones (ts, symbol, modo, llamada, accion, confianza, sl_atr, tp_r, razon,
@@ -449,6 +487,7 @@ def main():
         es_demo = cuenta.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO
         con = db()
         print(f"[scalping] cuenta {cuenta.login} · magic {MAGIC} · simbolos se leen de la BBDD (estrategia scalping)", flush=True)
+        avisar(f"SCALPING · agente arrancado (cuenta {cuenta.login}, {'DEMO' if es_demo else 'NO demo'})")
         while True:
             cfg = leer_config()
             if cfg["live"] and not es_demo:

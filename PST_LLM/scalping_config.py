@@ -24,7 +24,8 @@ DEFECTO = {
     "max_abiertas": 2,              # operaciones simultaneas, en todos los simbolos del scalping
     "max_perdida_dia_r": 3.0,       # si el dia suma -R, no se abre nada mas
     "sl_atr": [1.0, 2.0],           # stop en ATR de M1, rango que puede elegir el modelo
-    "tp_r": [1.5, 3.0],             # objetivo en R
+    "tp_r": [2.0, 3.0],             # objetivo en R (minimo 2: con 1,5 el acierto necesario era 40 %, y se acierta 25-33 %)
+    "cooldown_tras_stop_min": 10,   # tras un stop, minutos sin entrar en ese simbolo
     "max_spread_sobre_stop": 0.10,  # el spread no puede pasar de esta fraccion de la distancia al stop
     "max_coste_r": 0.10,            # spread + comision ida y vuelta, en fraccion del R
     "max_llamadas_dia": 1500,       # tope propio de este agente (no cuenta el de la flota)
@@ -36,6 +37,7 @@ RANGOS = {
     "pausa_minima_s": (1, 60),
     "riesgo_pct": (0.05, 1.0),
     "max_hold_min": (1, 240),
+    "cooldown_tras_stop_min": (0, 120),
     "max_abiertas": (1, 5),
     "max_perdida_dia_r": (0.5, 20.0),
     "max_spread_sobre_stop": (0.01, 0.5),
@@ -99,7 +101,7 @@ def guardar(cambios):
                 raise ValueError(f"{clave} debe ser un numero")
             if not lo <= v <= hi:
                 raise ValueError(f"{clave} fuera de rango: usa entre {lo} y {hi}")
-            limpio[clave] = int(v) if clave in ("cadencia_s", "pausa_minima_s", "max_hold_min", "max_abiertas",
+            limpio[clave] = int(v) if clave in ("cadencia_s", "pausa_minima_s", "max_hold_min", "max_abiertas", "cooldown_tras_stop_min",
                                                  "max_llamadas_dia") else round(v, 4)
         else:
             raise ValueError(f"{clave} no es una clave editable")
