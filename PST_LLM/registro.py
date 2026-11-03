@@ -173,8 +173,23 @@ def _ficheros(nombre):
     return F
 
 
-def activar(symbol, live=True, origen="manual"):
-    """Crea (si hace falta) la configuracion del agente y lo arranca. Devuelve un resumen."""
+def modo_flota():
+    """
+    'proceso' (defecto): un proceso por agente. 'worker': varios agentes por proceso, al abrir la app.
+    Se cambia a mano en .agents/data/llm_flota_modo.json, como las demas configs de la flota.
+    """
+    try:
+        modo = json.loads((DATA / "llm_flota_modo.json").read_text(encoding="utf-8-sig")).get("modo", "proceso")
+    except (FileNotFoundError, ValueError, AttributeError):
+        return "proceso"
+    return modo if modo in ("proceso", "worker") else "proceso"
+
+
+def activar(symbol, live=True, origen="manual", lanzar=True):
+    """
+    Crea (si hace falta) la configuracion del agente y lo arranca. Devuelve un resumen.
+    `lanzar=False`: solo deja la configuracion lista; quien llama lo arranca (en grupo, ver arrancar_activos).
+    """
     import bloqueo
     ajeno = bloqueo.tomar_o_latir()
     if ajeno:
@@ -215,12 +230,14 @@ def activar(symbol, live=True, origen="manual"):
         pid = vivos[nombre]
     else:
         f["stop"].unlink(missing_ok=True)
-        args = rutas.comando_python(SCRIPT, "--nombre", nombre, "--magic", str(s.magic))
-        salida, error = open(f["log"], "a", encoding="utf-8"), open(f["err"], "a", encoding="utf-8")
-        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        p = subprocess.Popen(args, cwd=str(REPO_ROOT), stdout=salida, stderr=error,
-                             stdin=subprocess.DEVNULL, creationflags=flags)
-        pid = p.pid
+        pid = None
+        if lanzar:
+            args = rutas.comando_python(SCRIPT, "--nombre", nombre, "--magic", str(s.magic))
+            salida, error = open(f["log"], "a", encoding="utf-8"), open(f["err"], "a", encoding="utf-8")
+            flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            p = subprocess.Popen(args, cwd=str(REPO_ROOT), stdout=salida, stderr=error,
+                                 stdin=subprocess.DEVNULL, creationflags=flags)
+            pid = p.pid
     _guardar_estado(symbol, nombre, s, activo=1, live=live, origen=origen, bloqueado=0)
     return {"symbol": symbol, "nombre": nombre, "pid": pid, "live": bool(live), "clase": s.clase,
             "modelo": s.modelo, "magic": s.magic}
@@ -308,12 +325,21 @@ def arrancar_activos():
     con = central()
     filas = con.execute("SELECT symbol, live, origen FROM llm_agentes WHERE activo=1 AND bloqueado=0").fetchall()
     con.close()
-    arrancados = []
+    arrancados, nombres = [], []
+    modo = modo_flota()
     for symbol, live, origen in filas:
         if _simbolo(symbol) is None:       # fuera del universo: se ignora
             continue
-        activar(symbol, live=bool(live), origen=origen or "manual")
+        activar(symbol, live=bool(live), origen=origen or "manual", lanzar=(modo == "proceso"))
         arrancados.append(symbol)
+        nombres.append(nombre_agente(symbol))
+    if modo == "worker" and nombres:
+        # En grupo: varios agentes por proceso (llm_worker.py). Los que ya corren no se tocan.
+        vivos = F.procesos_corriendo()
+        registro = {a["nombre"]: a for a in F.cargar_registro()}
+        por_arrancar = [registro[n] for n in nombres if n not in vivos and n in registro]
+        if por_arrancar:
+            F.lanzar_workers(por_arrancar)
     if arrancados:
         F.iniciar_revisor()                 # el revisor vigila las posiciones de estos agentes
         F.iniciar_bot()
