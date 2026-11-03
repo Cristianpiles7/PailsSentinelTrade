@@ -30,6 +30,13 @@ DEFECTO = {
     "cooldown_tras_stop_min": 10,   # tras un stop, minutos sin entrar en ese simbolo
     "max_spread_sobre_stop": 0.10,  # el spread no puede pasar de esta fraccion de la distancia al stop
     "max_coste_r": 0.10,            # spread + comision ida y vuelta, en fraccion del R
+    "confianza_minima": 0.6,        # no se abre si el modelo da menos confianza que esto
+    "be_r": 1.0,                    # al llegar a este R el stop pasa a la entrada (break-even). 0 = no se mueve
+    "umbral_llamada_atr": 0.3,      # sin posicion, se llama al modelo si el precio se movio este ATR desde la ultima llamada
+    "max_llamada_s": 300,           # sin posicion, como minimo se llama cada tantos segundos aunque no se mueva
+    "cadencia_vigilancia_s": 10,    # cada cuantos segundos se vigila lo abierto y las sombras (sin llamar al modelo)
+    "max_perdidas_seguidas": 3,     # tras tantas perdidas seguidas en un simbolo, no se entra en el ese dia. 0 = sin tope
+    "bloquear_misma_direccion": True,  # no abrir el mismo sentido en dos simbolos a la vez (los indices se mueven juntos)
 }
 
 # Claves editables desde la app y su rango. Lo que no esta aqui no se puede cambiar desde la API.

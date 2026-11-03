@@ -13,7 +13,7 @@ Arranca en SIMULACION: registra la operacion que habria abierto, la sigue con la
 o tiempo) y mide el R. live=true en la config solo opera en cuenta DEMO.
 
 Uso:
-  python PST_LLM/scalping.py            # bucle continuo (una vuelta cada cadencia_s segundos)
+  python PST_LLM/scalping.py            # bucle continuo (vigila cada cadencia_vigilancia_s; llama al modelo segun las puertas)
   python PST_LLM/scalping.py --once     # una vuelta y sale
   python PST_LLM/scalping.py --estado   # resumen de operaciones y R, sin tocar MT5
 Parar: crear .agents/data/llm_scalping.STOP
@@ -59,6 +59,8 @@ SCHEMA = {
                     "sl_atr_mult": {"type": "number", "minimum": 1.0, "maximum": 2.0},
                     "tp_r": {"type": "number", "minimum": 2.0, "maximum": 3.0},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "setup": {"type": "string", "enum": ["breakout", "pullback", "rechazo_nivel", "reversion", "ninguno"]},
+                    "invalidacion": {"type": "number"},
                     "reason": {"type": "string"},
                 },
                 "required": ["symbol", "action", "reason"],
@@ -79,11 +81,17 @@ list, each with its 'symbol' name. 'action' is hold, buy, sell or close. With no
 buy or sell. With an open position choose hold or close.
 - 'sl_atr_mult': stop distance in ATR(14) of the M1 timeframe, between 1.0 and 2.0.
 - 'tp_r': take profit as a multiple of the stop distance, between 2.0 and 3.0.
+- 'setup': the pattern you trade: breakout, pullback, rechazo_nivel or reversion. 'ninguno' when you hold without one.
+- 'invalidacion': the price at which your thesis is wrong. Required for buy and sell.
 - 'reason': one short sentence, in English, naming the structure you trade.
 
 RULES
 - M1 includes the candle still forming ('vela_en_formacion': true). You may enter on it at any moment; you do
   not wait for the minute to close. M5 and M15 are closed candles and give the structure.
+- 'niveles' holds the prior day high and low, the M15 swing high and low of the last 20 closed candles and the
+  relative volume of the last closed M1 candle. The system computes them: use them as given, do not recompute.
+- With an open position, 'thesis' is why you entered. Close when price reaches 'invalidation' or the thesis no
+  longer holds.
 - The system closes the position by itself after max_hold_min minutes and enforces spread and cost limits.
   You do not need to manage time.
 - The index CFDs move together. Do not open the same direction on several symbols just because one setup
@@ -104,6 +112,8 @@ def montar_prompt(simbolos):
 
 _ULT_TICK = {}          # simbolo -> (ultimo tick visto, instante local)
 _ULT_AVISO_ERROR = {"t": 0.0}
+_ULTIMA_LLAMADA = {}    # simbolo -> {"precio", "t" (instante local), "m5" (epoch de la M5 cerrada usada)}
+_ULT_MOTIVO = {}        # simbolo -> ultimo motivo de no llamar al modelo
 
 
 leer_config = scalping_config.leer
@@ -112,6 +122,22 @@ leer_config = scalping_config.leer
 def simbolos_activos():
     """Simbolos con estrategia `scalping` en la BBDD, dentro de la lista permitida. Se relee en cada vuelta."""
     return [s for s in registro.simbolos_con("scalping") if s in SIMBOLOS_PERMITIDOS]
+
+
+# Columnas añadidas despues de la primera version: se agregan a una BBDD existente sin perder su historia.
+COLUMNAS_NUEVAS = {
+    "decisiones": {"setup": "TEXT", "invalidacion": "REAL"},
+    "operaciones": {"setup": "TEXT", "motivo_entrada": "TEXT", "invalidacion": "REAL", "be_movido": "INTEGER DEFAULT 0"},
+}
+
+
+def _migrar(con):
+    for tabla, cols in COLUMNAS_NUEVAS.items():
+        existentes = {fila[1] for fila in con.execute(f"PRAGMA table_info({tabla})")}
+        for col, tipo in cols.items():
+            if col not in existentes:
+                con.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} {tipo}")
+    con.commit()
 
 
 def db():
@@ -128,7 +154,11 @@ def db():
             epoch_abre INTEGER, precio REAL, sl REAL, tp REAL, dist REAL, lotes REAL, riesgo_eur REAL,
             ticket INTEGER, estado TEXT, cerrada TEXT, precio_cierre REAL, motivo_cierre TEXT,
             r_real REAL, coste_r REAL);
+        CREATE TABLE IF NOT EXISTS sombras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, ts TEXT, epoch INTEGER, lado TEXT, precio REAL,
+            sl REAL, tp REAL, dist REAL, estado TEXT, motivo_cierre TEXT, r_real REAL);
     """)
+    _migrar(con)
     return con
 
 
@@ -162,16 +192,34 @@ def mercado_vivo(symbol, tick):
     return ahora - previo[1] < 1200
 
 
+def calcular_niveles(mt5, symbol, digits, m15, m1):
+    """Niveles que el modelo no debe recalcular: dia anterior, swing de M15 de las ultimas 20 velas cerradas
+    y volumen relativo de la ultima vela M1 cerrada frente a las 20 anteriores."""
+    d1 = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, 3)
+    ayer = d1[-2] if d1 is not None and len(d1) >= 3 else None      # d1[-1] es el dia en curso
+    ultimas = m15[:-1][-20:]
+    vol = m1["tick_volume"].astype(float)
+    base = vol[-22:-2].mean()
+    return {
+        "prev_day_high": round(float(ayer["high"]), digits) if ayer is not None else None,
+        "prev_day_low": round(float(ayer["low"]), digits) if ayer is not None else None,
+        "m15_swing_high_20": round(float(ultimas["high"].max()), digits),
+        "m15_swing_low_20": round(float(ultimas["low"].min()), digits),
+        "vol_rel_m1": round(float(vol[-2] / base), 2) if base else None,
+    }
+
+
 def snapshot(mt5, symbol):
     tick = mt5.symbol_info_tick(symbol)
     info = mt5.symbol_info(symbol)
     if tick is None or info is None:
         return None
-    marcos, ind = {}, {}
+    marcos, ind, crudas = {}, {}, {}
     for tf in ("M1", "M5", "M15"):
         r = mt5.copy_rates_from_pos(symbol, getattr(mt5, f"TIMEFRAME_{tf}"), 0, 320)
         if r is None or len(r) < 250:
             return None
+        crudas[tf] = r
         # M1 incluye la vela en formacion (la ultima): se opera en cuanto aparece el setup, sin esperar al
         # cierre del minuto. M5 y M15 usan solo velas cerradas: son la estructura, no el disparador.
         en_formacion = tf == "M1"
@@ -186,7 +234,9 @@ def snapshot(mt5, symbol):
                     for k, v in i.items()},
             "px_vs_ema20_atr": round(float((c[-1] - i["ema20"]) / i["atr"]), 2),
         }
-    return {"tick": tick, "info": info, "ind": ind, "marcos": marcos}
+    return {"tick": tick, "info": info, "ind": ind, "marcos": marcos,
+            "niveles": calcular_niveles(mt5, symbol, info.digits, crudas["M15"], crudas["M1"]),
+            "m5_epoch": int(crudas["M5"][-2]["time"])}
 
 
 def pos_mt5(mt5, symbol):
@@ -198,17 +248,19 @@ def estado_llm(con, symbol, snap, cfg, pos_abierta):
     estado = {
         "symbol": symbol, "call_interval_s": cfg["cadencia_s"], "max_hold_min": cfg["max_hold_min"],
         "spread_price": round(float(tick.ask - tick.bid), snap["info"].digits),
-        "timeframes": snap["marcos"], "position": None,
+        "timeframes": snap["marcos"], "niveles": snap["niveles"], "position": None,
         "day_r": round(r_del_dia(con), 2),
-        "own_history": [{"lado": o["lado"], "r": o["r_real"], "motivo": o["motivo_cierre"]}
-                        for o in abiertas_recientes(con, symbol)],
+        "own_history": [{"lado": o["lado"], "setup": o["setup"], "tesis": o["motivo_entrada"], "r": o["r_real"],
+                         "cierre": o["motivo_cierre"]} for o in abiertas_recientes(con, symbol)],
     }
     if pos_abierta:
         p = pos_abierta
         floating = (tick.bid - p["precio"]) if p["lado"] == "buy" else (p["precio"] - tick.ask)
         estado["position"] = {"side": p["lado"], "open_price": p["precio"], "sl": p["sl"], "tp": p["tp"],
                               "floating_r": round(floating / p["dist"], 2),
-                              "minutes_held": int((tick.time - p["epoch_abre"]) // 60)}
+                              "minutes_held": int((tick.time - p["epoch_abre"]) // 60),
+                              "setup": p["setup"], "thesis": p["motivo_entrada"], "invalidation": p["invalidacion"],
+                              "breakeven_moved": bool(p["be_movido"])}
     return estado
 
 
@@ -281,9 +333,17 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
         return False, f"tope de {cfg['max_abiertas']} operaciones abiertas"
     if r_del_dia(con) <= -cfg["max_perdida_dia_r"]:
         return False, f"parada del dia: {r_del_dia(con):.2f} R"
+    confianza = d.get("confidence")
+    if confianza is not None and float(confianza) < cfg["confianza_minima"]:
+        return False, f"confianza {float(confianza):.2f} bajo el minimo {cfg['confianza_minima']}"
+    if cfg["bloquear_misma_direccion"] and any(x["lado"] == d["action"] for x in abiertas(con) if x["symbol"] != symbol):
+        return False, "ya hay una operacion en el mismo sentido en otro simbolo"
     o, motivo = calcular(mt5, symbol, d["action"], snap, cfg, d.get("sl_atr_mult"), d.get("tp_r"), cuenta)
     if o is None:
         return False, motivo
+    inv = d.get("invalidacion") or None
+    if inv and (float(inv) >= o["precio"] if o["lado"] == "buy" else float(inv) <= o["precio"]):
+        return False, f"invalidacion {inv} del lado equivocado para entrar en {o['precio']}"
     modo = "live" if cfg["live"] else "sim"
     ticket = None
     if cfg["live"]:
@@ -298,9 +358,11 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
         pos = pos_mt5(mt5, symbol)
         ticket = max(pos, key=lambda p: p.time).ticket if pos else None
     con.execute("""INSERT INTO operaciones (symbol, modo, lado, abierta, epoch_abre, precio, sl, tp, dist, lotes,
-                   riesgo_eur, ticket, estado, coste_r) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'abierta',?)""",
+                   riesgo_eur, ticket, estado, coste_r, setup, motivo_entrada, invalidacion)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'abierta',?,?,?,?)""",
                 (symbol, modo, o["lado"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), o["epoch"], o["precio"],
-                 o["sl"], o["tp"], o["dist"], o["lotes"], o["riesgo_eur"], ticket, o["coste_r"]))
+                 o["sl"], o["tp"], o["dist"], o["lotes"], o["riesgo_eur"], ticket, o["coste_r"],
+                 d.get("setup"), d.get("reason"), inv))
     con.commit()
     return True, (f"{modo.upper()} {o['lado']} {o['lotes']:.2f} lotes @ {o['precio']:.{o['digits']}f} · "
                   f"SL {o['sl']:.{o['digits']}f} · TP {o['tp']:.{o['digits']}f} · riesgo ~{o['riesgo_eur']:.0f} EUR · "
@@ -332,8 +394,26 @@ def r_de_precio(fila, precio):
     return signo * (precio - fila["precio"]) / fila["dist"]
 
 
+def marcar_be(con, fila, nuevo_sl):
+    """Deja el stop en `nuevo_sl` (la entrada) y lo anota: la operacion ya no puede perder mas de 0 R."""
+    fila["sl"], fila["be_movido"] = nuevo_sl, 1
+    con.execute("UPDATE operaciones SET sl=?, be_movido=1 WHERE id=?", (nuevo_sl, fila["id"]))
+    con.commit()
+
+
+def toca_be(cfg, fila, v=None, precio=None):
+    """True si el precio ya llego a be_r R de beneficio y el stop aun no esta en la entrada."""
+    if fila["be_movido"] or not cfg["be_r"]:
+        return False
+    if v is not None:       # vela M1 cerrada o en formacion: se mira su extremo favorable
+        extremo = float(v["high"]) if fila["lado"] == "buy" else float(v["low"])
+    else:
+        extremo = precio
+    return r_de_precio(fila, extremo) >= cfg["be_r"]
+
+
 def vigilar_sim(mt5, con, cfg, fila, snap):
-    """Sigue una operacion simulada con las velas M1 cerradas desde su apertura (stop, objetivo o tiempo)."""
+    """Sigue una operacion simulada con las velas M1 desde su apertura: stop, break-even, objetivo o tiempo."""
     tick = snap["tick"]
     buy = fila["lado"] == "buy"
     velas = mt5.copy_rates_from_pos(fila["symbol"], mt5.TIMEFRAME_M1, 0, 120)
@@ -341,16 +421,16 @@ def vigilar_sim(mt5, con, cfg, fila, snap):
         if int(v["time"]) <= fila["epoch_abre"]:
             continue
         bajo, alto = float(v["low"]), float(v["high"])
-        if buy:
-            if bajo <= fila["sl"]:
-                return cerrar_fila(con, fila, fila["sl"], "stop", -1.0) or "stop"
-            if alto >= fila["tp"]:
-                return cerrar_fila(con, fila, fila["tp"], "objetivo", r_de_precio(fila, fila["tp"])) or "objetivo"
-        else:
-            if alto >= fila["sl"]:
-                return cerrar_fila(con, fila, fila["sl"], "stop", -1.0) or "stop"
-            if bajo <= fila["tp"]:
-                return cerrar_fila(con, fila, fila["tp"], "objetivo", r_de_precio(fila, fila["tp"])) or "objetivo"
+        sl = fila["sl"]
+        if (bajo <= sl) if buy else (alto >= sl):
+            motivo = "be" if fila["be_movido"] else "stop"
+            cerrar_fila(con, fila, sl, motivo, r_de_precio(fila, sl))
+            return motivo
+        if (alto >= fila["tp"]) if buy else (bajo <= fila["tp"]):
+            cerrar_fila(con, fila, fila["tp"], "objetivo", r_de_precio(fila, fila["tp"]))
+            return "objetivo"
+        if toca_be(cfg, fila, v=v):
+            marcar_be(con, fila, fila["precio"])
     if tick.time - fila["epoch_abre"] >= cfg["max_hold_min"] * 60:
         precio = tick.bid if buy else tick.ask
         cerrar_fila(con, fila, precio, "tiempo", r_de_precio(fila, precio))
@@ -368,12 +448,75 @@ def vigilar_live(mt5, con, cfg, fila, snap):
         total = sum(d.profit + d.commission + d.swap + getattr(d, "fee", 0.0) for d in deals)
         salida = [d for d in deals if d.entry == 1]
         motivo = {4: "stop", 5: "objetivo"}.get(salida[-1].reason, "mt5") if salida else "mt5"
+        if motivo == "stop" and fila["be_movido"]:
+            motivo = "be"
         precio = salida[-1].price if salida else fila["precio"]
         cerrar_fila(con, fila, precio, motivo, total / fila["riesgo_eur"] if fila["riesgo_eur"] else 0.0)
         return motivo
+    if toca_be(cfg, fila, precio=tick.bid if fila["lado"] == "buy" else tick.ask):
+        mover_sl_live(mt5, con, fila, snap, fila["precio"])
     if tick.time - fila["epoch_abre"] >= cfg["max_hold_min"] * 60:
         return cerrar_live(mt5, con, fila, snap, "tiempo")
     return None
+
+
+def mover_sl_live(mt5, con, fila, snap, nuevo_sl):
+    """Mueve el stop de una operacion real (SLTP sobre la posicion). Si el broker lo rechaza, se reintenta en la siguiente vuelta."""
+    info = snap["info"]
+    req = {"action": mt5.TRADE_ACTION_SLTP, "symbol": fila["symbol"], "position": fila["ticket"],
+           "sl": round(nuevo_sl, info.digits), "tp": round(fila["tp"], info.digits), "magic": MAGIC, "comment": COMMENT}
+    ok, txt, _ = lt.enviar_orden(mt5, req, mt5.account_info())
+    if ok:
+        marcar_be(con, fila, nuevo_sl)
+    else:
+        print(f"[scalping] break-even no aplicado en {fila['symbol']}: {txt}", flush=True)
+    return ok
+
+
+def registrar_sombras(con, cfg, symbol, snap, ts):
+    """Un hold no tiene resultado. Para saber si estamos siendo pasivos se mide la entrada hipotetica en cada
+    sentido, con el stop y el objetivo medios de la config. No se opera, solo se sigue."""
+    tick = snap["tick"]
+    dist = snap["ind"]["M1"]["atr"] * sum(cfg["sl_atr"]) / 2
+    tp_r = sum(cfg["tp_r"]) / 2
+    for lado in ("buy", "sell"):
+        buy = lado == "buy"
+        precio = tick.ask if buy else tick.bid
+        sl = precio - dist if buy else precio + dist
+        tp = precio + dist * tp_r if buy else precio - dist * tp_r
+        con.execute("""INSERT INTO sombras (symbol, ts, epoch, lado, precio, sl, tp, dist, estado)
+                       VALUES (?,?,?,?,?,?,?,?,'abierta')""", (symbol, ts, tick.time, lado, precio, sl, tp, dist))
+    con.commit()
+
+
+def vigilar_sombras(mt5, con, cfg, symbol, tick):
+    """Resuelve las sombras abiertas de este simbolo con las velas M1 posteriores (stop, objetivo o tiempo)."""
+    filas = con.execute("SELECT id, lado, precio, sl, tp, dist, epoch FROM sombras WHERE estado='abierta' AND symbol=?",
+                        (symbol,)).fetchall()
+    if not filas:
+        return
+    velas = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 120)
+    for id_, lado, precio, sl, tp, dist, epoch in filas:
+        buy = lado == "buy"
+        salida = None
+        for v in (velas if velas is not None else []):
+            if int(v["time"]) <= epoch:
+                continue
+            bajo, alto = float(v["low"]), float(v["high"])
+            if (bajo <= sl) if buy else (alto >= sl):
+                salida = (sl, "stop")
+                break
+            if (alto >= tp) if buy else (bajo <= tp):
+                salida = (tp, "objetivo")
+                break
+        if salida is None and tick.time - epoch >= cfg["max_hold_min"] * 60:
+            salida = (tick.bid if buy else tick.ask, "tiempo")
+        if salida:
+            precio_salida, motivo = salida
+            r = (1 if buy else -1) * (precio_salida - precio) / dist
+            con.execute("UPDATE sombras SET estado='cerrada', motivo_cierre=?, r_real=? WHERE id=?",
+                        (motivo, round(r, 3), id_))
+    con.commit()
 
 
 def cerrar_live(mt5, con, fila, snap, motivo):
@@ -404,14 +547,46 @@ def enfriamiento_tras_stop(con, symbol, cfg):
 
 
 def sin_llamada(con, symbol, modo, ts, motivo):
+    """Anota por que no se llama al modelo. Con la vigilancia cada 10 s, solo se registra cuando cambia el motivo."""
+    if _ULT_MOTIVO.get(symbol) == motivo:
+        return
+    _ULT_MOTIVO[symbol] = motivo
     print(f"[{ts}] {symbol} sin llamada: {motivo}", flush=True)
     con.execute("INSERT INTO decisiones (ts, symbol, modo, llamada, motivo, accion, resultado) VALUES (?,?,?,0,?,'-',?)",
                 (ts, symbol, modo, motivo, motivo))
     con.commit()
 
 
+def perdidas_seguidas_hoy(con, symbol):
+    filas = con.execute("SELECT r_real FROM operaciones WHERE estado='cerrada' AND symbol=? AND cerrada >= ? "
+                        "ORDER BY id DESC", (symbol, hoy())).fetchall()
+    n = 0
+    for (r,) in filas:
+        if r is None or r >= 0:
+            break
+        n += 1
+    return n
+
+
+def necesita_llamar(symbol, snap, cfg, pos):
+    """Con posicion: se llama cada cadencia_s para que el modelo siga la tesis. Sin posicion, solo si algo cambio:
+    el precio se movio umbral_llamada_atr desde la ultima llamada, se cerro una M5 nueva, o paso max_llamada_s."""
+    previa = _ULTIMA_LLAMADA.get(symbol)
+    if previa is None:
+        return True
+    tick = snap["tick"]
+    ahora = time.time()
+    transcurrido = ahora - previa["t"]
+    if pos:
+        return transcurrido >= cfg["cadencia_s"]
+    if transcurrido >= cfg["max_llamada_s"] or snap["m5_epoch"] != previa["m5"]:
+        return True
+    precio = (tick.bid + tick.ask) / 2
+    return abs(precio - previa["precio"]) >= cfg["umbral_llamada_atr"] * snap["ind"]["M1"]["atr"]
+
+
 def preparar(mt5, con, cfg, symbol):
-    """Vigila lo abierto y mira si este simbolo necesita decision en esta vuelta.
+    """Vigila lo abierto y las sombras, y mira si este simbolo necesita decision en esta vuelta.
     Devuelve (symbol, snap, pos) si la necesita, o None."""
     snap = snapshot(mt5, symbol)
     if snap is None:
@@ -420,7 +595,7 @@ def preparar(mt5, con, cfg, symbol):
     tick = snap["tick"]
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     modo = "live" if cfg["live"] else "sim"
-    # 1. Lo abierto: se vigila antes de decidir nada nuevo.
+    # 1. Lo abierto: se vigila antes de decidir nada nuevo. Las sombras de los holds tambien se siguen.
     for fila in abiertas(con, symbol):
         if fila["modo"] == "sim":
             motivo = vigilar_sim(mt5, con, cfg, fila, snap)
@@ -428,6 +603,7 @@ def preparar(mt5, con, cfg, symbol):
             motivo = vigilar_live(mt5, con, cfg, fila, snap)
         if motivo:
             print(f"[{ts}] {symbol} cierre: {motivo}", flush=True)
+    vigilar_sombras(mt5, con, cfg, symbol, tick)
     pos = abiertas(con, symbol)
     pos = pos[0] if pos else None
     # 2. Puertas antes de llamar al modelo (sin llamada = sin coste).
@@ -438,8 +614,14 @@ def preparar(mt5, con, cfg, symbol):
         motivo_sin = calendario.bloqueo_entrada(symbol)[1]
     elif not pos and enfriamiento_tras_stop(con, symbol, cfg):
         motivo_sin = f"enfriamiento: stop en {symbol} hace menos de {cfg['cooldown_tras_stop_min']} min"
+    elif not pos and cfg["max_perdidas_seguidas"] and perdidas_seguidas_hoy(con, symbol) >= cfg["max_perdidas_seguidas"]:
+        motivo_sin = f"{cfg['max_perdidas_seguidas']} perdidas seguidas hoy en {symbol}"
     if motivo_sin:
         sin_llamada(con, symbol, modo, ts, motivo_sin)
+        return None
+    _ULT_MOTIVO.pop(symbol, None)
+    # 3. Sin nada que decidir (el precio no se ha movido ni hay vela M5 nueva): no se llama.
+    if not necesita_llamar(symbol, snap, cfg, pos):
         return None
     return symbol, snap, pos
 
@@ -464,11 +646,14 @@ def ejecutar(mt5, con, cfg, symbol, d, snap, pos, cuenta, uso, ts):
             avisar(f"SCALPING · apertura {symbol} {accion.upper()} · {resultado}")
     elif accion in ("buy", "sell") and pos:
         resultado = "ya hay posicion: se ignora abrir"
-    con.execute("""INSERT INTO decisiones (ts, symbol, modo, llamada, accion, confianza, sl_atr, tp_r, razon,
-                   ejecutada, resultado, coste_usd, tokens_in, tokens_out, duracion_s) VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)""",
+    if accion == "hold" and not pos:
+        registrar_sombras(con, cfg, symbol, snap, ts)
+    con.execute("""INSERT INTO decisiones (ts, symbol, modo, llamada, accion, confianza, sl_atr, tp_r, razon, setup,
+                   invalidacion, ejecutada, resultado, coste_usd, tokens_in, tokens_out, duracion_s)
+                   VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (ts, symbol, modo, accion, d.get("confidence"), d.get("sl_atr_mult"), d.get("tp_r"), d.get("reason"),
-                 int(ejecutada), str(resultado), uso.get("cost_usd"), uso.get("tokens_in"), uso.get("tokens_out"),
-                 uso.get("duration_s")))
+                 d.get("setup"), d.get("invalidacion") or None, int(ejecutada), str(resultado), uso.get("cost_usd"),
+                 uso.get("tokens_in"), uso.get("tokens_out"), uso.get("duration_s")))
     con.commit()
     print(f"[{ts}] {symbol} {accion.upper()} | {d.get('reason', '')} | {resultado} | "
           f"coste={uso.get('cost_usd')}", flush=True)
@@ -478,6 +663,9 @@ def decidir_lote(mt5, con, cfg, pendientes, cuenta):
     """Una sola llamada al modelo para todos los simbolos pendientes; luego se ejecuta la decision de cada uno."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     modo = "live" if cfg["live"] else "sim"
+    for symbol, snap, _ in pendientes:
+        tick = snap["tick"]
+        _ULTIMA_LLAMADA[symbol] = {"precio": (tick.bid + tick.ask) / 2, "t": time.time(), "m5": snap["m5_epoch"]}
     try:
         lote, uso = preguntar([estado_llm(con, s, snap, cfg, pos) for s, snap, pos in pendientes], cfg)
     except Exception as e:
@@ -505,6 +693,19 @@ def resumen():
                                FROM operaciones WHERE estado='cerrada' GROUP BY modo, symbol ORDER BY modo, symbol"""):
         print(f"  {fila[0]:<4} {fila[1]:<11} ops {fila[2]:>3}  R medio {fila[3]}  R total {fila[4]}  ganadoras {fila[5]}")
     print("Abiertas:", len(abiertas(con)))
+    print("Acciones del modelo (llamadas):")
+    for fila in con.execute("SELECT modo, accion, COUNT(*) FROM decisiones WHERE llamada=1 GROUP BY modo, accion ORDER BY modo, accion"):
+        print(f"  {fila[0]:<4} {fila[1]:<6} {fila[2]:>4}")
+    print("Por setup (cerradas):")
+    for fila in con.execute("""SELECT COALESCE(setup, '(sin setup)'), COUNT(*), ROUND(AVG(r_real),3),
+                               ROUND(AVG(CASE WHEN r_real>0 THEN 1.0 ELSE 0 END),2)
+                               FROM operaciones WHERE estado='cerrada' GROUP BY 1 ORDER BY 2 DESC"""):
+        print(f"  {fila[0]:<14} ops {fila[1]:>3}  R medio {fila[2]}  acierto {fila[3]}")
+    print("Holds, medidos como si se hubiera entrado (stop y objetivo medios):")
+    for fila in con.execute("""SELECT lado, COUNT(*), ROUND(AVG(r_real),3),
+                               ROUND(AVG(CASE WHEN motivo_cierre='objetivo' THEN 1.0 ELSE 0 END),2)
+                               FROM sombras WHERE estado='cerrada' GROUP BY lado ORDER BY lado"""):
+        print(f"  {fila[0]:<5} ops {fila[1]:>4}  R medio {fila[2]}  objetivo {fila[3]}")
     print("Ultimas decisiones:")
     for fila in con.execute("SELECT ts, symbol, modo, accion, resultado FROM decisiones ORDER BY id DESC LIMIT 8"):
         print("  ", fila)
@@ -569,7 +770,7 @@ def main():
                         print(f"[scalping] lote error: {e}", flush=True)
             if args.once:
                 break
-            espera = cfg["cadencia_s"] - (time.time() - inicio)
+            espera = cfg["cadencia_vigilancia_s"] - (time.time() - inicio)
             time.sleep(max(float(cfg["pausa_minima_s"]), espera))
         con.close()
         return 0
