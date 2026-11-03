@@ -576,15 +576,30 @@ def _decision(env):
     return json.loads(res) if isinstance(res, str) else res
 
 
+def ejecutar_claude(cmd, cwd, intentos=3):
+    """
+    `claude -p` a veces sale con código 1 y "No messages returned from query" sin otro motivo: fallo
+    transitorio del CLI o de la API. Se reintenta esa causa concreta, con una pausa creciente; cualquier
+    otro fallo se devuelve al momento.
+    """
+    for i in range(intentos):
+        r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                           timeout=180, encoding="utf-8", errors="replace", creationflags=_SIN_VENTANA)
+        if r.returncode == 0:
+            return r
+        transitorio = "No messages returned" in f"{r.stderr or ''}{r.stdout or ''}"
+        if not transitorio or i == intentos - 1:
+            raise RuntimeError(f"claude -p fallo ({r.returncode}): {(r.stderr or r.stdout)[-400:]}")
+        time.sleep(10 * (i + 1))
+    return r
+
+
 def preguntar_suelto(estado, model, effort, nombre):
     """Una sesion nueva por decision: el proceso vive unos segundos y se va."""
     cmd = _comando_base(model, effort, SYSTEM_PROMPT) + ["--output-format", "json", json.dumps(estado, separators=(",", ":"))]
     t0 = time.time()
-    r = subprocess.run(cmd, cwd=str(cwd_agente(nombre)), capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                       timeout=180, encoding="utf-8", errors="replace", creationflags=_SIN_VENTANA)
+    r = ejecutar_claude(cmd, cwd_agente(nombre))
     dur = time.time() - t0
-    if r.returncode != 0:
-        raise RuntimeError(f"claude -p fallo ({r.returncode}): {(r.stderr or r.stdout)[-400:]}")
     env = json.loads(r.stdout)
     return _decision(env), _uso(env, dur)
 

@@ -206,11 +206,7 @@ def preguntar(estado, cfg):
            "--strict-mcp-config", "--permission-prompts", "none", "--output-format", "json",
            json.dumps(estado, separators=(",", ":"))]
     t0 = time.time()
-    r = subprocess.run(cmd, cwd=str(lt.cwd_agente(NOMBRE)), capture_output=True, text=True,
-                       stdin=subprocess.DEVNULL, timeout=180, encoding="utf-8", errors="replace",
-                       creationflags=lt._SIN_VENTANA)
-    if r.returncode != 0:
-        raise RuntimeError(f"claude -p fallo ({r.returncode}): {(r.stderr or r.stdout)[-400:]}")
+    r = lt.ejecutar_claude(cmd, lt.cwd_agente(NOMBRE))
     env = json.loads(r.stdout)
     return lt._decision(env), lt._uso(env, time.time() - t0)
 
