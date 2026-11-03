@@ -1352,7 +1352,11 @@ def informe(con):
         print(f"  TF {tf or 'H1'}: {n} ciclos, {ll or 0} llamadas, {tok or 0:,} tokens")
 
 
-def main():
+def main(argv=None, mt5_compartido=None):
+    """
+    `mt5_compartido`: lo usa llm_worker.py para correr varios agentes en un proceso. Entonces la
+    conexion a MT5 la abre y la cierra el worker, no cada agente.
+    """
     ap = argparse.ArgumentParser(description="Agente LLM operando un simbolo (experimento, DEMO)")
     ap.add_argument("--symbol", default="BTCUSD")
     ap.add_argument("--model", default="haiku", help="haiku (defecto, barato) | sonnet")
@@ -1403,7 +1407,7 @@ def main():
     ap.add_argument("--ultimas", type=int, metavar="N", help="listar las ultimas N decisiones")
     ap.add_argument("--solo-operaciones", dest="solo_ops", action="store_true",
                     help="con --ultimas: solo las que proponen comprar, vender o cerrar")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     configurar_agente(args.nombre, args.magic)
 
     con = db()
@@ -1429,7 +1433,7 @@ def main():
         return 0 if ok else 1
 
     import MetaTrader5 as mt5
-    if not mt5.initialize():
+    if mt5_compartido is None and not mt5.initialize():
         print(f"MT5 no disponible: {mt5.last_error()}", file=sys.stderr)
         return 1
     try:
@@ -1490,7 +1494,8 @@ def main():
         print("[llm_trader] fichero STOP detectado: parado.", flush=True)
     finally:
         _SESION.cerrar()
-        mt5.shutdown()
+        if mt5_compartido is None:
+            mt5.shutdown()
     return 0
 
 
