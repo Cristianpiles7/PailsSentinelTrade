@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Layers, Bot, Activity } from 'lucide-react'
 import { ConfigForm } from './ConfigForm'
 import { LlmCriterioPanel } from './LlmCriterioPanel'
+import { PuntuadorPanel } from './PuntuadorPanel'
 
 // Una pantalla por estrategia. Pestañas: Resumen (que hace y como va), Simbolos (los agentes de esa
 // estrategia, con su configuracion propia desplegable) y Configuracion (parametros de la estrategia).
@@ -128,6 +129,16 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
     }
   }
 
+  const [sistema, setSistema] = useState(null)
+  useEffect(() => {
+    if (seccion === 'config') api.get(`${API_BASE}/config/global`).then(r => setSistema(r.data.valores)).catch(() => {})
+  }, [api, API_BASE, seccion])
+  const guardarSistema = async (cambios) => {
+    const r = await api.put(`${API_BASE}/config/global`, { cambios })
+    setSistema(r.data.valores)
+  }
+  const defsSistema = esquema.filter(d => d.estrategia === 'global')
+
   const estrategia = estrategias.find(e => e.id === activa)
   const agentesDe = useMemo(() => (estrategia ? agentes.filter(a => incluye(a, estrategia.id)) : []), [agentes, estrategia])
   const posicionesPor = useMemo(() => Object.fromEntries((symbols || []).map(s => [s.symbol, s.open_positions || 0])), [symbols])
@@ -236,6 +247,17 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
         <div className="flex flex-col gap-3">
           <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Prompts de los símbolos</p>
           <LlmCriterioPanel api={api} API_BASE={API_BASE} agentes={agentesDe} />
+        </div>
+      )}
+
+      {seccion === 'config' && (
+        <div className={`${TARJETA} flex flex-col gap-5`}>
+          <div className="flex flex-col gap-1">
+            <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Sistema (compartido por todas las estrategias)</p>
+            <p className="text-[11px] text-zinc-600 font-bold uppercase tracking-wider">La cuota de Claude es de la cuenta: la usan la flota y el scalping a la vez</p>
+          </div>
+          {sistema && <ConfigForm definiciones={defsSistema} valores={sistema} onGuardar={guardarSistema} />}
+          <PuntuadorPanel />
         </div>
       )}
     </div>

@@ -33,7 +33,6 @@ import { EstadoSistemaWidget } from './components/ui/EstadoSistemaWidget'
 import { ActualizacionAviso } from './components/ui/ActualizacionAviso'
 import { Sparkline } from './components/ui/Sparkline'
 import { ProximityGauge } from './components/ui/ProximityGauge'
-import { PuntuadorPanel } from './components/PuntuadorPanel'
 import { Toast } from './components/ui/Toast'
 import { StatBox } from './components/ui/StatBox'
 import { LiveConsole } from './components/ui/LiveConsole'
@@ -43,7 +42,7 @@ import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
 import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
 import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 import { AgentsOffice } from './components/AgentsOffice'
-import { LlmFila, LlmDecisionesModal, LlmLimitesBar, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
+import { LlmFila, LlmDecisionesModal, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
 import { LlmSeguro } from './components/LlmOpinionCard'
 import { EstrategiaView } from './components/EstrategiaView'
 
@@ -95,7 +94,6 @@ const TITULOS_VISTA = {
   strategylab: ['Strategy Lab', 'Backtesting con datos reales de MT5'],
   agents: ['Oficina de agentes', 'Flota LLM y habblaud'],
   estrategias: ['Estrategias', 'Una pantalla por estrategia: resumen, símbolos y configuración'],
-  ajustes: ['Ajustes', 'Límites globales, prompts y agente puntuador de la home'],
   config: ['Símbolos', 'Todos los símbolos por clase · filtra por estrategia'],
 }
 
@@ -473,6 +471,13 @@ function App() {
   const toggleSymbolStatus = async (symbol, isActive) => {
     const encender = !isActive
     try {
+      // Scalping: el interruptor arranca o para el agente de scalping (es fijo, no es de la flota)
+      if (llm.agentes.some(x => x.symbol === symbol && x.estrategia === 'scalping')) {
+        await api.post(`${API_BASE}/estrategias/scalping/${encender ? 'arrancar' : 'parar'}`)
+        addToast(`Scalping ${encender ? 'arrancado' : 'parado'}`, 'success')
+        llm.recargar?.()
+        return
+      }
       await api.post(`${API_BASE}/config/symbol`, { symbol, is_active: encender })
       // El interruptor tambien activa (demo) o para el agente LLM si el simbolo tiene uno.
       // Apagarlo a mano bloquea la rotacion para ese simbolo.
@@ -754,14 +759,6 @@ function App() {
             onClick={() => setCurrentView('estrategias')}
             label="Estrategias"
           />
-          <NavItem
-            showLabel
-            icon={<SlidersHorizontal size={24} />}
-            active={currentView === 'ajustes'}
-            onClick={() => setCurrentView('ajustes')}
-            label="Ajustes"
-          />
-
           <NavItem
             showLabel
 
@@ -1256,24 +1253,6 @@ function App() {
         {currentView === 'estrategias' && (
           <div className="w-full h-full overflow-y-auto px-4 md:px-8 pt-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700">
             <EstrategiaView api={api} API_BASE={API_BASE} agentes={llm.agentes} symbols={symbols} />
-          </div>
-        )}
-
-        {currentView === 'ajustes' && (
-          <div className="w-full h-full overflow-y-auto px-4 md:px-8 pt-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700">
-            <div className="max-w-5xl mx-auto flex flex-col gap-8">
-              <section className="flex flex-col gap-3">
-                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Límites globales</h2>
-                <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
-                  activosAhora={llm.agentes.filter(a => a.activo).length}
-                  topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario}
-                  cuotaTopes={llm.cuotaTopes} guardarCuotaTopes={llm.guardarCuotaTopes} />
-              </section>
-              <section className="flex flex-col gap-3">
-                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Home</h2>
-                <PuntuadorPanel />
-              </section>
-            </div>
           </div>
         )}
 
@@ -2613,26 +2592,28 @@ function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
                     {items.map(s => {
                       const agente = llm.agentes.find(a => a.symbol === s.symbol)
+                      const esScalping = agente?.estrategia === 'scalping'
+                      const activoCard = esScalping ? !!agente.activo : s.is_active
                       return (
                         <div
                           key={s.symbol}
-                          onClick={s.soloLlm ? undefined : () => toggleSymbolStatus(s.symbol, s.is_active)}
-                          className={`group bg-[#050505] border rounded-2xl p-4 flex flex-col gap-3 transition-all duration-300 ${s.soloLlm ? 'border-zinc-800/40' : `cursor-pointer hover:border-indigo-500/60 hover: ${s.is_active ? 'border-indigo-500/40' : 'border-zinc-800/40 opacity-60'}`}`}
+                          onClick={s.soloLlm ? undefined : () => toggleSymbolStatus(s.symbol, activoCard)}
+                          className={`group bg-[#050505] border rounded-2xl p-4 flex flex-col gap-3 transition-all duration-300 ${s.soloLlm ? 'border-zinc-800/40' : `cursor-pointer hover:border-indigo-500/60 hover: ${activoCard ? 'border-indigo-500/40' : 'border-zinc-800/40 opacity-60'}`}`}
                         >
                           <div className="flex justify-between items-center">
                             <div className="flex items-center gap-2">
                               {s.soloLlm
                                 ? <Bot size={16} className="text-zinc-600" />
-                                : <Activity size={16} className={s.is_active ? 'text-indigo-400 animate-pulse' : 'text-zinc-600'} />}
+                                : <Activity size={16} className={activoCard ? 'text-indigo-400 animate-pulse' : 'text-zinc-600'} />}
                               <h3 className="text-base font-bold text-white  tracking-tighter">{s.symbol}</h3>
                               {s.type ? <span className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest px-1.5 py-0.5 bg-white/5 rounded">{s.type}</span> : null}
                             </div>
                             {!s.soloLlm && (
                               <button
-                                onClick={(e) => { e.stopPropagation(); toggleSymbolStatus(s.symbol, s.is_active); }}
-                                className={`w-9 h-4.5 rounded-full relative transition-all ${s.is_active ? 'bg-indigo-600' : 'bg-zinc-800'}`}
+                                onClick={(e) => { e.stopPropagation(); toggleSymbolStatus(s.symbol, activoCard); }}
+                                className={`w-9 h-4.5 rounded-full relative transition-all ${activoCard ? 'bg-indigo-600' : 'bg-zinc-800'}`}
                               >
-                                <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${s.is_active ? 'right-0.5' : 'left-0.5'}`} />
+                                <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${activoCard ? 'right-0.5' : 'left-0.5'}`} />
                               </button>
                             )}
                           </div>

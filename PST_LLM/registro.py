@@ -629,14 +629,14 @@ def leer_tope_diario():
         json_val = max(0, int(json.loads(LLM_GLOBAL.read_text(encoding="utf-8-sig")).get("max_llamadas_dia", 0)))
     except (FileNotFoundError, ValueError, TypeError):
         json_val = 0
-    return int(config_store.valor_o("max_llamadas_dia", json_val, config_store.GLOBAL))
+    return int(config_store.valor_o("max_llamadas_dia", json_val, "flota"))
 
 
 def guardar_tope_diario(valor):
     valor = int(valor)
     if valor < 0:
         raise ValueError("el tope de llamadas no puede ser negativo (0 = sin tope)")
-    config_store.guardar(config_store.GLOBAL, "", {"max_llamadas_dia": valor})
+    config_store.guardar("flota", "", {"max_llamadas_dia": valor})
     return {"max_llamadas_dia": valor}
 
 

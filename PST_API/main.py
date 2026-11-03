@@ -237,7 +237,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.6.64",
+    version="2.6.65",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -563,12 +563,45 @@ SYMBOL_EA_NAMES = {
 }
 
 
+_D1_OPEN_CACHE = {}  # symbol -> (timestamp, open del dia)
+_D1_OPEN_TTL_S = 60  # la apertura diaria no cambia durante el dia; solo hace falta refrescarla de vez en cuando
+
+def _apertura_d1_cacheada(sym, ahora):
+    cacheado = _D1_OPEN_CACHE.get(sym)
+    if cacheado and ahora - cacheado[0] < _D1_OPEN_TTL_S:
+        return cacheado[1]
+    d1 = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_D1, 0, 1)
+    if d1 is None or len(d1) == 0:
+        return None
+    open_price = float(d1[0]['open'])
+    _D1_OPEN_CACHE[sym] = (ahora, open_price)
+    return open_price
+
+def _leer_mercado_simbolos(simbolos):
+    """Lee tick, info, apertura D1 y sparkline M5 de una lista de símbolos. Bloqueante: llamar con to_thread."""
+    ahora = time.time()
+    datos = {}
+    for sym in simbolos:
+        m = {
+            "tick": mt5.symbol_info_tick(sym),
+            "info": mt5.symbol_info(sym),
+        }
+        try:
+            m["open_d1"] = _apertura_d1_cacheada(sym, ahora)
+            m5_data = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 20)
+            if m5_data is not None:
+                m["spark_m5"] = [float(x['close']) for x in m5_data]
+        except Exception:
+            pass
+        datos[sym] = m
+    return datos
+
 @app.get("/api/symbols", response_model=List[SymbolStatus], tags=["Config"])
 async def get_symbols():
     """Lista de simbolos monitorizados con precio/PnL en vivo desde MT5 + BBDD.
     Ya no calcula score/regimen/senal (venian del motor de trading autonomo, retirado
     2026-09-02) -- panel de solo monitorizacion, ver PST_API/main.py lifespan()."""
-    if not ensure_mt5_connected():
+    if not await asyncio.to_thread(ensure_mt5_connected):
          raise HTTPException(status_code=503, detail="MetaTrader 5 not connected")
 
     # Nota (2026-09-02): sync proactivo retirado de aquí (mismo motivo que /api/account) --
@@ -597,15 +630,19 @@ async def get_symbols():
             pnl_map[sym_p] = pnl_map.get(sym_p, 0.0) + p.profit
             open_count_map[sym_p] = open_count_map.get(sym_p, 0) + 1
 
+    # Todas las lecturas de MT5 de los símbolos en un único salto a hilo (antes eran ~4 por símbolo,
+    # en secuencia, cada 3s desde el frontend).
+    mercado = await asyncio.to_thread(_leer_mercado_simbolos, [s['symbol'] for s in symbols_cfg])
+
     results = []
     proximidad_map = _leer_proximidad()
     for s in symbols_cfg:
         sym = s['symbol']
+        m = mercado.get(sym, {})
 
-        tick = await asyncio.to_thread(mt5.symbol_info_tick, sym)
+        tick = m.get("tick")
         price = tick.bid if tick else 0.0
 
-        import time
         market_open = True
         if tick and tick.time:
             if (int(time.time()) - tick.time) > 600:
@@ -613,23 +650,14 @@ async def get_symbols():
         else:
             market_open = False
 
-        info = await asyncio.to_thread(mt5.symbol_info, sym)
+        info = m.get("info")
         spread_price = (info.spread * info.point) if info else 0.0
 
         daily_change = 0.0
-        spark_data = []
-        try:
-            d1_data = await asyncio.to_thread(mt5.copy_rates_from_pos, sym, mt5.TIMEFRAME_D1, 0, 1)
-            if d1_data is not None and len(d1_data) > 0:
-                open_price = d1_data[0]['open']
-                if open_price > 0:
-                    daily_change = ((price - open_price) / open_price) * 100
-
-            m5_data = await asyncio.to_thread(mt5.copy_rates_from_pos, sym, mt5.TIMEFRAME_M5, 0, 20)
-            if m5_data is not None:
-                spark_data = [float(x['close']) for x in m5_data]
-        except:
-            pass
+        open_price = m.get("open_d1")
+        if open_price and open_price > 0:
+            daily_change = ((price - open_price) / open_price) * 100
+        spark_data = m.get("spark_m5", [])
 
         results.append(SymbolStatus(
             symbol=sym,
@@ -680,8 +708,10 @@ async def get_upcoming_news():
     }
 
 @app.get("/api/ohlc/{symbol}", response_model=List[OHLCBar], tags=["Data"])
-async def get_ohlc(symbol: str, timeframe: str = "M5", count: int = 200):
-    """Obtiene datos históricos de velas de MetaTrader 5."""
+def get_ohlc(symbol: str, timeframe: str = "M5", count: int = 200):
+    """Obtiene datos históricos de velas de MetaTrader 5.
+    Es `def` a propósito: las llamadas a MT5 son bloqueantes y FastAPI las ejecuta en un hilo
+    en vez de bloquear el event loop (con `async def` frenaban todas las demás peticiones)."""
     if not ensure_mt5_connected():
         raise HTTPException(status_code=503, detail="MetaTrader 5 not connected")
         
@@ -712,10 +742,8 @@ async def get_ohlc(symbol: str, timeframe: str = "M5", count: int = 200):
     return bars
 
 def calculate_symbol_telemetry(symbol: str):
-    """Calcula RSI(14) y ADX(14) en múltiples timeframes."""
-    if not mt5.initialize():
-        return {}
-        
+    """Calcula RSI(14) y ADX(14) en múltiples timeframes.
+    No llama a mt5.initialize(): el endpoint ya comprueba la conexión con ensure_mt5_connected()."""
     import pandas as pd
     tf_map = {
         "M1":  mt5.TIMEFRAME_M1,
@@ -742,11 +770,21 @@ def calculate_symbol_telemetry(symbol: str):
     return result
 
 @app.get("/api/symbols/{symbol}/telemetry", tags=["Data"])
-async def get_telemetry(symbol: str):
-    """Calcula RSI(14) y ADX(14) en múltiples timeframes para el panel de telemetría."""
+def get_telemetry(symbol: str):
+    """Calcula RSI(14) y ADX(14) en múltiples timeframes para el panel de telemetría.
+    Cacheado unos segundos por símbolo: el frontend lo pide cada 10s y se recalcula igual."""
     if not ensure_mt5_connected():
         return {} # Fallback suave
-    return calculate_symbol_telemetry(symbol)
+    ahora = time.time()
+    cacheado = _TELEMETRY_CACHE.get(symbol)
+    if cacheado and ahora - cacheado[0] < _TELEMETRY_TTL_S:
+        return cacheado[1]
+    resultado = calculate_symbol_telemetry(symbol)
+    _TELEMETRY_CACHE[symbol] = (ahora, resultado)
+    return resultado
+
+_TELEMETRY_CACHE = {}  # symbol -> (timestamp, resultado)
+_TELEMETRY_TTL_S = 10
 
 @app.post("/api/config/toggle", response_model=APIResponse, tags=["Config"])
 async def toggle_symbol(update: ConfigUpdate):

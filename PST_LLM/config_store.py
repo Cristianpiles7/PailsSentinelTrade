@@ -47,9 +47,18 @@ ESTRATEGIAS_INICIALES = [
 # sustituye por el nombre del agente del simbolo; con "riesgo_por_simbolo" se escribe en ese mapa.
 ESQUEMA = [
     # --- Global (lo que se edita en Ajustes) ---
-    dict(clave="max_llamadas_dia", estrategia=GLOBAL, tipo="int", defecto=0, min=0, max=100000,
-         grupo="Limites de la flota", etiqueta="Llamadas al dia (todos los agentes)",
+    dict(clave="max_llamadas_dia", estrategia="flota", tipo="int", defecto=0, min=0, max=100000, ambitos=("estrategia",),
+         grupo="Limites", etiqueta="Llamadas al dia (todos los agentes)",
          ayuda="0 = sin tope", espejo=("llm_global.json", "max_llamadas_dia")),
+    dict(clave="max_activos", estrategia="flota", tipo="int", defecto=10, min=1, max=50, ambitos=("estrategia",),
+         grupo="Rotacion", etiqueta="Agentes a la vez (maximo)", ayuda="Cuantos agentes de la flota pueden operar a la vez",
+         espejo=("rotacion_config.json", "max_activos")),
+    dict(clave="max_por_clase", estrategia="flota", tipo="int", defecto=5, min=1, max=20, ambitos=("estrategia",),
+         grupo="Rotacion", etiqueta="Agentes por clase (maximo)", ayuda="Tope por clase de mercado (indices, acciones...)",
+         espejo=("rotacion_config.json", "max_por_clase")),
+    dict(clave="ciclo_min", estrategia="flota", tipo="int", defecto=5, min=1, max=60, ambitos=("estrategia",),
+         grupo="Rotacion", etiqueta="Ciclo de rotacion (min)", ayuda="Cada cuanto revisa la rotacion quien opera",
+         espejo=("rotacion_config.json", "ciclo_min")),
     dict(clave="cuota_tope_5h", estrategia=GLOBAL, tipo="int", defecto=60, min=10, max=100,
          grupo="Cuota de Claude", etiqueta="Tope de la ventana de 5 h (%)",
          ayuda="La flota no llama por encima de este % de la ventana de 5 h",
@@ -107,6 +116,19 @@ ESQUEMA = [
     dict(clave="max_perdida_dia_r", estrategia="scalping", tipo="float", defecto=3.0, min=0.5, max=20, paso=0.5,
          grupo="Limites", etiqueta="Parada diaria (R)", ayuda="Si el dia suma esta perdida en R, no se abre nada mas",
          espejo=("llm_scalping.json", "max_perdida_dia_r")),
+
+    # --- Flota a nivel de estrategia: valor para todos los agentes. Sin espejo: el agente lo lee de la BBDD.
+    #     Al guardarlo, los simbolos con valor propio para esa clave pasan a usar este (la estrategia prevalece).
+    dict(clave="model", estrategia="flota", tipo="enum", opciones=MODELOS, defecto="haiku", ambitos=("estrategia",),
+         grupo="Modelo", etiqueta="Modelo de todos los agentes", ayuda="Al guardar, los simbolos con modelo propio usan este"),
+    dict(clave="timeframe", estrategia="flota", tipo="enum", opciones=TIMEFRAMES, defecto="M5", ambitos=("estrategia",),
+         grupo="Cadencia", etiqueta="Cada cuanto se llama (todos)", ayuda="Al guardar, los simbolos con reloj propio usan este"),
+    dict(clave="sin_filtro", estrategia="flota", tipo="bool", defecto=True, ambitos=("estrategia",),
+         grupo="Entrada", etiqueta="Sin filtro de setup (todos)", ayuda="Al guardar, los simbolos con filtro propio usan este"),
+    dict(clave="riesgo_pct", estrategia="flota", tipo="float", defecto=0.5, min=0.05, max=1.0, paso=0.05, ambitos=("estrategia",),
+         grupo="Riesgo", etiqueta="Riesgo por operacion (todos, % de equity)", ayuda="Al guardar, los simbolos con riesgo propio usan este"),
+    dict(clave="live", estrategia="flota", tipo="bool", defecto=False, ambitos=("estrategia",),
+         grupo="Estado", etiqueta="Ordenes reales (todos, solo cuenta DEMO)", ayuda="Apagado = simulacion"),
 
     # --- Flota (por simbolo: cada agente tiene su fichero llm_trader_<nombre>.json) ---
     dict(clave="model", estrategia="flota", tipo="enum", opciones=MODELOS, defecto="haiku", simbolo=True,
@@ -313,6 +335,10 @@ def guardar(estrategia, simbolo, cambios, origen="app"):
                             "VALUES (?,?,?,?,?,?)",
                             (estrategia if estrategia != GLOBAL else GLOBAL, simbolo or "", clave,
                              json.dumps(v), origen, ahora))
+                if estrategia != GLOBAL and not simbolo:
+                    # La estrategia prevalece: los simbolos pasan a heredar este valor
+                    con.execute("DELETE FROM config_parametros WHERE estrategia=? AND simbolo<>'' AND clave=?",
+                                (estrategia, clave))
     finally:
         con.close()
 
@@ -355,6 +381,8 @@ def _escribir_json(ruta, datos):
 
 
 def _reflejar(d, simbolo, valor):
+    if "espejo" not in d:
+        return          # parametro solo de la BBDD (por ejemplo, flota a nivel de estrategia)
     fichero, clave_json = d["espejo"]
     if clave_json == "riesgo_por_simbolo" or (simbolo and d.get("espejo_simbolo")):
         # Por simbolo en un mapa del JSON de scalping: {simbolo: valor}
@@ -381,6 +409,8 @@ def _valores_espejo():
     out = []
     for d in ESQUEMA:
         est, clave = d["estrategia"], d["clave"]
+        if "espejo" not in d:
+            continue
         if "{nombre}" in d["espejo"][0]:
             # Un fichero por agente: el simbolo sale del propio fichero
             for ruta in sorted(DATA.glob("llm_trader_Agente_*.json")):
