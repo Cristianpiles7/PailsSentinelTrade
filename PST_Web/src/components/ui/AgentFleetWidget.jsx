@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { Users, Zap, Hand, CircleSlash } from 'lucide-react'
+import { usePollingWhenVisible } from '../../hooks/usePolling'
 
 /**
  * Estado de la flota de agentes de Claude Code, leido de habblaud.
@@ -17,31 +18,27 @@ export function AgentFleetWidget({ pollMs = 10000 }) {
   const [summary, setSummary] = useState(null)
   const [offline, setOffline] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-
-    const tick = async () => {
-      try {
-        const { data } = await axios.get('/api/habblaud/api/mod/summary')
-        if (cancelled) return
-        // El proxy devuelve 503 cuando habblaud no esta levantado, y axios lanza con 503,
-        // asi que ese camino acaba en el catch. Este if solo cubre el caso de un 200 con
-        // cuerpo de offline, por si el proxy cambia de codigo en el futuro.
-        if (data?.habblaud === 'offline') {
-          setOffline(true)
-        } else {
-          setSummary(data)
-          setOffline(false)
-        }
-      } catch {
-        if (!cancelled) setOffline(true)
+  const tick = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/habblaud/api/mod/summary')
+      // El proxy devuelve 503 cuando habblaud no esta levantado, y axios lanza con 503,
+      // asi que ese camino acaba en el catch. Este if solo cubre el caso de un 200 con
+      // cuerpo de offline, por si el proxy cambia de codigo en el futuro.
+      if (data?.habblaud === 'offline') {
+        setOffline(true)
+      } else {
+        setSummary(data)
+        setOffline(false)
       }
+    } catch {
+      setOffline(true)
     }
+  }, [])
 
+  useEffect(() => {
     tick()
-    const id = setInterval(tick, pollMs)
-    return () => { cancelled = true; clearInterval(id) }
-  }, [pollMs])
+  }, [tick])
+  usePollingWhenVisible(tick, pollMs)
 
   if (offline || !summary) {
     return (

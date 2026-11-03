@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { Gauge, Save, RefreshCw, AlertTriangle, X, List } from 'lucide-react'
+import { usePollingWhenVisible } from '../hooks/usePolling'
 
 // Agente que puntúa la home (solo visual) y lo que gasta. Vive en la pantalla de Ajustes.
 // El agente lee la configuración en cada vuelta, así que un guardado aplica en unos 15 s.
@@ -114,9 +115,8 @@ export function PuntuadorPanel() {
 
   useEffect(() => {
     cargar()
-    const t = setInterval(cargar, REFRESCO_MS)
-    return () => clearInterval(t)
   }, [cargar])
+  usePollingWhenVisible(cargar, REFRESCO_MS)
 
   const cambiar = (clave, valor) => setForm(f => ({ ...f, [clave]: valor }))
   const sucio = datos && form && JSON.stringify(form) !== JSON.stringify(datos.config)

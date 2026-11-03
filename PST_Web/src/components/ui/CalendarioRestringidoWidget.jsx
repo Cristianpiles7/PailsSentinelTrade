@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import { Clock, ShieldAlert } from 'lucide-react'
+import { usePollingWhenVisible } from '../../hooks/usePolling'
 
 // Cuenta atras al proximo evento restringido de FTMO (PST_LLM/calendario.py), o al fin del bloqueo si ya esta activo.
 const REFRESCO_MS = 60000
@@ -34,14 +35,10 @@ export function CalendarioRestringidoWidget({ url }) {
 
   useEffect(() => {
     cargar()
-    const refresco = setInterval(cargar, REFRESCO_MS)
-    return () => clearInterval(refresco)
   }, [url])
+  usePollingWhenVisible(cargar, REFRESCO_MS)
 
-  useEffect(() => {
-    const reloj = setInterval(() => setAhora(Date.now()), 1000)
-    return () => clearInterval(reloj)
-  }, [])
+  usePollingWhenVisible(() => setAhora(Date.now()), 1000)
 
   // Si el bloqueo ya termino, pide el siguiente evento sin esperar al refresco de 60 s
   useEffect(() => {

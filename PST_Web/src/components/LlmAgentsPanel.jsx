@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Bot, Power, PlayCircle, List, X } from 'lucide-react'
+import { usePollingWhenVisible } from '../hooks/usePolling'
 
 // Flota LLM integrada en las tarjetas de simbolos: cada tarjeta con agente muestra una fila
 // compacta (modelo, modo, latido, acciones). Las decisiones se abren en un modal para no
@@ -71,11 +72,9 @@ export function useLlmAgentes(api, API_BASE, habilitado = true) {
   }, [api, API_BASE])
 
   useEffect(() => {
-    if (!habilitado) return
-    recargar()
-    const t = setInterval(recargar, 30000)
-    return () => clearInterval(t)
+    if (habilitado) recargar()
   }, [recargar, habilitado])
+  usePollingWhenVisible(recargar, 30000, habilitado)
 
   // Acciones que paran o sacan un agente: se piden confirmar para no hacerlo por un clic de más.
   const CONFIRMAR = {
@@ -620,7 +619,6 @@ const CAMPOS_SCALPING = [
   { clave: 'max_hold_min', etiqueta: 'Tiempo máximo (min)', min: 1, max: 240, step: 1, ayuda: 'Pasado este tiempo la operación se cierra sola' },
   { clave: 'max_abiertas', etiqueta: 'Operaciones abiertas', min: 1, max: 5, step: 1, ayuda: 'A la vez, en todos los símbolos de scalping' },
   { clave: 'max_perdida_dia_r', etiqueta: 'Parada diaria (R)', min: 0.5, max: 20, step: 0.5, ayuda: 'Si el día suma esta pérdida en R, no se abre nada más' },
-  { clave: 'max_llamadas_dia', etiqueta: 'Llamadas al día', min: 0, max: 100000, step: 100, ayuda: 'Tope propio del scalping (0 = sin tope)' },
 ]
 
 export function LlmScalpingPanel({ api, API_BASE }) {

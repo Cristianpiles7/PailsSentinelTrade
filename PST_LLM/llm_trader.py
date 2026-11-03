@@ -44,6 +44,7 @@ import prompts                        # criterio de entrada por simbolo, en BBDD
 import calendario                     # puerta de calendario FTMO (PST_LLM/calendario.py)
 import sesiones                       # paradas recurrentes del mercado: cierre antes del fin de semana (PST_LLM/sesiones.py)
 import registro                       # BBDD central: decisiones y agentes para la app
+import config_store                   # configuracion en BBDD (PST_LLM/config_store.py); manda sobre el JSON
 import operaciones                    # una fila por operacion cerrada en llm_operaciones (PST_LLM/operaciones.py)
 import universo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))             # raíz del repo: para importar PST_Core
@@ -240,7 +241,8 @@ def db():
 CONFIG_FILE = DATA_DIR / "llm_trader.json"
 CONFIG_CLAVES = {"enabled": bool, "symbol": str, "timeframe": str, "model": str, "effort": str,
                  "live": bool, "sin_filtro": bool, "max_llamadas_dia": int, "max_perdida_dia": float,
-                 "sesion_continua": bool, "reiniciar_cada": int, "telegram": bool, "aviso_cooldown_min": int,
+                 "sesion_continua": bool, "sesion_gracia_min": int, "reiniciar_cada": int,
+                 "telegram": bool, "aviso_cooldown_min": int,
                  "timeframes_analisis": list, "max_perdida_flota_dia": float, "equity_minima": float,
                  "enfriamiento_min": int, "min_cierre_min": int, "margen_sesion_min": int, "riesgo_pct": float}
 TF_SEGUNDOS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
@@ -259,6 +261,8 @@ def aplicar_config(args):
     except Exception as e:
         print(f"[llm_trader] config ilegible, se ignora: {e}", flush=True)
         return []
+    # La BBDD manda sobre el JSON (config_store): lo guardado desde la app o migrado.
+    cfg.update(config_store.overlay("flota", cfg.get("symbol")))
     cambios = []
     for k, tipo in CONFIG_CLAVES.items():
         if k in cfg:
@@ -575,15 +579,30 @@ def _decision(env):
     return json.loads(res) if isinstance(res, str) else res
 
 
+def ejecutar_claude(cmd, cwd, intentos=3):
+    """
+    `claude -p` a veces sale con código 1 y "No messages returned from query" sin otro motivo: fallo
+    transitorio del CLI o de la API. Se reintenta esa causa concreta, con una pausa creciente; cualquier
+    otro fallo se devuelve al momento.
+    """
+    for i in range(intentos):
+        r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                           timeout=180, encoding="utf-8", errors="replace", creationflags=_SIN_VENTANA)
+        if r.returncode == 0:
+            return r
+        transitorio = "No messages returned" in f"{r.stderr or ''}{r.stdout or ''}"
+        if not transitorio or i == intentos - 1:
+            raise RuntimeError(f"claude -p fallo ({r.returncode}): {(r.stderr or r.stdout)[-400:]}")
+        time.sleep(10 * (i + 1))
+    return r
+
+
 def preguntar_suelto(estado, model, effort, nombre):
     """Una sesion nueva por decision: el proceso vive unos segundos y se va."""
     cmd = _comando_base(model, effort, SYSTEM_PROMPT) + ["--output-format", "json", json.dumps(estado, separators=(",", ":"))]
     t0 = time.time()
-    r = subprocess.run(cmd, cwd=str(cwd_agente(nombre)), capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                       timeout=180, encoding="utf-8", errors="replace", creationflags=_SIN_VENTANA)
+    r = ejecutar_claude(cmd, cwd_agente(nombre))
     dur = time.time() - t0
-    if r.returncode != 0:
-        raise RuntimeError(f"claude -p fallo ({r.returncode}): {(r.stderr or r.stdout)[-400:]}")
     env = json.loads(r.stdout)
     return _decision(env), _uso(env, dur)
 
@@ -675,10 +694,28 @@ class SesionContinua:
 _SESION = SesionContinua()
 
 
-def preguntar(estado, args):
-    if args.sesion_continua:
+_SESION_ULTIMA_POS = {"t": 0.0}    # ultima vez que este agente vio una posicion suya abierta
+
+
+def sesion_necesaria(mt5, args):
+    """
+    La sesion `claude` abierta solo compensa mientras el agente tiene una posicion (ahi importa el
+    contexto de la operacion). Sin posicion, cada decision va por `claude -p` y no queda ningun
+    proceso residente. Tras cerrar la posicion se mantiene `sesion_gracia_min` minutos para no
+    abrir y cerrar la sesion en cada vela.
+    """
+    if not (args.sesion_continua and args.enabled):
+        return False
+    if any(p.magic == MAGIC for p in (mt5.positions_get(symbol=args.symbol) or [])):
+        _SESION_ULTIMA_POS["t"] = time.time()
+        return True
+    return time.time() - _SESION_ULTIMA_POS["t"] < args.sesion_gracia_min * 60
+
+
+def preguntar(estado, args, mt5):
+    if sesion_necesaria(mt5, args):
         return _SESION.preguntar(estado, args.model, args.effort, args.sala, args.reiniciar_cada)
-    _SESION.cerrar()               # por si se acaba de apagar el modo continuo desde el fichero
+    _SESION.cerrar()               # sin posicion (o modo continuo apagado): sesion suelta
     return preguntar_suelto(estado, args.model, args.effort, args.sala)
 
 
@@ -1151,7 +1188,7 @@ def ciclo(mt5, args, con):
         return
 
     try:
-        d, uso = preguntar(estado, args)
+        d, uso = preguntar(estado, args, mt5)
     except Exception as e:
         print(f"[{ts}] error del agente: {e}", flush=True)
         log_decision(con, ts=ts, symbol=args.symbol, mode=modo, model=args.model, llm_called=1,
@@ -1333,7 +1370,11 @@ def informe(con):
         print(f"  TF {tf or 'H1'}: {n} ciclos, {ll or 0} llamadas, {tok or 0:,} tokens")
 
 
-def main():
+def main(argv=None, mt5_compartido=None):
+    """
+    `mt5_compartido`: lo usa llm_worker.py para correr varios agentes en un proceso. Entonces la
+    conexion a MT5 la abre y la cierra el worker, no cada agente.
+    """
     ap = argparse.ArgumentParser(description="Agente LLM operando un simbolo (experimento, DEMO)")
     ap.add_argument("--symbol", default="BTCUSD")
     ap.add_argument("--model", default="haiku", help="haiku (defecto, barato) | sonnet")
@@ -1350,7 +1391,9 @@ def main():
                     help="sala en Habblaud: los analistas con la misma sala salen juntos, como un equipo")
     ap.add_argument("--magic", type=int, default=109001, help="magic number de sus operaciones (uno por agente)")
     ap.add_argument("--sesion-continua", dest="sesion_continua", action="store_true",
-                    help="un unico proceso claude abierto entre decisiones (visible fijo en Habblaud)")
+                    help="proceso claude abierto solo mientras hay posicion (visible en Habblaud); sin posicion, decisiones sueltas")
+    ap.add_argument("--sesion-gracia-min", dest="sesion_gracia_min", type=int, default=15,
+                    help="minutos que la sesion sigue abierta tras cerrar la ultima posicion del agente")
     ap.add_argument("--reiniciar-cada", dest="reiniciar_cada", type=int, default=12,
                     help="en sesion continua, reiniciar tras N decisiones (0 = nunca); acota el historial")
     ap.add_argument("--live", action="store_true", help="enviar ordenes reales (solo cuenta demo)")
@@ -1382,7 +1425,7 @@ def main():
     ap.add_argument("--ultimas", type=int, metavar="N", help="listar las ultimas N decisiones")
     ap.add_argument("--solo-operaciones", dest="solo_ops", action="store_true",
                     help="con --ultimas: solo las que proponen comprar, vender o cerrar")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     configurar_agente(args.nombre, args.magic)
 
     con = db()
@@ -1408,7 +1451,7 @@ def main():
         return 0 if ok else 1
 
     import MetaTrader5 as mt5
-    if not mt5.initialize():
+    if mt5_compartido is None and not mt5.initialize():
         print(f"MT5 no disponible: {mt5.last_error()}", file=sys.stderr)
         return 1
     try:
@@ -1445,12 +1488,12 @@ def main():
             if time.time() - _ULTIMO_REGISTRO["t"] > 300:      # operaciones cerradas -> llm_operaciones (solo las nuevas)
                 _ULTIMO_REGISTRO["t"] = time.time()
                 operaciones.registrar_agente(mt5, DB_FILE)
-            if args.sesion_continua and args.enabled:
+            if sesion_necesaria(mt5, args):
                 try:
                     _SESION.asegurar(args.model, args.effort, args.sala)
                 except Exception as e:
                     print(f"[llm_trader] no se pudo abrir la sesion: {e}", flush=True)
-            elif not args.sesion_continua:
+            else:
                 _SESION.cerrar()
             try:                                       # en cada vuelta, tambien con el agente parado
                 vigilar_sesion(mt5, args, con)
@@ -1469,7 +1512,8 @@ def main():
         print("[llm_trader] fichero STOP detectado: parado.", flush=True)
     finally:
         _SESION.cerrar()
-        mt5.shutdown()
+        if mt5_compartido is None:
+            mt5.shutdown()
     return 0
 
 

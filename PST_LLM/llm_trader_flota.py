@@ -13,6 +13,8 @@ faltan). Quitarlo = parar y borrar la entrada.
     python PST_LLM/llm_trader_flota.py --estado     # quien corre y que gasta cada uno
     python PST_LLM/llm_trader_flota.py --iniciar    # arranca los que no esten corriendo
     python PST_LLM/llm_trader_flota.py --parar      # los apaga limpiamente (fichero STOP)
+    python PST_LLM/llm_trader_flota.py --iniciar --modo worker
+        # agrupa los agentes en workers (llm_worker.py): hasta 10 agentes por proceso, mismos ficheros
 
 Por que procesos separados y no uno solo con todos los simbolos: cada agente mantiene su propia
 sesion de Claude (su historial), y asi uno que falle no tumba al resto. El coste de tener N
@@ -39,6 +41,8 @@ REPO_ROOT = rutas.DATOS
 DATA = REPO_ROOT / ".agents" / "data"
 REGISTRO = DATA / "llm_trader_flota.json"
 SCRIPT = rutas.PST_LLM_DIR / "llm_trader.py"
+WORKER = rutas.PST_LLM_DIR / "llm_worker.py"
+AGENTES_POR_WORKER = 10            # con --modo worker, cuantos agentes van en cada proceso
 NOMBRE_DEFECTO = "Agente_LLM"      # el agente historico (BTC) conserva los nombres de fichero sin sufijo
 
 REGISTRO_INICIAL = [
@@ -66,14 +70,27 @@ def cargar_registro():
     return json.loads(REGISTRO.read_text(encoding="utf-8-sig"))
 
 
+def agentes_del_worker(grupo_json):
+    """Nombres de los agentes que un worker lleva en su json (el worker no los tiene en la linea de comandos)."""
+    try:
+        entradas = json.loads(Path(grupo_json).read_text(encoding="utf-8-sig"))
+    except Exception:
+        return []
+    return [e["argv"][e["argv"].index("--nombre") + 1] if "--nombre" in e["argv"] else NOMBRE_DEFECTO
+            for e in entradas]
+
+
 def procesos_corriendo():
-    """nombre -> pid, leyendo la linea de comandos de los llm_trader.py vivos."""
+    """nombre -> pid, leyendo la linea de comandos de los llm_trader.py y llm_worker.py vivos."""
     vivos = {}
     for p in psutil.process_iter(["pid", "cmdline"]):
         c = p.info["cmdline"] or []
         if any(a.endswith("llm_trader.py") for a in c):
             nombre = c[c.index("--nombre") + 1] if "--nombre" in c else NOMBRE_DEFECTO
             vivos[nombre] = p.info["pid"]
+        elif c and any(a.endswith("llm_worker.py") for a in c):
+            for nombre in agentes_del_worker(c[-1]):     # el json es el ultimo argumento
+                vivos[nombre] = p.info["pid"]
     return vivos
 
 
@@ -155,12 +172,50 @@ def config_por_defecto(a):
             "timeframes_analisis": ["M5", "M15", "H1", "H4", "D1"], "model": "haiku", "effort": "low",
             "live": True, "sin_filtro": a.get("sin_filtro", True), "max_llamadas_dia": 300,
             "max_perdida_dia": 1000000.0, "max_perdida_flota_dia": 1000000.0, "equity_minima": 0.0,
-            "sesion_continua": True, "reiniciar_cada": 8,
+            "sesion_continua": True, "sesion_gracia_min": 15, "reiniciar_cada": 8,
             "telegram": True, "aviso_cooldown_min": 15}
 
 
-def iniciar():
+def lanzar_proceso(a):
+    """Un agente en su propio proceso (modo por defecto)."""
+    f = ficheros(a["nombre"])
+    args = rutas.comando_python(SCRIPT)
+    if a["nombre"] != NOMBRE_DEFECTO:
+        args += ["--nombre", a["nombre"]]
+    args += ["--magic", str(a["magic"])]
+    salida, error = open(f["log"], "w", encoding="utf-8"), open(f["err"], "w", encoding="utf-8")
+    # Proceso independiente: sobrevive a que se cierre la terminal que lo lanzo.
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    p = subprocess.Popen(args, cwd=str(REPO_ROOT), stdout=salida, stderr=error, stdin=subprocess.DEVNULL,
+                         creationflags=flags)
+    print(f"  + {a['nombre']} ({a['symbol']} {a['timeframe']}) arrancado, PID {p.pid}")
+
+
+def lanzar_workers(agentes):
+    """Varios agentes por proceso: un llm_worker.py por grupo de hasta AGENTES_POR_WORKER agentes."""
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    for n, k in enumerate(range(0, len(agentes), AGENTES_POR_WORKER)):
+        grupo = agentes[k:k + AGENTES_POR_WORKER]
+        entradas = []
+        for a in grupo:
+            f = ficheros(a["nombre"])
+            argv = [] if a["nombre"] == NOMBRE_DEFECTO else ["--nombre", a["nombre"]]
+            entradas.append({"argv": argv + ["--magic", str(a["magic"])],
+                             "log": str(f["log"]), "err": str(f["err"])})
+        grupo_json = DATA / f"llm_worker_{ts}_{n}.json"
+        grupo_json.write_text(json.dumps(entradas, indent=2), encoding="utf-8")
+        # Lo que el worker imprime por consola (no es de ningun agente) va a su propio .out
+        salida = open(DATA / f"llm_worker_{ts}_{n}.out", "w", encoding="utf-8")
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        p = subprocess.Popen(rutas.comando_python(WORKER) + [str(grupo_json)], cwd=str(REPO_ROOT),
+                             stdout=salida, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=flags)
+        nombres = ", ".join(a["nombre"] for a in grupo)
+        print(f"  + worker {n} con {nombres} arrancado, PID {p.pid}")
+
+
+def iniciar(modo="proceso"):
     vivos = procesos_corriendo()
+    pendientes = []
     for a in cargar_registro():
         f = ficheros(a["nombre"])
         if a["nombre"] in vivos:
@@ -169,16 +224,12 @@ def iniciar():
         if not f["config"].is_file():          # nunca se pisa una configuracion existente
             f["config"].write_text(json.dumps(config_por_defecto(a), indent=2), encoding="utf-8")
         f["stop"].unlink(missing_ok=True)
-        args = rutas.comando_python(SCRIPT)
-        if a["nombre"] != NOMBRE_DEFECTO:
-            args += ["--nombre", a["nombre"]]
-        args += ["--magic", str(a["magic"])]
-        salida, error = open(f["log"], "w", encoding="utf-8"), open(f["err"], "w", encoding="utf-8")
-        # Proceso independiente: sobrevive a que se cierre la terminal que lo lanzo.
-        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        p = subprocess.Popen(args, cwd=str(REPO_ROOT), stdout=salida, stderr=error, stdin=subprocess.DEVNULL,
-                             creationflags=flags)
-        print(f"  + {a['nombre']} ({a['symbol']} {a['timeframe']}) arrancado, PID {p.pid}")
+        pendientes.append(a)
+    if modo == "worker":
+        lanzar_workers(pendientes)
+    else:
+        for a in pendientes:
+            lanzar_proceso(a)
     iniciar_revisor()
     iniciar_bot()
     iniciar_mejora()
@@ -296,12 +347,14 @@ def main():
     g.add_argument("--estado", action="store_true")
     g.add_argument("--iniciar", action="store_true")
     g.add_argument("--parar", action="store_true")
+    ap.add_argument("--modo", choices=["proceso", "worker"], default="proceso",
+                    help="con --iniciar: un proceso por agente (defecto) o varios agentes por worker")
     a = ap.parse_args()
     if a.resultados:
         resultados()
         return
     if a.iniciar:
-        iniciar()
+        iniciar(a.modo)
     elif a.parar:
         parar()
     estado() if a.estado or a.iniciar else None

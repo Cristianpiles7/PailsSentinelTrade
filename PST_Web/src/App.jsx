@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { usePollingWhenVisible, conservarSiIgual } from './hooks/usePolling'
 
 
 
@@ -8,10 +9,10 @@ import axios from 'axios'
 
 import {
   TrendingUp, TrendingDown, Wallet, Activity, BarChart3, Settings, ShieldCheck,
-  ArrowUpRight, RefreshCw, Power, Target, Clock, ShieldAlert, BookMarked,
+  ArrowUpRight, RefreshCw, Power, Target, Clock, BookMarked,
   Image as ImageIcon, FileText, ChevronRight, Save, X, MoreVertical, LayoutDashboard,
   LayoutGrid, History, ShoppingCart, Zap, Trash2, ChevronUp, ChevronDown, Cpu,
-  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, SlidersHorizontal
+  Terminal, Info, Lock, Shield, Volume2, VolumeX, StretchHorizontal, FlaskConical, Users, Bot, SlidersHorizontal, Layers
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -42,9 +43,10 @@ import { PerformanceCalendar } from './components/ui/PerformanceCalendar'
 import { TradeRiskVisualizer } from './components/ui/TradeRiskVisualizer'
 import { TradeTerminalTable } from './components/ui/TradeTerminalTable'
 import { AgentsOffice } from './components/AgentsOffice'
-import { LlmFila, LlmDecisionesModal, LlmLimitesBar, LlmScalpingPanel, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
+import { LlmFila, LlmDecisionesModal, LlmLimitesBar, useLlmAgentes, agruparTarjetas, ORDEN_GRUPOS } from './components/LlmAgentsPanel'
 import { LlmCriterioPanel } from './components/LlmCriterioPanel'
 import { LlmSeguro } from './components/LlmOpinionCard'
+import { EstrategiaView } from './components/EstrategiaView'
 
 
 
@@ -93,8 +95,9 @@ const TITULOS_VISTA = {
   multichart: ['Multi-Chart', 'Vigilancia simultánea'],
   strategylab: ['Strategy Lab', 'Backtesting con datos reales de MT5'],
   agents: ['Oficina de agentes', 'Flota LLM y habblaud'],
-  ajustes: ['Ajustes', 'Rotación de la flota LLM y agente puntuador de la home'],
-  config: ['Matriz de símbolos', 'Dashboard y agente LLM por símbolo · agrupados por clase'],
+  estrategias: ['Estrategias', 'Una pantalla por estrategia: resumen, símbolos y configuración'],
+  ajustes: ['Ajustes', 'Límites globales, prompts y agente puntuador de la home'],
+  config: ['Símbolos', 'Todos los símbolos por clase · filtra por estrategia'],
 }
 
 function tituloVista(vista, simbolo) {
@@ -150,6 +153,11 @@ function App() {
   const llm = useLlmAgentes(api, API_BASE, isAuthenticated)
   const [filtroSimbolos, setFiltroSimbolos] = useState('todos')
   const [filtroClase, setFiltroClase] = useState('todos')
+  const [filtroEstrategia, setFiltroEstrategia] = useState('todas')
+  const [estrategiasApi, setEstrategiasApi] = useState([])
+  useEffect(() => {
+    if (isAuthenticated) api.get(`${API_BASE}/estrategias`).then(r => setEstrategiasApi(r.data)).catch(() => {})
+  }, [isAuthenticated])
   const [llmDecisiones, setLlmDecisiones] = useState(null)
 
 
@@ -208,14 +216,11 @@ function App() {
 
 
   // -- FASE 35 RISK PROFILES --
-  const [riskProfiles, setRiskProfiles] = useState([])
   const [selectedProfileId, setSelectedProfileId] = useState('')
   const [newProfileName, setNewProfileName] = useState('')
   const [logs, setLogs] = useState([])
   const [isMuted, setIsMuted] = useState(false)
   const [replayTrade, setReplayTrade] = useState(null)
-  const [upcomingNews, setUpcomingNews] = useState([])
-  const [isNewsBlocked, setIsNewsBlocked] = useState(false)
   const prevTicketsRef = useRef(new Set()) // tickets abiertos en el último fetch, para detectar aperturas/cierres nuevos
 
   // -- FASE 51-53 EXPANSION --
@@ -246,34 +251,22 @@ function App() {
   const [tituloPagina, subtituloPagina] = tituloVista(currentView, selectedSymbol)
 
   // ENGINE: Sincronización Automática (FASE 43)
+  // Carga inicial inmediata
   useEffect(() => {
     if (!isAuthenticated) return;
-
-    // Carga inicial inmediata
     fetchData();
     fetchPerformance();
     fetchHistory();
     fetchLogs();
-    fetchNews();
-
-    // Polling rápido cada 3 segundos para datos críticos
-    const syncTimer = setInterval(() => {
-      fetchData();
-      fetchLogs();
-    }, 3000);
-
-    // Polling medio cada 10 segundos para datos analíticos e históricos
-    const analyticsTimer = setInterval(() => {
-      fetchAnalytics();
-      fetchHistory();
-      fetchNews();
-    }, 10000);
-
-    return () => {
-      clearInterval(syncTimer);
-      clearInterval(analyticsTimer);
-    }
   }, [isAuthenticated])
+
+  // Polling solo con la ventana visible: en segundo plano no hace falta refrescar nada
+  usePollingWhenVisible(() => fetchData(), 3000, isAuthenticated)
+  usePollingWhenVisible(() => fetchLogs(), 10000, isAuthenticated)
+  usePollingWhenVisible(() => {
+    fetchAnalytics();
+    fetchHistory();
+  }, 10000, isAuthenticated)
 
   // Alertas de posiciones reales (2026-09-02): sustituye al sistema de alertas por "score" del
   // motor de trading retirado -- ahora avisa de aperturas/cierres reales detectados por el
@@ -338,21 +331,20 @@ function App() {
   }
 
   // SURVEILLANCE: Carga de Gráficos y Telemetría (FASE 44)
-  useEffect(() => {
-    if (!isAuthenticated || currentView !== 'surveillance' || !selectedSymbol) return;
+  const vigilandoSimbolo = isAuthenticated && currentView === 'surveillance' && !!selectedSymbol
 
-    // Carga inmediata
+  // Carga inmediata
+  useEffect(() => {
+    if (!vigilandoSimbolo) return;
     fetchOhlc(selectedSymbol, selectedTimeframe);
     fetchTelemetry(selectedSymbol);
+  }, [vigilandoSimbolo, selectedSymbol, selectedTimeframe])
 
-    // Polling de 10s para gráficos y telemetría detallada
-    const survTimer = setInterval(() => {
-      fetchOhlc(selectedSymbol, selectedTimeframe);
-      fetchTelemetry(selectedSymbol);
-    }, 10000);
-
-    return () => clearInterval(survTimer);
-  }, [isAuthenticated, currentView, selectedSymbol, selectedTimeframe])
+  // Polling de 10s para gráficos y telemetría detallada
+  usePollingWhenVisible(() => {
+    fetchOhlc(selectedSymbol, selectedTimeframe);
+    fetchTelemetry(selectedSymbol);
+  }, 10000, vigilandoSimbolo)
 
 
 
@@ -381,21 +373,21 @@ function App() {
     const loadAccount = async () => {
       try {
         const res = await api.get(`${API_BASE}/account`);
-        setAccount(res.data);
+        setAccount(prev => conservarSiIgual(prev, res.data));
       } catch (e) { console.error("Account fetch failed:", e.message); }
     };
 
     const loadTrades = async () => {
       try {
         const res = await api.get(`${API_BASE}/trades/active`);
-        setTrades(res.data);
+        setTrades(prev => conservarSiIgual(prev, res.data));
       } catch (e) { console.error("Trades fetch failed:", e.message); }
     };
 
     const loadSymbols = async () => {
       try {
         const res = await api.get(`${API_BASE}/symbols`);
-        setSymbols(res.data);
+        setSymbols(prev => conservarSiIgual(prev, res.data));
       } catch (e) { console.error("Symbols fetch failed:", e.message); }
     };
 
@@ -425,14 +417,14 @@ function App() {
   const fetchHistory = async () => {
     try {
       const resp = await api.get(`${API_BASE}/history?limit=30`)
-      setHistoryTrades(resp.data || [])
+      setHistoryTrades(prev => conservarSiIgual(prev, resp.data || []))
     } catch (err) { console.error(err) }
   }
 
   const fetchLogs = async () => {
     try {
       const resp = await api.get(`${API_BASE}/logs?limit=50`)
-      setLogs(resp.data.logs || [])
+      setLogs(prev => conservarSiIgual(prev, resp.data.logs || []))
     } catch (err) { console.error(err) }
   }
 
@@ -441,7 +433,7 @@ function App() {
     try {
       // Ajuste de ruta (FASE 44): la API escucha en /ohlc/{symbol}
       const resp = await api.get(`${API_BASE}/ohlc/${sym}?timeframe=${tf}`)
-      setOhlc(resp.data || [])
+      setOhlc(prev => conservarSiIgual(prev, resp.data || []))
     } catch (err) { console.error(err) }
   }
 
@@ -450,13 +442,6 @@ function App() {
     try {
       const resp = await api.get(`${API_BASE}/symbols/${sym}/telemetry`)
       setTelemetry(resp.data)
-    } catch (err) { console.error(err) }
-  }
-
-  const fetchProfiles = async () => {
-    try {
-      const resp = await api.get(`${API_BASE}/config/risk_profiles`)
-      setRiskProfiles(resp.data)
     } catch (err) { console.error(err) }
   }
 
@@ -500,31 +485,10 @@ function App() {
     } catch (err) { addToast('Error updating status', 'error') }
   }
 
-  const fetchNews = async () => {
-    try {
-      const res = await api.get(`${API_BASE}/news/upcoming`)
-      setUpcomingNews(res.data.upcoming || [])
-      setIsNewsBlocked(res.data.is_global_block || false)
-    } catch (err) {
-      console.error("Error fetching news:", err)
-    }
-  }
-
-  const getNewsCountdown = (timeIso) => {
-    if (!timeIso) return ""
-    const target = new Date(timeIso)
-    const diff = target - new Date()
-    if (diff <= 0) return "IMM"
-    const mins = Math.floor(diff / 60000)
-    const hours = Math.floor(mins / 60)
-    if (hours > 0) return `${hours}h ${mins % 60}m`
-    return `${mins}m`
-  }
-
   const fetchAnalytics = async () => {
     try {
       const resp = await api.get(`${API_BASE}/performance/analytics`)
-      setAnalyticsData(resp.data)
+      setAnalyticsData(prev => conservarSiIgual(prev, resp.data))
     } catch (err) { console.error("Error fetching analytics:", err) }
   }
 
@@ -786,6 +750,13 @@ function App() {
           />
           <NavItem
             showLabel
+            icon={<Layers size={24} />}
+            active={currentView === 'estrategias'}
+            onClick={() => setCurrentView('estrategias')}
+            label="Estrategias"
+          />
+          <NavItem
+            showLabel
             icon={<SlidersHorizontal size={24} />}
             active={currentView === 'ajustes'}
             onClick={() => setCurrentView('ajustes')}
@@ -809,7 +780,7 @@ function App() {
 
 
 
-            label="Matrix"
+            label="Símbolos"
 
 
 
@@ -969,33 +940,13 @@ function App() {
 
         </div>
 
-        <div className="row-start-1 col-start-3 justify-self-end flex items-center gap-4 min-w-0">
+        <div className="row-start-1 col-start-3 justify-self-end flex items-center gap-4 min-w-max">
 
 
 
           <EstadoSistemaWidget url={`${API_BASE}/health`} />
 
           <CalendarioRestringidoWidget url={`${API_BASE}/calendario/proximo`} />
-
-          {/* News Guard Segment (Fase 50) */}
-          {upcomingNews.length > 0 && (
-            <div className={`flex items-center gap-4 bg-zinc-900/50 px-5 py-2.5 rounded-2xl border transition-all duration-500 ${isNewsBlocked ? 'border-rose-500/40 bg-rose-500/5' : 'border-zinc-800/50'}`}>
-              <ShieldAlert size={16} className={isNewsBlocked ? 'text-rose-400 animate-pulse' : 'text-zinc-500'} />
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">
-                  {isNewsBlocked ? 'NEWS BLOCK ACTIVE' : 'UPCOMING NEWS'}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-bold ${isNewsBlocked ? 'text-rose-400' : 'text-zinc-300'} truncate max-w-[150px]`}>
-                    {upcomingNews[0].country} {upcomingNews[0].title}
-                  </span>
-                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md bg-zinc-800 border border-white/5 ${isNewsBlocked ? 'text-rose-300' : 'text-indigo-400'}`}>
-                    {getNewsCountdown(upcomingNews[0].time_utc)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
 
           <div className="flex items-center gap-6">
 
@@ -1303,17 +1254,21 @@ function App() {
           </div>
         )}
 
+        {currentView === 'estrategias' && (
+          <div className="w-full h-full overflow-y-auto px-4 md:px-8 pt-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <EstrategiaView api={api} API_BASE={API_BASE} agentes={llm.agentes} symbols={symbols} />
+          </div>
+        )}
+
         {currentView === 'ajustes' && (
           <div className="w-full h-full overflow-y-auto px-4 md:px-8 pt-2 pb-10 animate-in fade-in slide-in-from-bottom-2 duration-700">
             <div className="max-w-5xl mx-auto flex flex-col gap-8">
               <section className="flex flex-col gap-3">
-                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Flota LLM</h2>
+                <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Límites globales</h2>
                 <LlmLimitesBar limites={llm.limites} guardar={llm.guardarLimites}
                   activosAhora={llm.agentes.filter(a => a.activo).length}
                   topeDiario={llm.topeDiario} guardarTopeDiario={llm.guardarTopeDiario}
                   cuotaTopes={llm.cuotaTopes} guardarCuotaTopes={llm.guardarCuotaTopes} />
-                <h3 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.2em] mt-2">Scalping (agente aparte)</h3>
-                <LlmScalpingPanel api={api} API_BASE={API_BASE} />
               </section>
               <section className="flex flex-col gap-3">
                 <h2 className="text-[11px] font-bold text-zinc-600 uppercase tracking-[0.25em]">Prompts de los agentes</h2>
@@ -2616,6 +2571,16 @@ function App() {
               {llm.error && <p className="text-[11px] text-rose-400 mb-4">{llm.error}</p>}
               {llm.aviso && <p className="text-[11px] text-zinc-400 mb-4">{llm.aviso}</p>}
 
+              {/* Filtro por estrategia (las que devuelve la API) */}
+              <div className="flex items-center gap-2 mb-4">
+                {[['todas', 'Todas'], ...estrategiasApi.map(e => [e.id, e.nombre])].map(([v, t]) => (
+                  <button key={v} onClick={() => setFiltroEstrategia(v)}
+                    className={`text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl border transition-all ${filtroEstrategia === v ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+
               {/* Filtro: todos los simbolos, solo los que tienen agente LLM, o solo los que lo tienen activo */}
               <div className="flex items-center gap-2 mb-6">
                 {[['todos', 'Todos'], ['llm', 'Con agente LLM'], ['activos', 'Activos LLM']].map(([v, t]) => (
@@ -2637,7 +2602,12 @@ function App() {
               </div>
 
               {/* Grupos por clase de mercado (orden fijo); dentro de cada grupo, alfabetico */}
-              {agruparTarjetas(symbols, llm.agentes, filtroSimbolos, filtroClase).map(({ grupo, items }) => (
+              {agruparTarjetas(
+                filtroEstrategia === 'todas' ? symbols : symbols.filter(s => {
+                  const a = llm.agentes.find(x => x.symbol === s.symbol)
+                  return a && (a.estrategia === filtroEstrategia || a.estrategia === 'ambos')
+                }),
+                llm.agentes, filtroSimbolos, filtroClase).map(({ grupo, items }) => (
                 <section key={grupo} className="mb-8">
                   <div className="flex items-center gap-3 mb-4">
                     <p className="text-xs text-zinc-500 font-bold uppercase tracking-[0.25em]">{grupo}</p>

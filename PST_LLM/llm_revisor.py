@@ -312,7 +312,10 @@ def main():
                     print(f"[revisor] salidas por reglas: {type(e).__name__}: {e}", flush=True)
             if cfg["enabled"]:
                 try:
-                    sesion.asegurar(cfg["model"], cfg["effort"], NOMBRE_SALA)   # sala visible en Habblaud
+                    if any(p.magic in lt.MAGICS_FLOTA for p in (mt5.positions_get() or [])):
+                        sesion.asegurar(cfg["model"], cfg["effort"], NOMBRE_SALA)   # sala visible en Habblaud, solo con posiciones
+                    else:
+                        sesion.cerrar()
                     ahora_t = pasada(mt5, cfg, con, sesion, ultima, agentes_por_magic())
                     abiertos_antes = ahora_t     # (los cierres por stop/objetivo ya los avisa llm_telegram_bot.py)
                 except Exception as e:          # un fallo puntual no debe tumbar al revisor

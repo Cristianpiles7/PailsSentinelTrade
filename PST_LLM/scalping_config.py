@@ -8,6 +8,8 @@ import json
 
 import rutas
 
+import config_store
+
 DATA = rutas.DATOS / ".agents" / "data"
 CONFIG_FILE = DATA / "llm_scalping.json"
 
@@ -28,29 +30,21 @@ DEFECTO = {
     "cooldown_tras_stop_min": 10,   # tras un stop, minutos sin entrar en ese simbolo
     "max_spread_sobre_stop": 0.10,  # el spread no puede pasar de esta fraccion de la distancia al stop
     "max_coste_r": 0.10,            # spread + comision ida y vuelta, en fraccion del R
-    "max_llamadas_dia": 1500,       # tope propio de este agente (no cuenta el de la flota)
 }
 
 # Claves editables desde la app y su rango. Lo que no esta aqui no se puede cambiar desde la API.
-RANGOS = {
-    "cadencia_s": (0, 600),
-    "pausa_minima_s": (1, 60),
-    "riesgo_pct": (0.05, 1.0),
-    "max_hold_min": (1, 240),
-    "cooldown_tras_stop_min": (0, 120),
-    "max_abiertas": (1, 5),
-    "max_perdida_dia_r": (0.5, 20.0),
-    "max_spread_sobre_stop": (0.01, 0.5),
-    "max_coste_r": (0.01, 0.5),
-    "max_llamadas_dia": (0, 100000),
-}
+# Rangos: salen del esquema de config_store (un solo sitio). Solo los numericos que se editan.
+RANGOS = {k: config_store.rango(k, "scalping") for k in (
+    "cadencia_s", "pausa_minima_s", "riesgo_pct", "max_hold_min", "max_abiertas", "max_perdida_dia_r",
+    "cooldown_tras_stop_min", "max_spread_sobre_stop", "max_coste_r")}
 BOOLEANAS = ("enabled", "live")
 MODELOS = ("haiku", "sonnet", "opus")
 ESFUERZOS = ("low", "medium", "high")
 
 
 def leer():
-    """Config efectiva: los valores del fichero sobre los por defecto. Sin fichero, lo crea con los por defecto."""
+    """Config efectiva: JSON sobre los por defecto y, por encima, lo guardado en la BBDD (config_store).
+    Sin fichero, lo crea con los por defecto."""
     cfg = dict(DEFECTO)
     try:
         if CONFIG_FILE.is_file():
@@ -60,55 +54,35 @@ def leer():
             CONFIG_FILE.write_text(json.dumps(DEFECTO, indent=2), encoding="utf-8")
     except Exception as e:
         print(f"[scalping] config ilegible, uso la de por defecto: {e}", flush=True)
+    cfg.update(config_store.overlay("scalping"))
+    por_simbolo = dict(cfg.get("riesgo_por_simbolo") or {})
+    for sym, vals in config_store.overlay_simbolos("scalping").items():
+        if "riesgo_pct" in vals:
+            por_simbolo[sym] = vals["riesgo_pct"]
+    cfg["riesgo_por_simbolo"] = por_simbolo
     return cfg
 
 
 def guardar(cambios):
-    """Valida y guarda solo las claves editables. Lanza ValueError con el motivo si algo no vale."""
-    limpio = {}
+    """Valida y guarda en la BBDD (config_store), que refleja el cambio en el JSON. Lanza ValueError con el motivo."""
+    if not isinstance(cambios, dict):
+        raise ValueError("el cambio debe ser un objeto {clave: valor}")
+    generales = {}
+    por_simbolo = {}
     for clave, valor in cambios.items():
-        if clave in BOOLEANAS:
-            if not isinstance(valor, bool):
-                raise ValueError(f"{clave} debe ser true o false")
-            limpio[clave] = valor
-        elif clave == "model":
-            if valor not in MODELOS:
-                raise ValueError(f"modelo no valido: {valor} (usa {', '.join(MODELOS)})")
-            limpio[clave] = valor
-        elif clave == "effort":
-            if valor not in ESFUERZOS:
-                raise ValueError(f"esfuerzo no valido: {valor} (usa {', '.join(ESFUERZOS)})")
-            limpio[clave] = valor
-        elif clave == "riesgo_por_simbolo":
+        if clave == "riesgo_por_simbolo":
             if not isinstance(valor, dict):
                 raise ValueError("riesgo_por_simbolo debe ser un objeto {simbolo: %}")
-            lo, hi = RANGOS["riesgo_pct"]
-            mapa = {}
-            for sym, pct in valor.items():
-                try:
-                    v = float(pct)
-                except (TypeError, ValueError):
-                    raise ValueError(f"riesgo de {sym} debe ser un numero")
-                if not lo <= v <= hi:
-                    raise ValueError(f"riesgo de {sym} fuera de rango: usa entre {lo} y {hi}")
-                mapa[sym] = round(v, 4)
-            limpio[clave] = mapa
-        elif clave in RANGOS:
-            lo, hi = RANGOS[clave]
-            try:
-                v = float(valor)
-            except (TypeError, ValueError):
-                raise ValueError(f"{clave} debe ser un numero")
-            if not lo <= v <= hi:
-                raise ValueError(f"{clave} fuera de rango: usa entre {lo} y {hi}")
-            limpio[clave] = int(v) if clave in ("cadencia_s", "pausa_minima_s", "max_hold_min", "max_abiertas", "cooldown_tras_stop_min",
-                                                 "max_llamadas_dia") else round(v, 4)
+            por_simbolo = valor
         else:
-            raise ValueError(f"{clave} no es una clave editable")
-    actual = {k: v for k, v in leer().items() if k in DEFECTO}
-    actual.update(limpio)
-    DATA.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(actual, indent=2), encoding="utf-8")
+            generales[clave] = valor
+    d = config_store.IDX[("riesgo_pct", "simbolo", "scalping")]
+    for sym, pct in por_simbolo.items():
+        config_store.normalizar(d, pct)          # valida antes de escribir nada
+    if generales:
+        config_store.guardar("scalping", "", generales)
+    for sym, pct in por_simbolo.items():
+        config_store.guardar("scalping", sym, {"riesgo_pct": pct})
     return leer()
 
 
@@ -124,7 +98,5 @@ def fijar_riesgo_simbolo(symbol, riesgo_pct):
         valor = float(riesgo_pct)
     except (TypeError, ValueError):
         raise ValueError("riesgo no valido: debe ser un numero")
-    mapa = dict(leer().get("riesgo_por_simbolo") or {})
-    mapa[symbol] = valor
-    guardar({"riesgo_por_simbolo": mapa})
+    config_store.guardar("scalping", symbol, {"riesgo_pct": valor})
     return {"symbol": symbol, "riesgo_pct": riesgo_de(symbol)}

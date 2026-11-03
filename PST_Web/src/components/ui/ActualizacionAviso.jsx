@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Download, X, RefreshCw, AlertTriangle } from 'lucide-react'
+import { usePollingWhenVisible } from '../../hooks/usePolling'
 
 // Aviso de version nueva publicada en GitHub Releases. Al aceptar, el backend descarga el exe,
 // lo cambia por el actual y reinicia la app (PST_API/updater_api.py).
@@ -32,9 +33,8 @@ export function ActualizacionAviso({ api, API_BASE }) {
 
   useEffect(() => {
     cargar()
-    const t = setInterval(cargar, enCurso ? REFRESCO_DESCARGA_MS : REFRESCO_MS)
-    return () => clearInterval(t)
   }, [enCurso])
+  usePollingWhenVisible(cargar, enCurso ? REFRESCO_DESCARGA_MS : REFRESCO_MS)
 
   if (!info?.disponible && !enCurso) return null
   if (!enCurso && fase !== 'error' && pospuesta === info.ultima) return null
