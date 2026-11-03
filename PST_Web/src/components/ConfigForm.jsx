@@ -3,6 +3,8 @@ import { Save, RefreshCw } from 'lucide-react'
 
 // Formulario generico: pinta los parametros de un ambito (global, estrategia o simbolo) a partir del
 // esquema del backend (PST_LLM/config_store.py). Lo que se edita aqui es lo que el agente lee.
+// Compacto: una fila por parametro (etiqueta a la izquierda, control pequeño a la derecha) y los
+// grupos como tarjetas en columnas. La ayuda de cada campo va en el tooltip para no ocupar altura.
 
 const ORIGEN = {
   defecto: 'por defecto',
@@ -11,7 +13,7 @@ const ORIGEN = {
   simbolo: 'propio del simbolo',
 }
 
-const CAMPO = 'w-full text-[11px] font-bold uppercase bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500/60'
+const CAMPO = 'text-[11px] font-bold bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-md px-2 py-1 focus:outline-none focus:border-indigo-500/60'
 
 function agrupar(definiciones) {
   const grupos = []
@@ -27,20 +29,20 @@ function Control({ d, valor, onCambio }) {
   if (d.tipo === 'bool') {
     return (
       <button type="button" onClick={() => onCambio(!valor)}
-        className={`w-9 h-4.5 rounded-full relative transition-all ${valor ? 'bg-indigo-600' : 'bg-zinc-800'}`}>
-        <div className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${valor ? 'right-0.5' : 'left-0.5'}`} />
+        className={`w-8 h-4 rounded-full relative transition-all ${valor ? 'bg-indigo-600' : 'bg-zinc-800'}`}>
+        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${valor ? 'right-0.5' : 'left-0.5'}`} />
       </button>
     )
   }
   if (d.tipo === 'enum') {
     return (
-      <select className={CAMPO} value={valor ?? ''} onChange={e => onCambio(e.target.value)}>
+      <select className={`${CAMPO} w-24`} value={valor ?? ''} onChange={e => onCambio(e.target.value)}>
         {d.opciones.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     )
   }
   return (
-    <input type="number" className={CAMPO} value={valor ?? ''} min={d.min} max={d.max}
+    <input type="number" className={`${CAMPO} w-20 text-right`} value={valor ?? ''} min={d.min} max={d.max}
       step={d.paso ?? (d.tipo === 'int' ? 1 : 0.01)}
       onChange={e => onCambio(e.target.value === '' ? '' : Number(e.target.value))} />
   )
@@ -75,34 +77,36 @@ export function ConfigForm({ definiciones, valores, onGuardar, vacio = 'Sin para
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      {agrupar(definiciones).map(g => (
-        <div key={g.nombre} className="flex flex-col gap-2">
-          <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-[0.2em]">{g.nombre}</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
-            {g.items.map(d => {
-              const actual = porClave[d.clave]
-              const valor = d.clave in borrador ? borrador[d.clave] : actual?.valor
-              return (
-                <div key={d.clave} className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wide">{d.etiqueta}</span>
-                    {actual && !(d.clave in borrador) && (
-                      <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
-                        {ORIGEN[actual.origen] || actual.origen}
-                      </span>
-                    )}
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {agrupar(definiciones).map(g => (
+          <div key={g.nombre} className="bg-zinc-950/60 border border-zinc-800/60 rounded-xl px-3 py-2">
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] pb-1.5 border-b border-zinc-800/60">{g.nombre}</p>
+            <div className="flex flex-col divide-y divide-white/5">
+              {g.items.map(d => {
+                const actual = porClave[d.clave]
+                const valor = d.clave in borrador ? borrador[d.clave] : actual?.valor
+                const cambiado = d.clave in borrador
+                return (
+                  <div key={d.clave} title={d.ayuda || undefined} className="flex items-center justify-between gap-3 py-1.5">
+                    <div className="flex items-baseline gap-2 min-w-0">
+                      <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wide truncate">{d.etiqueta}</span>
+                      {actual && !cambiado && actual.origen !== 'defecto' && (
+                        <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-wider whitespace-nowrap">
+                          {ORIGEN[actual.origen] || actual.origen}
+                        </span>
+                      )}
+                    </div>
+                    <div className="shrink-0">
+                      <Control d={d} valor={valor} onCambio={v => cambiar(d.clave, v)} />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1"><Control d={d} valor={valor} onCambio={v => cambiar(d.clave, v)} /></div>
-                  </div>
-                  {d.ayuda && <span className="text-[10px] text-zinc-600 font-bold uppercase tracking-wider">{d.ayuda}</span>}
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
 
       {error && <p className="text-[11px] text-rose-400 font-bold uppercase tracking-wider">{error}</p>}
 

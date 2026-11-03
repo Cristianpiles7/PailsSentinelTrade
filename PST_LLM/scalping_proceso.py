@@ -44,8 +44,26 @@ def intencion_encendida():
     return bool(config_store.valor_o("enabled", True, "scalping"))
 
 
+def marcar_visibles():
+    """Los simbolos del scalping salen en la home (symbols_config.is_active) mientras la estrategia esta activa."""
+    import sqlite3
+    import registro
+    simbolos = registro.simbolos_con("scalping")
+    con = sqlite3.connect(registro._db_central_path(), timeout=15)
+    try:
+        with con:
+            con.executemany("UPDATE symbols_config SET is_active=1 WHERE symbol=?", [(s,) for s in simbolos])
+    finally:
+        con.close()
+    return simbolos
+
+
 def arrancar():
     """Lanza el agente si no corre. Devuelve el PID (nuevo o existente)."""
+    try:
+        marcar_visibles()
+    except Exception as e:
+        print(f"[scalping] no pude marcar los simbolos en la home: {e}", flush=True)
     vivo = pid_corriendo()
     if vivo:
         return vivo
