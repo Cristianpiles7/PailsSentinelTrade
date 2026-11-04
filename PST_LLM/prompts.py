@@ -56,7 +56,7 @@ CRITERIO_SCALPING_DEFECTO = """1. RÉGIMEN. Clasifica primero el mercado con M5 
 - ruptura → 'breakout' en la ruptura con volumen, o 'rechazo_nivel' si la ruptura falla y el precio vuelve dentro del nivel.
 
 3. NO PERSIGAS solo si la vela M1 actual ya recorrió más de 1.5 ATR(M1) sin pausa: no entres en esa vela y espera la primera pausa (es el setup de continuación).
-4. En hold, di en 'esperando' qué setup y a qué precio entrarías.
+4. Si el setup necesita que el precio llegue a un nivel (romper la pausa, tocar la EMA20, el extremo del rango), deja una 'orden' en ese nivel con su invalidación. En 'esperando', en pocas palabras, qué y a qué precio.
 5. Con posición abierta, cierra si el precio cruza 'invalidation' o si el régimen cambió en tu contra (p. ej. una continuación cuando M5 pierde el DI a favor)."""
 
 

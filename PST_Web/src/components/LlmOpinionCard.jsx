@@ -1,9 +1,26 @@
 import { Component, useEffect, useRef, useState } from 'react'
 import { Bot } from 'lucide-react'
 import { usePollingWhenVisible } from '../hooks/usePolling'
+import { ScalpingOpinion } from './ScalpingOpinion'
 
-// Lo ultimo que dijo el agente LLM sobre este simbolo. Sale en el hueco de inteligencia del grafico.
-export function LlmOpinionCard({ api, API_BASE, symbol, onHistorial }) {
+// Hueco de inteligencia del grafico: si el simbolo es del scalping, lo que ve el scalping; si no, la flota.
+export function LlmOpinionCard(props) {
+  const { api, API_BASE, symbol } = props
+  const [esScalping, setEsScalping] = useState(null)
+  useEffect(() => {
+    let vivo = true
+    setEsScalping(null)
+    api.get(`${API_BASE}/estrategias/scalping/detalle/${encodeURIComponent(symbol)}`)
+      .then(r => { if (vivo) setEsScalping(!!r.data?.scalping) })
+      .catch(() => { if (vivo) setEsScalping(false) })
+    return () => { vivo = false }
+  }, [api, API_BASE, symbol])
+  if (esScalping === null) return null
+  return esScalping ? <ScalpingOpinion {...props} /> : <FlotaOpinionCard {...props} />
+}
+
+// Lo ultimo que dijo el agente LLM de la flota sobre este simbolo.
+function FlotaOpinionCard({ api, API_BASE, symbol, onHistorial }) {
   const [dec, setDec] = useState(null)
   const [sinAgente, setSinAgente] = useState(false)
   // El poll usa siempre la carga del simbolo actual; las respuestas de un simbolo anterior se descartan.

@@ -36,6 +36,9 @@ DEFECTO = {
     "umbral_llamada_atr": 0.3,      # sin posicion, se llama al modelo si el precio se movio este ATR desde la ultima llamada
     "max_llamada_s": 300,           # sin posicion, como minimo se llama cada tantos segundos aunque no se mueva
     "cadencia_vigilancia_s": 10,    # cada cuantos segundos se vigila lo abierto y las sombras (sin llamar al modelo)
+    "cadencia_disparo_s": 1,        # cada cuantos segundos se miran las ordenes pendientes con el tick
+    "orden_max_min": 30,            # vida maxima de una orden pendiente, en minutos
+    "orden_max_dist_atr": 3.0,      # una orden pendiente no puede estar a mas de esto (ATR de M1) del precio
     "max_perdidas_seguidas": 3,     # tras tantas perdidas seguidas en un simbolo, no se entra en el ese dia. 0 = sin tope
     "bloquear_misma_direccion": True,  # no abrir el mismo sentido en dos simbolos a la vez (los indices se mueven juntos)
 }

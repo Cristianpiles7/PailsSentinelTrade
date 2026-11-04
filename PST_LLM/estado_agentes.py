@@ -35,22 +35,49 @@ def _primera_frase(texto, n=140):
     return texto if len(texto) <= n else texto[: n - 1].rstrip() + "…"
 
 
-def _abiertas_scalping():
-    if not registro.SCALPING_DB.is_file():
-        return {}
-    con = sqlite3.connect(f"file:{registro.SCALPING_DB}?mode=ro", uri=True, timeout=5)
+def _con_scalping():
+    return sqlite3.connect(f"file:{registro.SCALPING_DB}?mode=ro", uri=True, timeout=5)
+
+
+def _filas(con, sql, args=()):
     try:
-        filas = con.execute("SELECT symbol, lado, setup, modo FROM operaciones WHERE estado='abierta'").fetchall()
+        cur = con.execute(sql, args)
+    except sqlite3.OperationalError:          # tabla o columna aun no creada por el agente
+        return []
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, f)) for f in cur.fetchall()]
+
+
+def _orden(o):
+    if not o:
+        return None
+    return {"lado": o["lado"], "tipo": o["tipo"], "precio": o["precio"], "invalidacion": o["invalidacion"],
+            "setup": o["setup"], "confianza": o["confianza"], "ts": o["ts"],
+            "min_restantes": max(0, int((o["expira"] - time.time()) // 60)) if o.get("expira") else None}
+
+
+def _abiertas_y_ordenes():
+    """({simbolo: operacion abierta}, {simbolo: orden pendiente}) del scalping."""
+    if not registro.SCALPING_DB.is_file():
+        return {}, {}
+    con = _con_scalping()
+    try:
+        abiertas = {f["symbol"]: f for f in _filas(con, "SELECT * FROM operaciones WHERE estado='abierta'")}
+        ordenes = {f["symbol"]: _orden(f) for f in _filas(con, "SELECT * FROM ordenes WHERE estado='pendiente' ORDER BY id")}
     finally:
         con.close()
-    return {s: {"lado": l, "setup": st, "modo": m} for s, l, st, m in filas}
+    return abiertas, ordenes
 
 
-def _estado_scalping(symbol, crudo, abierta):
+def _estado_scalping(symbol, crudo, abierta, orden=None):
     e = {"agente": "scalping", "regimen": crudo.get("regimen"), "ts": crudo.get("ts"),
-         "setup": crudo.get("setup"), "texto": _primera_frase(crudo.get("razon"))}
+         "setup": crudo.get("setup"), "texto": _primera_frase(crudo.get("razon")),
+         "esperando": _primera_frase(crudo.get("esperando"), 60) or None, "orden": orden}
     if abierta:
-        e.update(estado="posicion", lado=abierta["lado"], setup=abierta["setup"] or e["setup"], modo=abierta["modo"])
+        e.update(estado="posicion", lado=abierta["lado"], setup=abierta["setup"] or e["setup"], modo=abierta["modo"],
+                 regimen=abierta.get("regimen") or e["regimen"])
+    elif orden:
+        e.update(estado="orden", lado=orden["lado"], setup=orden["setup"] or e["setup"])
     elif crudo.get("bloqueado"):
         e.update(estado="bloqueado", texto=_primera_frase(crudo.get("motivo")))
     elif crudo.get("accion") in ("buy", "sell") and crudo.get("motivo"):
@@ -87,11 +114,11 @@ def _calcular(simbolos):
         crudos = json.loads(ESTADO_SCALPING.read_text(encoding="utf-8")) if ESTADO_SCALPING.is_file() else {}
     except (ValueError, OSError):
         crudos = {}
-    abiertas = _abiertas_scalping()
+    abiertas, ordenes = _abiertas_y_ordenes()
     resto = []
     for s in simbolos:
         if s in con_scalping:
-            out[s] = _estado_scalping(s, crudos.get(s) or {}, abiertas.get(s))
+            out[s] = _estado_scalping(s, crudos.get(s) or {}, abiertas.get(s), ordenes.get(s))
         else:
             resto.append(s)
     if resto:
@@ -107,7 +134,7 @@ def _calcular(simbolos):
     for e in out.values():
         edad = _edad_s(e.get("ts"))
         e["edad_s"] = int(edad) if edad is not None else None
-        if e["estado"] not in ("posicion", "sin_dato") and edad is not None and edad > VIEJO_S:
+        if e["estado"] not in ("posicion", "orden", "sin_dato") and edad is not None and edad > VIEJO_S:
             e["estado"] = "parado"
     return out
 
@@ -123,3 +150,33 @@ def estados(simbolos):
         datos = _cache["datos"]
     _cache.update(t=time.time(), datos=datos)
     return datos
+
+
+def detalle_scalping(symbol):
+    """Lo que el scalping ve de un simbolo, para la tarjeta del detalle: estado, posicion, orden pendiente,
+    ultimas decisiones y ordenes, y el resultado de hoy. {'scalping': False} si el simbolo no es de scalping."""
+    if symbol not in registro.simbolos_con("scalping"):
+        return {"scalping": False}
+    estado = _calcular([symbol]).get(symbol)
+    out = {"scalping": True, "symbol": symbol, "estado": estado, "posicion": None, "decisiones": [], "ordenes": [], "hoy": None}
+    if not registro.SCALPING_DB.is_file():
+        return out
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    con = _con_scalping()
+    try:
+        pos = _filas(con, "SELECT lado, modo, abierta, precio, sl, tp, dist, setup, regimen, motivo_entrada, invalidacion, "
+                          "be_movido, origen, mfe_r, mae_r FROM operaciones WHERE estado='abierta' AND symbol=? "
+                          "ORDER BY id DESC LIMIT 1", (symbol,))
+        out["posicion"] = pos[0] if pos else None
+        out["decisiones"] = _filas(con, "SELECT ts, accion, regimen, setup, esperando, razon, confianza, resultado, "
+                                        "duracion_s FROM decisiones WHERE symbol=? AND llamada=1 ORDER BY id DESC LIMIT 8",
+                                   (symbol,))
+        out["ordenes"] = _filas(con, "SELECT ts, lado, tipo, precio, invalidacion, setup, estado, resultado, resuelta "
+                                     "FROM ordenes WHERE symbol=? ORDER BY id DESC LIMIT 6", (symbol,))
+        h = _filas(con, "SELECT COUNT(*) AS ops, COALESCE(SUM(r_real), 0) AS r, "
+                        "SUM(CASE WHEN r_real > 0 THEN 1 ELSE 0 END) AS ganadoras FROM operaciones "
+                        "WHERE estado='cerrada' AND symbol=? AND cerrada >= ?", (symbol, hoy))
+        out["hoy"] = h[0] if h else None
+    finally:
+        con.close()
+    return out

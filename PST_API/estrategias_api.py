@@ -30,6 +30,7 @@ if _LLM not in sys.path:
 import config_store   # noqa: E402  (PST_LLM/config_store.py)
 import registro       # noqa: E402  (PST_LLM/registro.py)
 import scalping_proceso  # noqa: E402  (PST_LLM/scalping_proceso.py)
+import estado_agentes  # noqa: E402  (PST_LLM/estado_agentes.py)
 
 router = APIRouter(tags=["Estrategias"])
 logger = logging.getLogger("PST-Config")
@@ -155,6 +156,12 @@ async def guardar_simbolo(estrategia: str, symbol: str, body: CambiosRequest):
 @router.get("/api/estrategias/scalping/estado")
 async def estado_scalping():
     return await asyncio.to_thread(scalping_proceso.estado)
+
+
+@router.get("/api/estrategias/scalping/detalle/{symbol}")
+async def detalle_scalping(symbol: str):
+    """Lo que el agente de scalping ve de un simbolo (tarjeta del detalle). {'scalping': false} si no es suyo."""
+    return await asyncio.to_thread(estado_agentes.detalle_scalping, symbol)
 
 
 @router.post("/api/estrategias/scalping/arrancar")

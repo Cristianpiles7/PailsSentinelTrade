@@ -25,6 +25,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import numpy as np
@@ -66,7 +67,20 @@ SCHEMA = {
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "regimen": {"type": "string", "enum": REGIMENES},
                     "setup": {"type": "string", "enum": ["breakout", "pullback", "rechazo_nivel", "reversion", "ninguno"]},
-                    "esperando": {"type": "string"},
+                    "esperando": {"type": "string", "maxLength": 80},
+                    "orden": {
+                        "type": "object",
+                        "properties": {
+                            "side": {"type": "string", "enum": ["buy", "sell"]},
+                            "price": {"type": "number"},
+                            "invalidacion": {"type": "number"},
+                            "setup": {"type": "string", "enum": ["breakout", "pullback", "rechazo_nivel", "reversion"]},
+                            "sl_atr_mult": {"type": "number", "minimum": 1.0, "maximum": 2.0},
+                            "tp_r": {"type": "number", "minimum": 1.0, "maximum": 3.0},
+                            "valid_min": {"type": "number", "minimum": 2, "maximum": 30},
+                        },
+                        "required": ["side", "price", "invalidacion"],
+                    },
                     "invalidacion": {"type": "number"},
                     "reason": {"type": "string"},
                 },
@@ -91,8 +105,15 @@ buy or sell. With an open position choose hold or close.
   Range setups (reversion, rechazo_nivel): 1.2 to 2.0. The system clamps it to these ranges.
 - 'regimen': the market regime you read: tendencia_fuerte, tendencia, rango or ruptura. Always required.
 - 'setup': the pattern you trade: breakout, pullback, rechazo_nivel or reversion. 'ninguno' when you hold without one.
-- 'esperando': with hold and no position, what you are waiting for to enter, in SPANISH, a few words with the
-  price (e.g. "retroceso a la EMA20 de M1 cerca de 21450 para comprar"). Empty when nothing is close.
+- 'orden': optional, only with hold and no position. A pending entry that the system triggers by itself, at
+  tick speed, when price reaches 'price': {side, price, invalidacion, setup, sl_atr_mult, tp_r, valid_min}.
+  Your answer takes seconds to arrive, so when the setup needs price to reach a level (break of a pause
+  high/low, touch of the M1 EMA20, a range extreme) leave the order there instead of waiting for the next call.
+  A buy above the current price triggers on the breakout; a buy below triggers on the pullback (same for sell).
+  If price trades through 'invalidacion' first, the order is cancelled. 'valid_min' 2 to 30, default 10.
+  The state shows your current 'pending_order': repeat it to keep it, change it, or leave 'orden' out to cancel it.
+- 'esperando': with hold, what you wait for, in SPANISH, at most 8 words with the price
+  (e.g. "compra si rompe 53089", "venta en rechazo de 7692"). Empty when nothing is close.
 - 'invalidacion': the price at which your thesis is wrong. Required for buy and sell.
 - 'reason': one short sentence, in English, naming the structure you trade.
 
@@ -130,16 +151,26 @@ _ULT_MOTIVO = {}        # simbolo -> ultimo motivo de no llamar al modelo
 leer_config = scalping_config.leer
 
 
+_ULT_SIMBOLOS = {"lista": None}
+
+
 def simbolos_activos():
-    """Simbolos con estrategia `scalping` en la BBDD, dentro de la lista permitida. Se relee en cada vuelta."""
-    return [s for s in registro.simbolos_con("scalping") if s in SIMBOLOS_PERMITIDOS]
+    """Simbolos con estrategia `scalping` en la BBDD, dentro de la lista permitida. Se relee en cada vuelta.
+    Si la BBDD central falla (bloqueada o dañada), sigue con la ultima lista leida: sin eso, un 'database is
+    locked' tumbaba el proceso entero con posiciones abiertas (4 nov 2026)."""
+    try:
+        _ULT_SIMBOLOS["lista"] = [s for s in registro.simbolos_con("scalping") if s in SIMBOLOS_PERMITIDOS]
+    except Exception as e:
+        print(f"[scalping] no pude leer los simbolos de la BBDD ({e}); sigo con {_ULT_SIMBOLOS['lista']}", flush=True)
+    return _ULT_SIMBOLOS["lista"] or []
 
 
 # Columnas añadidas despues de la primera version: se agregan a una BBDD existente sin perder su historia.
 COLUMNAS_NUEVAS = {
     "decisiones": {"setup": "TEXT", "invalidacion": "REAL", "regimen": "TEXT", "esperando": "TEXT"},
     "operaciones": {"setup": "TEXT", "motivo_entrada": "TEXT", "invalidacion": "REAL", "be_movido": "INTEGER DEFAULT 0",
-                    "regimen": "TEXT"},
+                    "regimen": "TEXT", "origen": "TEXT", "mfe_r": "REAL", "mae_r": "REAL"},
+    "sombras": {"origen": "TEXT", "motivo": "TEXT", "setup": "TEXT"},
 }
 
 
@@ -169,6 +200,10 @@ def db():
         CREATE TABLE IF NOT EXISTS sombras (
             id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, ts TEXT, epoch INTEGER, lado TEXT, precio REAL,
             sl REAL, tp REAL, dist REAL, estado TEXT, motivo_cierre TEXT, r_real REAL);
+        CREATE TABLE IF NOT EXISTS ordenes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, ts TEXT, modo TEXT, lado TEXT, tipo TEXT,
+            precio REAL, invalidacion REAL, setup TEXT, regimen TEXT, sl_atr REAL, tp_r REAL, confianza REAL,
+            razon TEXT, atr REAL, expira REAL, estado TEXT, resuelta TEXT, resultado TEXT);
     """)
     _migrar(con)
     return con
@@ -261,6 +296,7 @@ def estado_llm(con, symbol, snap, cfg, pos_abierta):
         "symbol": symbol, "call_interval_s": cfg["cadencia_s"], "max_hold_min": cfg["max_hold_min"],
         "spread_price": round(float(tick.ask - tick.bid), snap["info"].digits),
         "timeframes": snap["marcos"], "niveles": snap["niveles"], "position": None,
+        "pending_order": _orden_para_modelo(orden_pendiente(con, symbol)),
         "day_r": round(r_del_dia(con), 2),
         "own_history": [{"lado": o["lado"], "setup": o["setup"], "tesis": o["motivo_entrada"], "r": o["r_real"],
                          "regimen": o["regimen"], "cierre": o["motivo_cierre"]} for o in abiertas_recientes(con, symbol)],
@@ -305,14 +341,20 @@ def repartir_uso(uso, n):
     return {k: (v if k == "duration_s" or v is None else v / n) for k, v in uso.items()}
 
 
+def limitar_sl_tp(cfg, sl_atr, tp_r, setup):
+    """Stop (en ATR de M1) y objetivo (en R) dentro de los rangos de la config. Reversion tiene su rango de objetivo."""
+    sl_atr = min(max(float(sl_atr or cfg["sl_atr"][0]), cfg["sl_atr"][0]), cfg["sl_atr"][1])
+    rango_tp = cfg["tp_r_reversion"] if setup in SETUPS_REVERSION else cfg["tp_r"]
+    tp_r = min(max(float(tp_r or rango_tp[0]), rango_tp[0]), rango_tp[1])
+    return sl_atr, tp_r
+
+
 def calcular(mt5, symbol, lado, snap, cfg, sl_atr, tp_r, cuenta, setup=None):
     """Orden concreta con los limites duros. Devuelve (orden, None) o (None, motivo)."""
     tick, info, atr = snap["tick"], snap["info"], snap["ind"]["M1"]["atr"]
     buy = lado == "buy"
     precio = tick.ask if buy else tick.bid
-    sl_atr = min(max(float(sl_atr or cfg["sl_atr"][0]), cfg["sl_atr"][0]), cfg["sl_atr"][1])
-    rango_tp = cfg["tp_r_reversion"] if setup in SETUPS_REVERSION else cfg["tp_r"]
-    tp_r = min(max(float(tp_r or rango_tp[0]), rango_tp[0]), rango_tp[1])
+    sl_atr, tp_r = limitar_sl_tp(cfg, sl_atr, tp_r, setup)
     dist = atr * sl_atr
     spread = tick.ask - tick.bid
     if spread > cfg["max_spread_sobre_stop"] * dist:
@@ -341,7 +383,7 @@ def calcular(mt5, symbol, lado, snap, cfg, sl_atr, tp_r, cuenta, setup=None):
             "digits": info.digits}, None
 
 
-def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
+def abrir(mt5, con, cfg, symbol, d, snap, cuenta, origen="mercado"):
     if len(abiertas(con)) >= cfg["max_abiertas"]:
         return False, f"tope de {cfg['max_abiertas']} operaciones abiertas"
     if r_del_dia(con) <= -cfg["max_perdida_dia_r"]:
@@ -376,11 +418,11 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
             time.sleep(0.5)
         ticket = max(pos, key=lambda p: p.time).ticket if pos else None   # None: vigilar_live lo recupera
     con.execute("""INSERT INTO operaciones (symbol, modo, lado, abierta, epoch_abre, precio, sl, tp, dist, lotes,
-                   riesgo_eur, ticket, estado, coste_r, setup, motivo_entrada, invalidacion, regimen)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'abierta',?,?,?,?,?)""",
+                   riesgo_eur, ticket, estado, coste_r, setup, motivo_entrada, invalidacion, regimen, origen, mfe_r, mae_r)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'abierta',?,?,?,?,?,?,0,0)""",
                 (symbol, modo, o["lado"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), o["epoch"], o["precio"],
                  o["sl"], o["tp"], o["dist"], o["lotes"], o["riesgo_eur"], ticket, o["coste_r"],
-                 d.get("setup"), d.get("reason"), inv, d.get("regimen")))
+                 d.get("setup"), d.get("reason"), inv, d.get("regimen"), origen))
     con.commit()
     return True, (f"{modo.upper()} {o['lado']} {o['lotes']:.2f} lotes @ {o['precio']:.{o['digits']}f} · "
                   f"SL {o['sl']:.{o['digits']}f} · TP {o['tp']:.{o['digits']}f} · riesgo ~{o['riesgo_eur']:.0f} EUR · "
@@ -526,9 +568,160 @@ def registrar_sombras(con, cfg, symbol, snap, ts):
         precio = tick.ask if buy else tick.bid
         sl = precio - dist if buy else precio + dist
         tp = precio + dist * tp_r if buy else precio - dist * tp_r
-        con.execute("""INSERT INTO sombras (symbol, ts, epoch, lado, precio, sl, tp, dist, estado)
-                       VALUES (?,?,?,?,?,?,?,?,'abierta')""", (symbol, ts, tick.time, lado, precio, sl, tp, dist))
+        con.execute("""INSERT INTO sombras (symbol, ts, epoch, lado, precio, sl, tp, dist, estado, origen)
+                       VALUES (?,?,?,?,?,?,?,?,'abierta','hold')""", (symbol, ts, tick.time, lado, precio, sl, tp, dist))
     con.commit()
+
+
+def registrar_sombra_frenada(con, cfg, symbol, snap, d, motivo):
+    """El modelo pidio entrar y un limite lo freno (confianza, spread, tope...). Se sigue esa entrada como si se
+    hubiera hecho, con su lado, stop y objetivo, para saber si el limite quita perdedoras o ganadoras."""
+    tick = snap["tick"]
+    lado = d.get("action")
+    if lado not in ("buy", "sell"):
+        return
+    sl_atr, tp_r = limitar_sl_tp(cfg, d.get("sl_atr_mult"), d.get("tp_r"), d.get("setup"))
+    dist = snap["ind"]["M1"]["atr"] * sl_atr
+    buy = lado == "buy"
+    precio = tick.ask if buy else tick.bid
+    sl = precio - dist if buy else precio + dist
+    tp = precio + dist * tp_r if buy else precio - dist * tp_r
+    con.execute("""INSERT INTO sombras (symbol, ts, epoch, lado, precio, sl, tp, dist, estado, origen, motivo, setup)
+                   VALUES (?,?,?,?,?,?,?,?,'abierta','frenada',?,?)""",
+                (symbol, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), tick.time, lado, precio, sl, tp, dist,
+                 str(motivo)[:200], d.get("setup")))
+    con.commit()
+
+
+def actualizar_excursion(mt5, con, fila):
+    """Lo maximo que fue a favor (mfe_r) y en contra (mae_r) una operacion abierta, en R, con las velas M1
+    desde su apertura. Sirve para ajustar objetivo y stop con datos (p. ej. llegan a +1,5 R y vuelven al stop)."""
+    velas = mt5.copy_rates_from_pos(fila["symbol"], mt5.TIMEFRAME_M1, 0, 120)
+    vs = [v for v in (velas if velas is not None else []) if int(v["time"]) > fila["epoch_abre"]]
+    if not vs:
+        return
+    alto = max(float(v["high"]) for v in vs)
+    bajo = min(float(v["low"]) for v in vs)
+    buy = fila["lado"] == "buy"
+    mfe = r_de_precio(fila, alto if buy else bajo)
+    mae = r_de_precio(fila, bajo if buy else alto)
+    tope = abs(fila["tp"] - fila["precio"]) / fila["dist"] if fila["dist"] else 3.0
+    mfe = max(float(fila.get("mfe_r") or 0.0), min(max(mfe, 0.0), tope))
+    mae = min(float(fila.get("mae_r") or 0.0), max(min(mae, 0.0), -1.0))
+    fila["mfe_r"], fila["mae_r"] = mfe, mae
+    con.execute("UPDATE operaciones SET mfe_r=?, mae_r=? WHERE id=?", (round(mfe, 3), round(mae, 3), fila["id"]))
+    con.commit()
+
+
+def _filas(con, sql, args=()):
+    cur = con.execute(sql, args)
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, f)) for f in cur.fetchall()]
+
+
+def orden_pendiente(con, symbol):
+    filas = _filas(con, "SELECT * FROM ordenes WHERE estado='pendiente' AND symbol=? ORDER BY id DESC LIMIT 1", (symbol,))
+    return filas[0] if filas else None
+
+
+def _orden_para_modelo(o):
+    if not o:
+        return None
+    return {"side": o["lado"], "type": o["tipo"], "price": o["precio"], "invalidacion": o["invalidacion"],
+            "setup": o["setup"], "sl_atr_mult": o["sl_atr"], "tp_r": o["tp_r"],
+            "minutes_left": max(0, int((o["expira"] - time.time()) // 60))}
+
+
+def resolver_orden(con, oid, estado, resultado):
+    con.execute("UPDATE ordenes SET estado=?, resuelta=?, resultado=? WHERE id=?",
+                (estado, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(resultado)[:300], oid))
+    con.commit()
+
+
+def gestionar_orden(con, cfg, symbol, d, snap, ts):
+    """Tras cada decision sin posicion. La 'orden' de un hold sustituye a la pendiente (o la mantiene si es la
+    misma); sin 'orden', la pendiente se cancela. Devuelve un texto para el registro o None."""
+    previa = orden_pendiente(con, symbol)
+    o = d.get("orden") if d.get("action", "hold") == "hold" else None
+    if not isinstance(o, dict) or o.get("side") not in ("buy", "sell") or not o.get("price"):
+        if previa:
+            resolver_orden(con, previa["id"], "cancelada",
+                           "el agente no la repitio" if d.get("action", "hold") == "hold" else f"el agente eligio {d.get('action')}")
+            return "orden cancelada"
+        return None
+    tick, atr, digits = snap["tick"], snap["ind"]["M1"]["atr"], snap["info"].digits
+    lado, precio = o["side"], float(o["price"])
+    inv = float(o["invalidacion"]) if o.get("invalidacion") else None
+    buy = lado == "buy"
+    ref = tick.ask if buy else tick.bid
+    tipo = "stop" if (precio > ref if buy else precio < ref) else "limit"
+    motivo = None
+    if abs(precio - ref) > cfg["orden_max_dist_atr"] * atr:
+        motivo = f"precio {precio} a {abs(precio - ref) / atr:.1f} ATR del actual (maximo {cfg['orden_max_dist_atr']})"
+    elif inv is None or (inv >= precio if buy else inv <= precio):
+        motivo = f"invalidacion {inv} del lado equivocado para {lado} en {precio}"
+    valido = min(max(float(o.get("valid_min") or 10), 2), cfg["orden_max_min"])
+    setup = o.get("setup") or d.get("setup")
+    if previa and not motivo and previa["lado"] == lado and abs(previa["precio"] - precio) <= 0.1 * atr \
+            and previa["invalidacion"] == inv:
+        con.execute("UPDATE ordenes SET expira=? WHERE id=?", (time.time() + valido * 60, previa["id"]))
+        con.commit()
+        return f"orden mantenida: {lado} {tipo} {precio:.{digits}f}"
+    if previa:
+        resolver_orden(con, previa["id"], "cancelada", "sustituida por otra orden")
+    con.execute("""INSERT INTO ordenes (symbol, ts, modo, lado, tipo, precio, invalidacion, setup, regimen, sl_atr, tp_r,
+                   confianza, razon, atr, expira, estado, resultado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (symbol, ts, "live" if cfg["live"] else "sim", lado, tipo, precio, inv, setup, d.get("regimen"),
+                 o.get("sl_atr_mult") or d.get("sl_atr_mult"), o.get("tp_r") or d.get("tp_r"), d.get("confidence"),
+                 d.get("reason"), atr, time.time() + valido * 60, "rechazada" if motivo else "pendiente", motivo))
+    con.commit()
+    return f"orden rechazada: {motivo}" if motivo else f"orden {lado} {tipo} {precio:.{digits}f} · inv {inv} · {valido:.0f} min"
+
+
+def revisar_ordenes(mt5, con, cfg, cuenta):
+    """Cada pocos segundos, sin el modelo: dispara, caduca o invalida las ordenes pendientes con el tick actual."""
+    for o in _filas(con, "SELECT * FROM ordenes WHERE estado='pendiente'"):
+        symbol = o["symbol"]
+        if time.time() > o["expira"]:
+            resolver_orden(con, o["id"], "caducada", "no llego al precio a tiempo")
+            continue
+        if abiertas(con, symbol):
+            resolver_orden(con, o["id"], "cancelada", "ya hay posicion en el simbolo")
+            continue
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            continue
+        buy = o["lado"] == "buy"
+        ref = tick.ask if buy else tick.bid           # precio al que se entraria
+        salida = tick.bid if buy else tick.ask         # precio que tocaria la invalidacion
+        if o["invalidacion"] is not None and ((salida <= o["invalidacion"]) if buy else (salida >= o["invalidacion"])):
+            resolver_orden(con, o["id"], "invalidada", f"el precio cruzo la invalidacion {o['invalidacion']}")
+            continue
+        if o["tipo"] == "stop":
+            disparo = ref >= o["precio"] if buy else ref <= o["precio"]
+        else:
+            disparo = ref <= o["precio"] if buy else ref >= o["precio"]
+        if not disparo:
+            continue
+        bloqueo = calendario.bloqueo_entrada(symbol)
+        if bloqueo[0]:
+            resolver_orden(con, o["id"], "rechazada", bloqueo[1])
+            continue
+        if enfriamiento_tras_stop(con, symbol, cfg):
+            resolver_orden(con, o["id"], "rechazada", "enfriamiento tras stop")
+            continue
+        info = mt5.symbol_info(symbol)
+        snap = {"tick": tick, "info": info, "ind": {"M1": {"atr": o["atr"]}}}
+        d = {"action": o["lado"], "sl_atr_mult": o["sl_atr"], "tp_r": o["tp_r"], "confidence": o["confianza"],
+             "setup": o["setup"], "regimen": o["regimen"], "reason": o["razon"], "invalidacion": o["invalidacion"]}
+        ok, res = abrir(mt5, con, cfg, symbol, d, snap, cuenta, origen="orden")
+        resolver_orden(con, o["id"], "disparada" if ok else "rechazada", res)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{ts}] {symbol} ORDEN {o['lado'].upper()} {o['tipo']} {o['precio']} -> {res}", flush=True)
+        if ok:
+            avisar(f"SCALPING · orden disparada {symbol} {o['lado'].upper()} ({o['tipo']} {o['precio']}) · {res}")
+        else:
+            registrar_sombra_frenada(con, cfg, symbol, snap, d, res)
 
 
 def vigilar_sombras(mt5, con, cfg, symbol, tick):
@@ -664,6 +857,7 @@ def preparar(mt5, con, cfg, symbol):
     modo = "live" if cfg["live"] else "sim"
     # 1. Lo abierto: se vigila antes de decidir nada nuevo. Las sombras de los holds tambien se siguen.
     for fila in abiertas(con, symbol):
+        actualizar_excursion(mt5, con, fila)
         if fila["modo"] == "sim":
             motivo = vigilar_sim(mt5, con, cfg, fila, snap)
         else:
@@ -711,10 +905,16 @@ def ejecutar(mt5, con, cfg, symbol, d, snap, pos, cuenta, uso, ts):
         ejecutada, resultado = abrir(mt5, con, cfg, symbol, d, snap, cuenta)
         if ejecutada:
             avisar(f"SCALPING · apertura {symbol} {accion.upper()} · {resultado}")
+        else:
+            registrar_sombra_frenada(con, cfg, symbol, snap, d, resultado)
     elif accion in ("buy", "sell") and pos:
         resultado = "ya hay posicion: se ignora abrir"
     if accion == "hold" and not pos:
         registrar_sombras(con, cfg, symbol, snap, ts)
+    if not pos:
+        texto_orden = gestionar_orden(con, cfg, symbol, d, snap, ts)
+        if texto_orden:
+            resultado = texto_orden if resultado == "-" else f"{resultado} · {texto_orden}"
     con.execute("""INSERT INTO decisiones (ts, symbol, modo, llamada, accion, confianza, sl_atr, tp_r, razon, setup,
                    invalidacion, ejecutada, resultado, coste_usd, tokens_in, tokens_out, duracion_s, regimen, esperando)
                    VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -729,15 +929,23 @@ def ejecutar(mt5, con, cfg, symbol, d, snap, pos, cuenta, uso, ts):
           f"coste={uso.get('cost_usd')}", flush=True)
 
 
-def decidir_lote(mt5, con, cfg, pendientes, cuenta):
-    """Una sola llamada al modelo para todos los simbolos pendientes; luego se ejecuta la decision de cada uno."""
+def lanzar_lote(con, cfg, pendientes, ejecutor):
+    """Una sola llamada al modelo para todos los simbolos pendientes, en un hilo aparte: mientras el modelo
+    piensa, el bucle sigue vigilando posiciones y disparando ordenes. El hilo solo ejecuta el CLI (sin MT5 ni BBDD)."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    modo = "live" if cfg["live"] else "sim"
     for symbol, snap, _ in pendientes:
         tick = snap["tick"]
         _ULTIMA_LLAMADA[symbol] = {"precio": (tick.bid + tick.ask) / 2, "t": time.time(), "m5": snap["m5_epoch"]}
+    estados = [estado_llm(con, s, snap, cfg, pos) for s, snap, pos in pendientes]
+    return {"futuro": ejecutor.submit(preguntar, estados, cfg), "pendientes": pendientes, "ts": ts}
+
+
+def terminar_lote(mt5, con, cfg, vuelo, cuenta):
+    """Aplica la respuesta del modelo con el precio y la posicion de AHORA (la llamada tarda segundos)."""
+    ts, pendientes = vuelo["ts"], vuelo["pendientes"]
+    modo = "live" if cfg["live"] else "sim"
     try:
-        lote, uso = preguntar([estado_llm(con, s, snap, cfg, pos) for s, snap, pos in pendientes], cfg)
+        lote, uso = vuelo["futuro"].result()
     except Exception as e:
         print(f"[{ts}] error del agente: {e}", flush=True)
         if time.time() - _ULT_AVISO_ERROR["t"] > 1800:
@@ -750,7 +958,12 @@ def decidir_lote(mt5, con, cfg, pendientes, cuenta):
         return
     por_simbolo = decisiones_por_simbolo(lote)
     reparto = repartir_uso(uso, len(pendientes))
-    for symbol, snap, pos in pendientes:
+    for symbol, snap, _ in pendientes:
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is not None:
+            snap["tick"] = tick
+        pos = abiertas(con, symbol)
+        pos = pos[0] if pos else None
         d = por_simbolo.get(symbol, {"action": "hold", "reason": "el modelo no contesto a este simbolo"})
         ejecutar(mt5, con, cfg, symbol, d, snap, pos, cuenta, reparto, ts)
 
@@ -776,6 +989,17 @@ def resumen():
                                ROUND(AVG(CASE WHEN motivo_cierre='objetivo' THEN 1.0 ELSE 0 END),2)
                                FROM sombras WHERE estado='cerrada' GROUP BY lado ORDER BY lado"""):
         print(f"  {fila[0]:<5} ops {fila[1]:>4}  R medio {fila[2]}  objetivo {fila[3]}")
+    print("Entradas frenadas por un limite, medidas como si se hubieran hecho:")
+    for fila in con.execute("""SELECT substr(motivo, 1, 30), COUNT(*), ROUND(AVG(r_real),3) FROM sombras
+                               WHERE origen='frenada' AND estado='cerrada' GROUP BY 1 ORDER BY 2 DESC"""):
+        print(f"  {fila[0]:<30} ops {fila[1]:>4}  R medio {fila[2]}")
+    print("Ordenes pendientes por estado:")
+    for fila in con.execute("SELECT estado, COUNT(*) FROM ordenes GROUP BY 1 ORDER BY 2 DESC"):
+        print(f"  {fila[0]:<11} {fila[1]:>4}")
+    print("Excursion media (cerradas): a favor / en contra, en R:")
+    for fila in con.execute("""SELECT COALESCE(setup,'(sin setup)'), COUNT(*), ROUND(AVG(mfe_r),2), ROUND(AVG(mae_r),2)
+                               FROM operaciones WHERE estado='cerrada' AND mfe_r IS NOT NULL GROUP BY 1"""):
+        print(f"  {fila[0]:<14} ops {fila[1]:>3}  a favor {fila[2]}  en contra {fila[3]}")
     print("Ultimas decisiones:")
     for fila in con.execute("SELECT ts, symbol, modo, accion, resultado FROM decisiones ORDER BY id DESC LIMIT 8"):
         print("  ", fila)
@@ -800,6 +1024,9 @@ def main():
         con = db()
         print(f"[scalping] cuenta {cuenta.login} · magic {MAGIC} · simbolos se leen de la BBDD (estrategia scalping)", flush=True)
         avisar(f"SCALPING · agente arrancado (cuenta {cuenta.login}, {'DEMO' if es_demo else 'NO demo'})")
+        ejecutor = ThreadPoolExecutor(max_workers=1)
+        vuelo = None            # llamada al modelo en curso: {"futuro", "pendientes", "ts"}
+        ult_vigilancia = 0.0
         while True:
             cfg = leer_config()
             if cfg["live"] and not es_demo:
@@ -811,37 +1038,55 @@ def main():
                     break
                 time.sleep(60)
                 continue
-            inicio = time.time()
             cuenta = mt5.account_info()
-            simbolos = simbolos_activos()
-            if not simbolos:
-                print("[scalping] ningun simbolo con estrategia scalping", flush=True)
-            pendientes = []
-            for symbol in simbolos:
-                if not mt5.symbol_select(symbol, True):
-                    print(f"[scalping] {symbol} no disponible", flush=True)
-                    continue
+            # 1. Ordenes pendientes: en cada vuelta corta, con el tick, sin esperar al modelo.
+            try:
+                revisar_ordenes(mt5, con, cfg, cuenta)
+            except Exception as e:
+                print(f"[scalping] ordenes error: {e}", flush=True)
+            # 2. Respuesta del modelo lista: se aplica y se vuelve a vigilar enseguida (sin esperar la cadencia).
+            if vuelo and vuelo["futuro"].done():
                 try:
-                    listo = preparar(mt5, con, cfg, symbol)
-                    if listo:
-                        pendientes.append(listo)
-                except Exception as e:           # un simbolo que falla no para a los demas
-                    print(f"[scalping] {symbol} error: {e}", flush=True)
-            if pendientes:
-                ok, why, _ = lt.cuota_ok()       # solo se mira si hay algo que decidir; no en cada vuelta
-                if not ok:
-                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    for symbol, _, _ in pendientes:
-                        sin_llamada(con, symbol, "live" if cfg["live"] else "sim", ts, f"freno de cuota: {why}")
-                else:
+                    terminar_lote(mt5, con, cfg, vuelo, cuenta)
+                except Exception as e:
+                    print(f"[scalping] lote error: {e}", flush=True)
+                vuelo = None
+                ult_vigilancia = 0.0
+            # 3. Vigilancia de lo abierto y puertas; con una llamada en curso no se lanza otra.
+            if time.time() - ult_vigilancia >= cfg["cadencia_vigilancia_s"]:
+                ult_vigilancia = time.time()
+                simbolos = simbolos_activos()
+                if not simbolos:
+                    print("[scalping] ningun simbolo con estrategia scalping", flush=True)
+                pendientes = []
+                for symbol in simbolos:
+                    if not mt5.symbol_select(symbol, True):
+                        print(f"[scalping] {symbol} no disponible", flush=True)
+                        continue
                     try:
-                        decidir_lote(mt5, con, cfg, pendientes, cuenta)
-                    except Exception as e:
-                        print(f"[scalping] lote error: {e}", flush=True)
+                        listo = preparar(mt5, con, cfg, symbol)
+                        if listo and vuelo is None:
+                            pendientes.append(listo)
+                    except Exception as e:           # un simbolo que falla no para a los demas
+                        print(f"[scalping] {symbol} error: {e}", flush=True)
+                if pendientes:
+                    ok, why, _ = lt.cuota_ok()       # solo se mira si hay algo que decidir; no en cada vuelta
+                    if not ok:
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        for symbol, _, _ in pendientes:
+                            sin_llamada(con, symbol, "live" if cfg["live"] else "sim", ts, f"freno de cuota: {why}")
+                    else:
+                        try:
+                            vuelo = lanzar_lote(con, cfg, pendientes, ejecutor)
+                        except Exception as e:
+                            print(f"[scalping] lote error: {e}", flush=True)
             if args.once:
+                if vuelo:
+                    vuelo["futuro"].exception()          # espera a que termine la llamada
+                    terminar_lote(mt5, con, cfg, vuelo, cuenta)
                 break
-            espera = cfg["cadencia_vigilancia_s"] - (time.time() - inicio)
-            time.sleep(max(float(cfg["pausa_minima_s"]), espera))
+            time.sleep(max(0.2, float(cfg["cadencia_disparo_s"])))
+        ejecutor.shutdown(wait=False)
         con.close()
         return 0
     finally:
