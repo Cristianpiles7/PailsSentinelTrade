@@ -234,7 +234,8 @@ function App() {
   const [operaciones, setOperaciones] = useState([])
 
   const [terminalTradesFilter, setTerminalTradesFilter] = useState('ACTIVE') // 'ACTIVE', 'HISTORY', 'ALL'
-  const activeSymbols = symbols.filter(s => s.is_active)
+  // Home: los simbolos activos de la flota y todos los de scalping (su estrategia es fija, aunque el agente este parado)
+  const activeSymbols = symbols.filter(s => s.is_active || llm.agentes.some(a => a.symbol === s.symbol && a.estrategia === 'scalping'))
 
 
 
