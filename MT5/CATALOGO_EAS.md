@@ -120,3 +120,5 @@ para mejoras, 107000–108999 para nuevas). Nada se activa sin el usuario. Ver D
 | Fecha | Agente | EA original / hipótesis | Variante | Qué cambia | Neto € | PF | Ops | DD % | IS € | OOS € | Veredicto |
 |---|---|---|---|---|---:|---:|---:|---:|---:|---:|---|
 | 2026-11-04 | (manual) | Ichimoku_GER40_H1 | parámetros | `InpRiskPercent` 1,0 → 0,5 | +1168,12 | 1,20 | 168 | 7,42 | +824,92 | +324,18 | ✅ APROBADO (= multiplicador ×0,5 en la app) |
+| 2026-11-04 | mejora-eas | GapFill_JP225_D1 | original, más historial | Sin cambios; 5 años (2021-11-01 → 2026-11-01). Historial completo (1293 barras D1, 99 %), pero ninguna op entre 2022-03 y 2024-10 | +227,84 | 1,65 | 20 | 1,77 | −22,97 (3 ops) | +250,79 (17 ops) | ❌ 20 ops < 30, IS < 0 |
+| 2026-11-04 | mejora-eas | GapFill_JP225_D1 | parámetros | `InpGapAtrMult` 0,5 → 0,3 (el CFD cotiza casi 24 h y el gap rara vez llega a 0,5×ATR). Periodo 2024-11-01 → 2026-11-01 | −26,06 | 0,96 | 32 | 3,17 | −224,64 | +203,81 | ❌ PF, Sharpe, IS < 0: los gaps pequeños no se rellenan |

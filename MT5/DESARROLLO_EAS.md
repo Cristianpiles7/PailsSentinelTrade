@@ -155,6 +155,27 @@ posiciones, compilar, backtest (con IS/OOS), latido y estado del gestor.
 - El servidor MCP `pst` necesita `pip install -r requirements-dev.txt` (`mcp` 1.x). Sin `PST_ENTORNO=dev` trabaja
   sobre la BBDD y la carpeta de control de **producción**.
 
+## 9. Taller de EAs (automático)
+
+Dos agentes que corren solos desde el planificador nocturno (`.agents/scheduler.py`, tarea de Windows
+`PST-Flota-Agentes`, 03:00). Prompts en `.agents/prompts/`. Perfil y tools en `.agents/run_agent.py`.
+
+| Agente | Cuándo (puerta, SQL gratis) | Qué hace |
+|---|---|---|
+| `mejora-eas` | Una vez al día. Elige **un** EA no aprobado, el más cercano a aprobar (PF + mitades positivas), que no se haya intentado en 14 días | Diagnostica por qué falla y prueba **máx. 3 variantes** (parámetros con `ea_backtest`+`parametros`, o código como EA nuevo en `Experimental/`, magics 105000–106999). Nunca toca el original |
+| `nuevas-eas` | Domingos, si hay menos de 6 EAs nuevos experimentales sin revisar | **Una** hipótesis nueva pre-registrada, 1–3 símbolos (un EA cada uno, magics 107000–108999) |
+
+- El planificador pasa el EA objetivo y sus cifras en el prompt (`--contexto`) y marca el intento en
+  `ea_eventos` (`taller_mejora`) para no repetirlo.
+- Lo aprobado llega como **propuesta** (`proposals`) y queda en el catálogo (§5). **Activar es del usuario**
+  (salvo que marque `activar` en "qué pueden hacer los agentes").
+- Contra el sobreajuste: diseño por diagnóstico (no barridos), IS para decidir y OOS como prueba final, máx. 3
+  variantes por pasada, se registran todas. Pendiente: tercer tramo nunca visto (walk-forward) si el volumen de
+  variantes crece.
+- Coste: opus; acotado por las puertas y por el freno de la ventana de 5h del planificador (topes en la app).
+- Lanzar a mano: `python .agents/scheduler.py --force mejora-eas` (o `nuevas-eas`). Ver qué haría:
+  `python .agents/scheduler.py --dry-run`.
+
 ## 8. Bitácora
 
 - **2026-11-04** — Arranque. Rama, pruebas de viabilidad, `DESARROLLO_EAS.md` y `CATALOGO_EAS.md`. Portable en
