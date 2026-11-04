@@ -18,6 +18,7 @@ import registro
 import rutas
 
 ESTADO_SCALPING = rutas.AGENTS_DATA_DIR / "llm_scalping_estado.json"
+ESTADO_FLOTA = rutas.AGENTS_DATA_DIR / "llm_flota_estado"      # un JSON por simbolo (lo escribe llm_trader.py)
 CACHE_S = 5
 VIEJO_S = 15 * 60          # una decision de hace mas de esto ya no describe el ahora
 _cache = {"t": 0.0, "datos": {}}
@@ -107,6 +108,35 @@ def _estado_flota(fila):
     return e
 
 
+def _leer_flota(symbol):
+    f = ESTADO_FLOTA / f"{symbol}.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
+    except (ValueError, OSError):
+        return None
+
+
+def _estado_flota_json(crudo):
+    """Estado de un agente de la flota a partir de su JSON publicado (mismas claves que el scalping)."""
+    e = {"agente": "flota", "regimen": crudo.get("regimen"), "ts": crudo.get("ts"), "setup": crudo.get("setup"),
+         "texto": _primera_frase(crudo.get("razon")), "esperando": _primera_frase(crudo.get("esperando"), 60) or None,
+         "orden": crudo.get("orden")}
+    pos, orden = crudo.get("posicion"), crudo.get("orden")
+    if pos:
+        e.update(estado="posicion", lado=pos.get("lado"))
+    elif orden:
+        e.update(estado="orden", lado=orden.get("lado"), setup=orden.get("setup") or e["setup"])
+    elif crudo.get("bloqueado"):
+        e.update(estado="bloqueado", texto=_primera_frase(crudo.get("motivo")))
+    elif crudo.get("accion") in ("buy", "sell") and crudo.get("motivo"):
+        e.update(estado="frenada", lado=crudo["accion"], texto=_primera_frase(crudo.get("motivo")))
+    elif crudo.get("esperando"):
+        e.update(estado="esperando", texto=_primera_frase(crudo["esperando"]))
+    else:
+        e.update(estado="buscando")
+    return e
+
+
 def _calcular(simbolos):
     out = {}
     con_scalping = set(registro.simbolos_con("scalping"))
@@ -121,6 +151,14 @@ def _calcular(simbolos):
             out[s] = _estado_scalping(s, crudos.get(s) or {}, abiertas.get(s), ordenes.get(s))
         else:
             resto.append(s)
+    sin_json = []
+    for s in resto:
+        crudo = _leer_flota(s)
+        if crudo:
+            out[s] = _estado_flota_json(crudo)
+        else:
+            sin_json.append(s)
+    resto = sin_json
     if resto:
         con = sqlite3.connect(f"file:{registro._db_central_path()}?mode=ro", uri=True, timeout=5)
         try:
@@ -179,4 +217,65 @@ def detalle_scalping(symbol):
         out["hoy"] = h[0] if h else None
     finally:
         con.close()
+    return out
+
+
+def _decisiones_flota(symbol, n=8):
+    con = sqlite3.connect(f"file:{registro._db_central_path()}?mode=ro", uri=True, timeout=5)
+    try:
+        filas = _filas(con, "SELECT ts, accion, resultado, respuesta_json, motivo_puerta FROM llm_decisions "
+                            "WHERE symbol=? AND llamado=1 ORDER BY ts DESC LIMIT ?", (symbol, n))
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        h = _filas(con, "SELECT COUNT(*) AS ops, COALESCE(SUM(r_real), 0) AS r, "
+                        "SUM(CASE WHEN r_real > 0 THEN 1 ELSE 0 END) AS ganadoras FROM llm_operaciones "
+                        "WHERE symbol=? AND r_real IS NOT NULL AND abierta >= ?", (symbol, hoy))
+    finally:
+        con.close()
+    out = []
+    for f in filas:
+        try:
+            r = json.loads(f["respuesta_json"] or "{}") or {}
+        except ValueError:
+            r = {}
+        out.append({"ts": f["ts"], "accion": f["accion"], "regimen": r.get("regimen"), "setup": r.get("setup"),
+                    "esperando": r.get("esperando"), "razon": r.get("reason"), "confianza": r.get("confidence"),
+                    "resultado": f["resultado"] if f["motivo_puerta"] != "orden pendiente disparada" else "orden disparada"})
+    return out, (h[0] if h else None)
+
+
+def detalle_agente(symbol):
+    """Lo que ve el agente de un simbolo para la tarjeta del detalle, sea scalping o flota.
+    {'tipo': 'scalping'|'flota'|None, ...}. Mismas claves en los dos casos."""
+    if symbol in registro.simbolos_con("scalping"):
+        d = detalle_scalping(symbol)
+        d["tipo"] = "scalping"
+        return d
+    crudo = _leer_flota(symbol)
+    if not crudo:
+        return {"tipo": None, "scalping": False}
+    estado = _estado_flota_json(crudo)
+    edad = _edad_s(estado.get("ts"))
+    estado["edad_s"] = int(edad) if edad is not None else None
+    out = {"tipo": "flota", "scalping": False, "symbol": symbol, "estado": estado, "posicion": None,
+           "decisiones": [], "ordenes": [], "hoy": None, "modo": crudo.get("modo")}
+    pos = crudo.get("posicion")
+    if pos:
+        out["posicion"] = {"lado": pos.get("lado"), "modo": crudo.get("modo"), "precio": pos.get("precio"),
+                           "sl": pos.get("sl"), "tp": pos.get("tp"), "flotante_eur": pos.get("flotante_eur"),
+                           "minutos": pos.get("minutos"), "setup": crudo.get("setup"), "regimen": crudo.get("regimen")}
+    try:
+        out["decisiones"], out["hoy"] = _decisiones_flota(symbol)
+    except sqlite3.Error as e:
+        print(f"[estado_agentes] decisiones de {symbol}: {e}", flush=True)
+    db = crudo.get("db")
+    if db:
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+            try:
+                out["ordenes"] = _filas(con, "SELECT ts, lado, tipo, precio, invalidacion, setup, timeframe, estado, resultado, "
+                                             "resuelta FROM ordenes ORDER BY id DESC LIMIT 6")
+            finally:
+                con.close()
+        except sqlite3.Error:
+            pass
     return out

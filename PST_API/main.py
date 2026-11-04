@@ -238,7 +238,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.7.8",
+    version="2.7.9",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -677,7 +677,7 @@ async def get_symbols():
             sparkline=spark_data,
             strategies=SYMBOL_EA_NAMES.get(sym, []),
             proximidad=proximidad_map.get(sym),
-            agente=agentes_map.get(sym),
+            agente=_agente_con_posicion(agentes_map.get(sym), get_val_tolerant(open_count_map, sym)),
         ))
 
     results.sort(key=lambda x: (not x.market_open, x.symbol))
@@ -1549,6 +1549,14 @@ def _parar_puntuador():
         puntuador.parar()
     except Exception:
         logger.exception("❌ No se pudo parar el agente puntuador")
+
+
+def _agente_con_posicion(agente, abiertas):
+    """El JSON de la flota se escribe en cada vela: si dice 'en posicion' pero MT5 ya no tiene posiciones en el
+    simbolo (cerro por stop u objetivo entre velas), se muestra como buscando."""
+    if agente and agente.get("agente") == "flota" and agente.get("estado") == "posicion" and not abiertas:
+        return {**agente, "estado": "buscando", "lado": None}
+    return agente
 
 
 def _leer_proximidad():

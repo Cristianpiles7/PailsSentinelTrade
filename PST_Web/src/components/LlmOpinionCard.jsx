@@ -3,20 +3,21 @@ import { Bot } from 'lucide-react'
 import { usePollingWhenVisible } from '../hooks/usePolling'
 import { ScalpingOpinion } from './ScalpingOpinion'
 
-// Hueco de inteligencia del grafico: si el simbolo es del scalping, lo que ve el scalping; si no, la flota.
+// Hueco de inteligencia del grafico: lo que ve el agente del simbolo (scalping o flota, con regimen, orden y
+// espera). Si el agente aun no publica ese estado (version anterior), la opinion clasica de la flota.
 export function LlmOpinionCard(props) {
   const { api, API_BASE, symbol } = props
-  const [esScalping, setEsScalping] = useState(null)
+  const [tipo, setTipo] = useState(undefined)
   useEffect(() => {
     let vivo = true
-    setEsScalping(null)
-    api.get(`${API_BASE}/estrategias/scalping/detalle/${encodeURIComponent(symbol)}`)
-      .then(r => { if (vivo) setEsScalping(!!r.data?.scalping) })
-      .catch(() => { if (vivo) setEsScalping(false) })
+    setTipo(undefined)
+    api.get(`${API_BASE}/estrategias/agente/detalle/${encodeURIComponent(symbol)}`)
+      .then(r => { if (vivo) setTipo(r.data?.tipo || null) })
+      .catch(() => { if (vivo) setTipo(null) })
     return () => { vivo = false }
   }, [api, API_BASE, symbol])
-  if (esScalping === null) return null
-  return esScalping ? <ScalpingOpinion {...props} /> : <FlotaOpinionCard {...props} />
+  if (tipo === undefined) return null
+  return tipo ? <ScalpingOpinion {...props} /> : <FlotaOpinionCard {...props} />
 }
 
 // Lo ultimo que dijo el agente LLM de la flota sobre este simbolo.

@@ -164,6 +164,12 @@ async def detalle_scalping(symbol: str):
     return await asyncio.to_thread(estado_agentes.detalle_scalping, symbol)
 
 
+@router.get("/api/estrategias/agente/detalle/{symbol}")
+async def detalle_agente(symbol: str):
+    """Lo que ve el agente (scalping o flota) de un simbolo, para la tarjeta del detalle. tipo None si no hay."""
+    return await asyncio.to_thread(estado_agentes.detalle_agente, symbol)
+
+
 @router.post("/api/estrategias/scalping/arrancar")
 async def arrancar_scalping():
     # La intencion queda guardada: al abrir la app se relanza solo

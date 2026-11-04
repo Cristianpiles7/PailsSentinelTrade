@@ -1785,10 +1785,9 @@ function App() {
 
 
 
-              <div className="bg-[#050505] border border-zinc-800/80 rounded-2xl p-6 shadow-2xl flex flex-col gap-5 overflow-visible transition-all duration-500" style={{ height: '320px' }}>
-
-
-
+              <div className="bg-[#050505] border border-zinc-800/80 rounded-2xl p-6 shadow-2xl flex flex-col gap-5 overflow-visible transition-all duration-500" style={{ minHeight: '320px' }}>
+                {/* Cabecera de pestañas: solo si el simbolo tiene puntuaciones de estrategias (si no, era un hueco vacio) */}
+                {Object.keys(symbols.find(s => s.symbol === selectedSymbol)?.factors_map || {}).length > 0 && (
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0">
 
 
@@ -1939,12 +1938,7 @@ function App() {
 
 
                 </div>
-
-
-
-
-
-
+                )}
 
                 <div className="flex-1 overflow-visible">
 

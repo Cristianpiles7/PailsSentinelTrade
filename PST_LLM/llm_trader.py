@@ -116,6 +116,11 @@ MAX_MISMO_LADO_TOTAL = 5    # y en el mismo lado en total
 _SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 MAX_SPREAD_SOBRE_STOP = 0.15   # se rechaza la orden si el spread supera este % de la distancia al stop
+REGIMENES = ["tendencia_fuerte", "tendencia", "rango", "ruptura"]   # tipo de mercado que el agente nombra (H1/H4)
+SETUPS = ["breakout", "pullback", "reversion", "rechazo_nivel"]
+ORDEN_VALIDA_MIN = (5, 240)    # vida de una orden pendiente, en minutos (defecto 60)
+ORDEN_MAX_DIST_ATR = 2.0       # una orden pendiente no puede estar a mas de esto (ATR de su marco) del precio
+SOMBRA_MAX_H = 24              # una entrada frenada se sigue como mucho estas horas
 
 # Parte FIJA del prompt (formato, costes, cierres, campos). El CRITERIO de entrada va aparte, uno por
 # simbolo, en la BBDD (PST_LLM/prompts.py): lo editas en Ajustes o lo cambia una propuesta aprobada.
@@ -127,19 +132,43 @@ once and YOU decide which timeframe each trade is based on.
 
 OUTPUT
 Reply ONLY with the JSON decision requested by the schema. 'action' is one of hold, buy, sell, close. With no
-open position choose hold, buy or sell; with an open position choose hold or close. Follow the TRADING CRITERIA
-section below to decide whether and where to enter.
+open position choose hold, buy or sell; with an open position choose hold or close. Follow REGIME AND SETUPS
+and the TRADING CRITERIA sections below to decide whether and where to enter.
+- 'regimen': the market regime you read on H1 and H4: tendencia_fuerte, tendencia, rango or ruptura. Always required.
+- 'setup': the pattern you trade or wait for: breakout, pullback, reversion or rechazo_nivel.
+- 'esperando': with hold, what you wait for, IN SPANISH, at most 8 words with the price (e.g. "compra si rompe
+  1.0850", "venta en rechazo de 5420"). Empty when nothing is close.
+- 'orden': optional, only with hold and no position. A pending entry that the system triggers by itself, checked
+  every few seconds, when price reaches 'price': {{side, price, invalidacion, timeframe, sl_atr_mult, tp_r, valid_min}}.
+  You are called once per candle of call_interval, so when the setup needs price to reach a level (break of a
+  pause or of maximo_20, touch of an EMA20, a range extreme) leave the order there instead of waiting for the next
+  call. A buy above the current price triggers on the breakout; a buy below triggers on the pullback (same for
+  sell). If price trades through 'invalidacion' first, the order is cancelled. 'price' at most {ORDEN_MAX_DIST_ATR:.0f}
+  ATRs (of the order timeframe) from the current price. 'valid_min' {ORDEN_VALIDA_MIN[0]} to {ORDEN_VALIDA_MIN[1]}, default 60.
+  The state shows your current 'pending_order': repeat it to keep it, change it, or leave 'orden' out to cancel it.
 - 'timeframe': the timeframe whose structure justifies the trade, one of {", ".join(STOP_TFS)}. The stop distance
   (sl_atr_mult x ATR) is measured on THAT timeframe's ATR, so a wider timeframe means a wider stop and a longer
   holding time. Shorter timeframes (M1, M5) stay in the snapshot to time the entry but cannot carry the stop.
 - 'sl_atr_mult': stop distance in ATRs of that timeframe, between {SL_MULT[0]} and {SL_MULT[1]}.
 - 'tp_r': take-profit as a multiple of the risk, between {TP_R[0]} and {TP_R[1]}.
 - 'confidence': between 0 and 1.
-- 'reason': IN SPANISH, labelled lines separated by newlines, at most 700 characters, in this order:
-  'Tendencia:' (higher timeframes and their direction), 'Estructura:' (the levels and indicator readings you
-  used, naming each timeframe and the actual numbers from the snapshot), 'Decisión:' (what you do and why),
-  'Riesgo:' (what would prove the idea wrong, or why you stay out). Be specific and concrete, no generic phrases.
+- 'reason': IN SPANISH, two labelled lines separated by a newline, at most 350 characters in total:
+  'Lectura:' (regime, the structure and the actual numbers you use, naming each timeframe) and 'Riesgo:' (what
+  would prove the idea wrong, or why you stay out). Be specific and concrete, no generic phrases.
 Values outside these ranges are clamped by the system, not rejected: stay inside them.
+
+REGIME AND SETUPS
+Classify the market first with H1 and H4 (closed candles) and put it in 'regimen'. Each regime has its own entry:
+look for the one that fits, do not stay out just because of the regime.
+- tendencia_fuerte (H1 ADX >= 25, DI and EMA20 of H1 and H4 on the same side) -> 'breakout' continuation: after
+  a pause or shallow pullback on M15/H1, enter on the break of the pause high/low. Invalidation: the other side of the pause.
+- tendencia (H1 ADX 18-25, H1 DI and EMA20 on the same side) -> 'pullback': pullback to the H1 or M15 EMA20 or to
+  the last swing, and a candle that resumes the trend. Invalidation: beyond the pullback low/high.
+- rango (H1 ADX < 18, price between the H1 maximo_20 and minimo_20) -> 'reversion' at a range extreme with
+  rejection; target the middle or the other side. Invalidation: outside the extreme.
+- ruptura (price breaks the H1 maximo_20/minimo_20 or the previous day high/low with strength) -> 'breakout' on
+  the break, or 'rechazo_nivel' if the break fails and price comes back inside.
+Do not trade against H4 without a clear reason. The criteria below refine this for the symbol.
 
 TRADING CRITERIA (specific to this symbol, written in Spanish; it may be revised over time)
 {{criterio}}
@@ -175,6 +204,8 @@ STATE FIELDS (units in brackets)
 - dia_anterior: the previous daily candle: maximo, minimo, cierre [price units]; dist_maximo_atr, dist_minimo_atr [ATRs of the call-interval timeframe]; null if unavailable.
 - cartera: open positions of ALL the LLM agents together (the flota): abiertas; por_lado {{buy, sell}}; flotante_eur and realizado_hoy_eur [account currency]; posiciones: symbol, side, clase (asset class), floating_eur. Your own symbol appears there too if you are in a trade. Use it to avoid stacking exposure to the same risk (for example, several index shorts at once).
 - position (null if none): side; open_price; sl; tp [price units]; floating_pnl [account currency]; minutes_held; close_locked_for_min [minutes].
+- pending_order (null if none): your current pending entry: side; type (stop = breakout, limit = pullback); price;
+  invalidacion; timeframe; sl_atr_mult; tp_r; minutes_left.
 """
 )
 
@@ -186,10 +217,26 @@ DECISION_SCHEMA = {
         "sl_atr_mult": {"type": "number", "minimum": SL_MULT[0], "maximum": SL_MULT[1]},
         "tp_r": {"type": "number", "minimum": TP_R[0], "maximum": TP_R[1]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "reason": {"type": "string"},
+        "reason": {"type": "string", "maxLength": 500},
         "invalidated_by": {"type": "string"},      # obligatorio para cerrar: que se rompio, en que marco
+        "regimen": {"type": "string", "enum": REGIMENES},
+        "setup": {"type": "string", "enum": SETUPS},
+        "esperando": {"type": "string", "maxLength": 80},
+        "orden": {
+            "type": "object",
+            "properties": {
+                "side": {"type": "string", "enum": ["buy", "sell"]},
+                "price": {"type": "number"},
+                "invalidacion": {"type": "number"},
+                "timeframe": {"type": "string", "enum": list(STOP_TFS)},
+                "sl_atr_mult": {"type": "number", "minimum": SL_MULT[0], "maximum": SL_MULT[1]},
+                "tp_r": {"type": "number", "minimum": TP_R[0], "maximum": TP_R[1]},
+                "valid_min": {"type": "number", "minimum": ORDEN_VALIDA_MIN[0], "maximum": ORDEN_VALIDA_MIN[1]},
+            },
+            "required": ["side", "price", "invalidacion"],
+        },
     },
-    "required": ["action", "reason"],
+    "required": ["action", "regimen", "reason"],
 }
 
 
@@ -226,11 +273,22 @@ def db():
         confidence REAL, reason TEXT, tokens_in INTEGER, tokens_out INTEGER,
         tokens_cache_read INTEGER, tokens_cache_write INTEGER, cost_usd REAL, duration_s REAL,
         executed INTEGER, exec_result TEXT, ticket INTEGER, state_json TEXT)""")
-    for col in ("quota_5h REAL", "quota_7d REAL", "timeframe TEXT", "horizonte TEXT", "recorte TEXT", "prompt_version TEXT"):   # tablas creadas antes de esto
+    for col in ("quota_5h REAL", "quota_7d REAL", "timeframe TEXT", "horizonte TEXT", "recorte TEXT", "prompt_version TEXT",
+                "regimen TEXT", "setup TEXT", "esperando TEXT"):   # tablas creadas antes de esto
         try:
             con.execute(f"ALTER TABLE decisions ADD COLUMN {col}")
         except sqlite3.OperationalError:
             pass
+    # Ordenes pendientes (las dispara el bucle con el tick) y sombras (entradas frenadas por un limite, que se
+    # siguen como si se hubieran hecho para medir si el limite quita perdedoras o ganadoras).
+    con.execute("""CREATE TABLE IF NOT EXISTS ordenes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, symbol TEXT, modo TEXT, lado TEXT, tipo TEXT, precio REAL,
+        invalidacion REAL, timeframe TEXT, setup TEXT, regimen TEXT, sl_atr REAL, tp_r REAL, confianza REAL,
+        razon TEXT, atr_tf REAL, atr_m15 REAL, expira REAL, estado TEXT, resuelta TEXT, resultado TEXT)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS sombras (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, symbol TEXT, epoch INTEGER, lado TEXT, precio REAL, sl REAL,
+        tp REAL, dist REAL, origen TEXT, motivo TEXT, setup TEXT, estado TEXT, motivo_cierre TEXT, r_real REAL)""")
+    con.commit()
     return con
 
 
@@ -318,7 +376,8 @@ def _registrar_central(k):
     """Copia la decision a la BBDD central (pst_trading.db) que lee la app. Nunca para al agente."""
     simbolo = k.get("symbol")
     clase = next((s.clase for s in universo.UNIVERSO if s.symbol == simbolo), None)
-    respuesta = {x: k.get(x) for x in ("action", "sl_mult", "tp_r", "confidence", "reason", "horizonte") if k.get(x) is not None}
+    respuesta = {x: k.get(x) for x in ("action", "sl_mult", "tp_r", "confidence", "reason", "horizonte", "regimen",
+                                       "setup", "esperando") if k.get(x) is not None}
     registro.registrar_decision(
         ts=k.get("ts"), symbol=simbolo, agente=NOMBRE, clase=clase, modo=k.get("mode"), modelo=k.get("model"),
         prompt_version=PROMPT_VERSION, llamado=k.get("llm_called"), motivo_puerta=k.get("gate_reason"),
@@ -1138,12 +1197,247 @@ def vigilar_sesion(mt5, args, con):
                  gate_reason=motivo, action="close", executed=int(ok), exec_result=txt, reason=motivo, state_json="{}")
 
 
+# ── Ordenes pendientes, sombras y estado para la app ────────────────────────
+ESTADO_DIR = DATA_DIR / "llm_flota_estado"     # un JSON por simbolo: lo lee la home (PST_LLM/estado_agentes.py)
+
+
+def _filas(con, sql, args=()):
+    cur = con.execute(sql, args)
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, f)) for f in cur.fetchall()]
+
+
+def orden_pendiente(con):
+    f = _filas(con, "SELECT * FROM ordenes WHERE estado='pendiente' ORDER BY id DESC LIMIT 1")
+    return f[0] if f else None
+
+
+def _orden_para_modelo(o):
+    if not o:
+        return None
+    return {"side": o["lado"], "type": o["tipo"], "price": o["precio"], "invalidacion": o["invalidacion"],
+            "timeframe": o["timeframe"], "sl_atr_mult": o["sl_atr"], "tp_r": o["tp_r"],
+            "minutes_left": max(0, int((o["expira"] - time.time()) // 60))}
+
+
+def _orden_para_app(o):
+    if not o:
+        return None
+    return {"lado": o["lado"], "tipo": o["tipo"], "precio": o["precio"], "invalidacion": o["invalidacion"],
+            "setup": o["setup"], "timeframe": o["timeframe"], "confianza": o["confianza"], "ts": o["ts"],
+            "min_restantes": max(0, int((o["expira"] - time.time()) // 60))}
+
+
+def resolver_orden(con, oid, estado, resultado):
+    con.execute("UPDATE ordenes SET estado=?, resuelta=?, resultado=? WHERE id=?",
+                (estado, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(resultado)[:300], oid))
+    con.commit()
+
+
+def gestionar_orden(con, args, d, ind, tick, info, ts):
+    """Tras cada decision sin posicion. La 'orden' de un hold sustituye a la pendiente (o la mantiene si es la
+    misma); sin 'orden', la pendiente se cancela. Devuelve un texto para el registro o None."""
+    previa = orden_pendiente(con)
+    o = d.get("orden") if d.get("action", "hold") == "hold" else None
+    if not isinstance(o, dict) or o.get("side") not in ("buy", "sell") or not o.get("price"):
+        if previa:
+            resolver_orden(con, previa["id"], "cancelada",
+                           "el agente no la repitio" if d.get("action", "hold") == "hold" else f"el agente eligio {d.get('action')}")
+            return "orden cancelada"
+        return None
+    tf = o.get("timeframe") if o.get("timeframe") in STOP_TFS else (d.get("timeframe") if d.get("timeframe") in STOP_TFS else STOP_TFS[0])
+    if tf not in ind:
+        return f"orden rechazada: sin indicadores de {tf}"
+    atr = ind[tf]["atr"]
+    lado, precio = o["side"], float(o["price"])
+    inv = float(o["invalidacion"]) if o.get("invalidacion") else None
+    buy = lado == "buy"
+    ref = tick.ask if buy else tick.bid
+    tipo = "stop" if (precio > ref if buy else precio < ref) else "limit"
+    motivo = None
+    if abs(precio - ref) > ORDEN_MAX_DIST_ATR * atr:
+        motivo = f"precio {precio} a {abs(precio - ref) / atr:.1f} ATR de {tf} del actual (maximo {ORDEN_MAX_DIST_ATR})"
+    elif inv is None or (inv >= precio if buy else inv <= precio):
+        motivo = f"invalidacion {inv} del lado equivocado para {lado} en {precio}"
+    valido = min(max(float(o.get("valid_min") or 60), ORDEN_VALIDA_MIN[0]), ORDEN_VALIDA_MIN[1])
+    dg = info.digits
+    if previa and not motivo and previa["lado"] == lado and abs(previa["precio"] - precio) <= 0.1 * atr \
+            and previa["invalidacion"] == inv:
+        con.execute("UPDATE ordenes SET expira=? WHERE id=?", (time.time() + valido * 60, previa["id"]))
+        con.commit()
+        return f"orden mantenida: {lado} {tipo} {precio:.{dg}f}"
+    if previa:
+        resolver_orden(con, previa["id"], "cancelada", "sustituida por otra orden")
+    con.execute("""INSERT INTO ordenes (ts, symbol, modo, lado, tipo, precio, invalidacion, timeframe, setup, regimen,
+                   sl_atr, tp_r, confianza, razon, atr_tf, atr_m15, expira, estado, resultado)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (ts, args.symbol, "live" if args.live else "sim", lado, tipo, precio, inv, tf,
+                 o.get("setup") or d.get("setup"), d.get("regimen"), o.get("sl_atr_mult") or d.get("sl_atr_mult"),
+                 o.get("tp_r") or d.get("tp_r"), d.get("confidence"), d.get("reason"), atr,
+                 (ind.get("M15") or {}).get("atr"), time.time() + valido * 60,
+                 "rechazada" if motivo else "pendiente", motivo))
+    con.commit()
+    return f"orden rechazada: {motivo}" if motivo else f"orden {lado} {tipo} {precio:.{dg}f} · inv {inv} · {tf} · {valido:.0f} min"
+
+
+def registrar_sombra(con, symbol, d, o, motivo, tick):
+    """Entrada pedida y frenada por un limite: se sigue con su stop y objetivo (los de calcular_orden)."""
+    if not o:
+        return
+    con.execute("""INSERT INTO sombras (ts, symbol, epoch, lado, precio, sl, tp, dist, origen, motivo, setup, estado)
+                   VALUES (?,?,?,?,?,?,?,?,'frenada',?,?,'abierta')""",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), symbol, int(tick.time), "buy" if o["buy"] else "sell",
+                 o["precio"], o["sl"], o["tp"], abs(o["precio"] - o["sl"]), str(motivo)[:200], d.get("setup")))
+    con.commit()
+
+
+_ULT_SOMBRAS = {"t": 0.0}
+
+
+def vigilar_sombras(mt5, con, symbol):
+    """Cada 5 min: resuelve las sombras abiertas con las velas M5 desde su entrada (stop, objetivo o tiempo)."""
+    if time.time() - _ULT_SOMBRAS["t"] < 300:
+        return
+    _ULT_SOMBRAS["t"] = time.time()
+    filas = _filas(con, "SELECT * FROM sombras WHERE estado='abierta'")
+    if not filas:
+        return
+    velas = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, SOMBRA_MAX_H * 12 + 12)
+    tick = mt5.symbol_info_tick(symbol)
+    for f in filas:
+        buy = f["lado"] == "buy"
+        salida = None
+        for v in (velas if velas is not None else []):
+            if int(v["time"]) <= f["epoch"]:
+                continue
+            if (float(v["low"]) <= f["sl"]) if buy else (float(v["high"]) >= f["sl"]):
+                salida = (f["sl"], "stop")
+                break
+            if (float(v["high"]) >= f["tp"]) if buy else (float(v["low"]) <= f["tp"]):
+                salida = (f["tp"], "objetivo")
+                break
+        if salida is None and tick is not None and tick.time - f["epoch"] >= SOMBRA_MAX_H * 3600:
+            salida = (tick.bid if buy else tick.ask, "tiempo")
+        if salida and f["dist"]:
+            r = (1 if buy else -1) * (salida[0] - f["precio"]) / f["dist"]
+            con.execute("UPDATE sombras SET estado='cerrada', motivo_cierre=?, r_real=? WHERE id=?",
+                        (salida[1], round(r, 3), f["id"]))
+    con.commit()
+
+
+def publicar_estado(args, con, ts, d=None, posicion=None, motivo=None, bloqueado=False):
+    """Ultimo estado del agente para la home y el detalle: regimen, que espera, orden pendiente y posicion.
+    Un JSON por simbolo (escritura atomica). Si falla, el agente sigue."""
+    try:
+        ESTADO_DIR.mkdir(parents=True, exist_ok=True)
+        f = ESTADO_DIR / f"{args.symbol}.json"
+        previo = {}
+        if f.is_file():
+            try:
+                previo = json.loads(f.read_text(encoding="utf-8"))
+            except ValueError:
+                previo = {}
+        if d is not None:
+            nuevo = {"ts": ts, "accion": d.get("action", "hold"), "regimen": d.get("regimen"), "setup": d.get("setup"),
+                     "esperando": d.get("esperando") or None, "razon": d.get("reason"), "confianza": d.get("confidence"),
+                     "bloqueado": False, "motivo": motivo}
+        else:
+            nuevo = {**previo, "ts": previo.get("ts") or ts}
+            if bloqueado:
+                nuevo.update(bloqueado=True, motivo=motivo, ts=ts)
+        nuevo.update(agente=NOMBRE, db=str(DB_FILE), modo="live" if args.live else "sim",
+                     orden=_orden_para_app(orden_pendiente(con)), posicion=posicion, actualizado=time.time())
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(nuevo, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(f)
+    except Exception as e:
+        print(f"[llm_trader] no pude publicar el estado: {type(e).__name__}: {e}", flush=True)
+
+
+def _posicion_app(mt5, symbol, tick):
+    pos = [p for p in (mt5.positions_get(symbol=symbol) or []) if p.magic == MAGIC]
+    if not pos:
+        return None
+    p = pos[0]
+    return {"lado": "buy" if p.type == 0 else "sell", "precio": p.price_open, "sl": p.sl, "tp": p.tp,
+            "flotante_eur": round(p.profit, 2), "minutos": int((tick.time - p.time) // 60) if tick else None}
+
+
+def revisar_ordenes(mt5, args, con):
+    """En cada vuelta del bucle (segundos), sin el modelo: dispara, caduca o invalida la orden pendiente."""
+    o = orden_pendiente(con)
+    if not o:
+        return False
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if time.time() > o["expira"]:
+        resolver_orden(con, o["id"], "caducada", "no llego al precio a tiempo")
+        publicar_estado(args, con, ts)
+        return False
+    pos = [p for p in (mt5.positions_get(symbol=args.symbol) or []) if p.magic == MAGIC]
+    if pos:
+        resolver_orden(con, o["id"], "cancelada", "ya hay posicion en el simbolo")
+        return False
+    tick = mt5.symbol_info_tick(args.symbol)
+    if tick is None:
+        return True
+    buy = o["lado"] == "buy"
+    ref = tick.ask if buy else tick.bid
+    salida = tick.bid if buy else tick.ask
+    if o["invalidacion"] is not None and ((salida <= o["invalidacion"]) if buy else (salida >= o["invalidacion"])):
+        resolver_orden(con, o["id"], "invalidada", f"el precio cruzo la invalidacion {o['invalidacion']}")
+        publicar_estado(args, con, ts)
+        return False
+    if o["tipo"] == "stop":
+        disparo = ref >= o["precio"] if buy else ref <= o["precio"]
+    else:
+        disparo = ref <= o["precio"] if buy else ref >= o["precio"]
+    if not disparo:
+        return True
+    for bloqueo in (calendario.bloqueo_entrada(args.symbol),
+                    (sesiones.estado(mt5, args.symbol, tick.time, args.margen_sesion_min * 60)["cerrar"], "parada de sesion")):
+        if bloqueo[0]:
+            resolver_orden(con, o["id"], "rechazada", bloqueo[1])
+            publicar_estado(args, con, ts)
+            return False
+    info = mt5.symbol_info(args.symbol)
+    ind = {o["timeframe"]: {"atr": o["atr_tf"]}}
+    if o["atr_m15"]:
+        ind.setdefault("M15", {"atr": o["atr_m15"]})
+    d = {"action": o["lado"], "timeframe": o["timeframe"], "sl_atr_mult": o["sl_atr"], "tp_r": o["tp_r"],
+         "confidence": o["confianza"], "setup": o["setup"], "regimen": o["regimen"], "reason": o["razon"]}
+    cuenta = mt5.account_info()
+    ticket, orden_calc = None, None
+    if args.live:
+        ok, texto, ticket = ejecutar(mt5, d, ind, tick, info, [], cuenta, args)
+        orden_calc = _ORDEN.pop(args.nombre, None)
+    else:
+        orden_calc, why = calcular_orden(mt5, d, ind, tick, info, cuenta, args.timeframe)
+        ok = orden_calc is not None
+        texto = (f"SIM {o['lado']} {orden_calc['lotes']:.2f} lotes @ {orden_calc['precio']:.{info.digits}f}" if ok
+                 else f"SIM {o['lado']}: rechazada ({why})")
+    resolver_orden(con, o["id"], "disparada" if ok else "rechazada", texto)
+    print(f"[{ts}] ORDEN {o['lado'].upper()} {o['tipo']} {o['precio']} -> {texto}", flush=True)
+    # Se anota como una decision mas (llamada 1, coste 0): asi revisor y mejora enlazan la operacion con su tesis.
+    log_decision(con, ts=ts, symbol=args.symbol, mode="live" if args.live else "sim", model=args.model, llm_called=1,
+                 gate_reason="orden pendiente disparada", action=o["lado"], sl_mult=o["sl_atr"], tp_r=o["tp_r"],
+                 confidence=o["confianza"], reason=o["razon"], executed=int(ok and args.live), exec_result=texto,
+                 ticket=ticket, horizonte=o["timeframe"], regimen=o["regimen"], setup=o["setup"],
+                 tokens_in=0, tokens_out=0, cost_usd=0.0)
+    if not ok:
+        registrar_sombra(con, args.symbol, d, orden_calc, texto, tick)
+    else:
+        avisar(args, o["lado"], d, bool(args.live), args.live, orden_calc, ticket, None)
+    publicar_estado(args, con, ts, posicion=_posicion_app(mt5, args.symbol, tick))
+    return False
+
+
 def ciclo(mt5, args, con):
     snap = snapshot(mt5, args.symbol, args.timeframe, args.timeframes_analisis)
     if snap is None:
         print("[llm_trader] sin velas suficientes", flush=True)
         return
     estado, ind, tick, info, pos = snap          # ind = {marco: indicadores}
+    estado["pending_order"] = _orden_para_modelo(orden_pendiente(con))
     if estado.get("position"):                    # que el agente sepa si puede cerrar ya o no
         estado["position"]["close_locked_for_min"] = max(0, int(args.min_cierre_min - estado["position"]["minutes_held"]))
     modo = "live" if args.live else "sim"
@@ -1185,6 +1479,7 @@ def ciclo(mt5, args, con):
         print(f"[{ts}] sin llamada: {motivo}", flush=True)
         log_decision(con, ts=ts, symbol=args.symbol, mode=modo, model=args.model, llm_called=0,
                      gate_reason=motivo, action="-", state_json=json.dumps(estado), **extra)
+        publicar_estado(args, con, ts, posicion=_posicion_app(mt5, args.symbol, tick), motivo=motivo, bloqueado=True)
         return
 
     try:
@@ -1197,11 +1492,15 @@ def ciclo(mt5, args, con):
 
     accion = d.get("action", "hold")
     ejecutado, texto, ticket, o = False, "simulacion: no se envia", None, None
+    frenada = None                                  # motivo si pidio entrar y un limite lo freno
     if args.live:
         ejecutado, texto, ticket = ejecutar(mt5, d, ind, tick, info, pos, mt5.account_info(), args)
         o = _ORDEN.pop(args.nombre, None)
         if accion in ("buy", "sell") and not ejecutado and texto not in ("ya hay posicion: se ignora abrir",):
             print(f"[{ts}] orden NO enviada: {texto}", flush=True)
+            frenada = texto
+            if o is None:                           # frenada antes de calcular la orden: se calcula para la sombra
+                o, _ = calcular_orden(mt5, d, ind, tick, info, mt5.account_info(), args.timeframe)
     elif accion in ("buy", "sell") and not pos:
         # Simulacion: se guarda el nivel exacto que habria usado, para replicarlo a mano o juzgarlo.
         o, why = calcular_orden(mt5, d, ind, tick, info, mt5.account_info(), args.timeframe)
@@ -1209,6 +1508,12 @@ def ciclo(mt5, args, con):
                  f"TP {o['tp']:.{o['digits']}f} · riesgo ~{o['riesgo_eur']:.0f} EUR · marco {o['tf']} · coste {o['coste_r'] * 100:.1f}% R") if o else f"SIM {accion}: rechazada ({why})"
     elif accion == "close":
         texto = "SIM: cerraria la posicion"
+    if frenada:
+        registrar_sombra(con, args.symbol, d, o, frenada, tick)
+    if not pos:
+        texto_orden = gestionar_orden(con, args, d, ind, tick, info, ts)
+        if texto_orden:
+            texto = f"{texto} · {texto_orden}"
     rec = recortes(d)
     print(f"[{ts}] {accion.upper()} | {d.get('reason', '')} | tokens in={uso['tokens_in']} out={uso['tokens_out']} "
           f"cache={uso['tokens_cache_read']} coste={uso['cost_usd']} | {texto}"
@@ -1216,8 +1521,11 @@ def ciclo(mt5, args, con):
     log_decision(con, ts=ts, symbol=args.symbol, mode=modo, model=args.model, llm_called=1, gate_reason=motivo,
                  action=accion, sl_mult=d.get("sl_atr_mult"), tp_r=d.get("tp_r"), confidence=d.get("confidence"),
                  reason=d.get("reason"), executed=int(ejecutado), exec_result=texto, ticket=ticket,
-                 state_json=json.dumps(estado), horizonte=d.get("timeframe"), recorte=rec, **uso, **extra)
+                 state_json=json.dumps(estado), horizonte=d.get("timeframe"), recorte=rec, regimen=d.get("regimen"),
+                 setup=d.get("setup"), esperando=d.get("esperando") or None, **uso, **extra)
     avisar(args, accion, d, ejecutado, args.live, o, ticket, pos)
+    publicar_estado(args, con, ts, d=d, posicion=_posicion_app(mt5, args.symbol, mt5.symbol_info_tick(args.symbol)),
+                    motivo=frenada)
 
 
 # ── Seguimiento de resultados ────────────────────────────────────────────────
@@ -1499,6 +1807,13 @@ def main(argv=None, mt5_compartido=None):
                 vigilar_sesion(mt5, args, con)
             except Exception as e:
                 print(f"[llm_trader] vigilancia de sesion: {type(e).__name__}: {e}", flush=True)
+            hay_orden = False
+            if args.enabled:
+                try:
+                    hay_orden = revisar_ordenes(mt5, args, con)
+                    vigilar_sombras(mt5, con, args.symbol)
+                except Exception as e:
+                    print(f"[llm_trader] ordenes/sombras: {type(e).__name__}: {e}", flush=True)
             if args.enabled:
                 r = mt5.copy_rates_from_pos(args.symbol, getattr(mt5, f"TIMEFRAME_{args.timeframe}"), 0, 1)
                 if r is not None and len(r):
@@ -1508,7 +1823,10 @@ def main(argv=None, mt5_compartido=None):
                     elif formandose != ultima:
                         ultima = formandose
                         ciclo(mt5, args, con)
-            time.sleep(5 if TF_SEGUNDOS[args.timeframe] <= 60 else 10 if TF_SEGUNDOS[args.timeframe] <= 300 else 20)
+            if hay_orden:
+                time.sleep(2)                          # orden pendiente: se mira el precio cada 2 s
+            else:
+                time.sleep(5 if TF_SEGUNDOS[args.timeframe] <= 60 else 10 if TF_SEGUNDOS[args.timeframe] <= 300 else 20)
         print("[llm_trader] fichero STOP detectado: parado.", flush=True)
     finally:
         _SESION.cerrar()
