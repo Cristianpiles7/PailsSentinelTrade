@@ -113,9 +113,10 @@ posiciones, compilar, backtest (con IS/OOS), latido y estado del gestor.
 - [x] `PST_Gestor.mq5`
 - [x] Tablas `ea_*`, `PST_Core/ea/`, `PST_API/eas_api.py`, sección EAs MT5 en la web
 - [x] Nombres por magic desde `despliegues.json` (historial, Telegram, ESTRATEGIAS_ACTIVAS)
-- [ ] **Probar en MT5**: un EA con `PST_Control` respondiendo a activar/pausar/cerrar y el gestor
-      instalando desde `despliegue.csv` (en el portable, con `PST_EA_DEV` y sin permitir trading)
-- [ ] Backtest de regresión v2 = v1 (VwapAdx UK100, 2026-06-01 → 2026-11-01: +85,14 €, 17 ops)
+- [x] Probado en MT5 (portable, `PST_EA_DEV`): el gestor instala el EA en 6 s; activar, pausar, riesgo, cierre
+      por token y retirada responden en < 6 s
+- [x] Backtest de regresión v2 = v1: idéntico (+85,14 €, PF 1,18, 17 ops)
+- [x] Bloqueo de aperturas en pruebas (`InpPstBloquearAperturas`): ni `AllowLiveTrading=0` ni `expertmode` quitan el permiso
 - [ ] Instalar el gestor en el terminal vivo (una vez) y comprobar si detecta un `.ex5` nuevo sin reiniciar
 - [ ] Tope de riesgo común EAs + flota LLM (hoy cada uno vigila el suyo)
 
@@ -123,7 +124,9 @@ posiciones, compilar, backtest (con IS/OOS), latido y estado del gestor.
 - [x] `mt5cli.compilar` / `mt5cli.backtest` + parseo del informe
 - [x] IS/OOS y veredicto con los criterios de la app
 - [x] Botones y trabajos en segundo plano en la app; tools MCP
-- [ ] Línea base de 2 años para los 16 EAs
+- [x] Línea base de 2 años para los 16 EAs (CATALOGO_EAS.md §2.1): 2 aprobados
+- [x] Backtests sin el freno de pérdida total (`tester_sin_freno_total`)
+- [ ] Repetir los cercanos con ticks reales (modelo 4) y con más historial (GapFill D1)
 
 ### Fase 3 — Agentes
 - [x] `ingeniero-mql5` y `cazador` con las tools `ea_*` (sin `metatrader5-mcp`)
@@ -160,3 +163,4 @@ posiciones, compilar, backtest (con IS/OOS), latido y estado del gestor.
   posiciones por magic: antes un EA podía cerrar la posición de otro EA o de la flota en el mismo símbolo),
   `PST_Control.mqh`, `PST_Gestor.mq5`, `PST_Core/ea`, API, sección EAs MT5, tools MCP `ea_*`, agentes actualizados.
   Incidente de conexión MT5 detectado y arreglado en código (pendiente de release).
+- **2026-11-04** — Release v2.8.0 publicada y en producción (conexión a MT5 ya con ruta: producción no volvió a engancharse al portable). Probado en MT5 el control y el gestor; regresión v2 = v1; línea base de 2 años: 2 de 16 aprobados. Backtests de evaluación sin el freno de pérdida total. Bloqueo de aperturas en pruebas.

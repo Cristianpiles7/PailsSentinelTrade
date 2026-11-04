@@ -29,6 +29,8 @@ CONFIG_DEFECTO = {
     "tester_divisa": "EUR",
     "tester_apalancamiento": 100,
     "tester_timeout_s": 1800,
+    "tester_sin_freno_total": True,       # backtest sin el freno de perdida TOTAL de FTMO (1000 EUR): si no, la
+                                          # primera mala racha para el EA para siempre y no se ve la estrategia
     "mult_riesgo_max": 1.5,
     "agentes_pueden": ["pausar", "compilar", "backtest"],   # acciones que un agente hace sin aprobacion
     "criterio_pf_min": 1.2,

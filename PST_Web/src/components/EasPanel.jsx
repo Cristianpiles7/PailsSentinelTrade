@@ -201,6 +201,7 @@ const CAMPOS = [
     ['tester_divisa', 'Divisa', 'texto'],
     ['tester_apalancamiento', 'Apalancamiento', 'numero'],
     ['tester_timeout_s', 'Tiempo máximo por backtest (s)', 'numero'],
+    ['tester_sin_freno_total', 'Backtest sin el freno de pérdida total de FTMO (recomendado para evaluar)', 'bool'],
   ]],
   ['Riesgo', [['mult_riesgo_max', 'Multiplicador de riesgo máximo por EA', 'numero']]],
   ['Criterios para aprobar un backtest', [

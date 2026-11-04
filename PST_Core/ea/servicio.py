@@ -201,7 +201,8 @@ def backtest(despliegue_id, desde, hasta, modelo=None, tramo="completo", origen=
     modelo = cfg["tester_modelo"] if modelo is None else modelo
     r = mt5cli.backtest(cfg["tester_dir"], d, desde, hasta, modelo=modelo, deposito=cfg["tester_deposito"],
                         divisa=cfg["tester_divisa"], apalancamiento=cfg["tester_apalancamiento"],
-                        login=cfg["tester_login"], server=cfg["tester_server"], timeout_s=cfg["tester_timeout_s"])
+                        login=cfg["tester_login"], server=cfg["tester_server"], timeout_s=cfg["tester_timeout_s"],
+                        inputs={"InpMaxTotalLossAmount": 1000000} if cfg.get("tester_sin_freno_total", True) else None)
     m = r["metricas"]
     fila = {"ts": time.time(), "despliegue_id": despliegue_id, "version": d["version"], "simbolo": d["simbolo"],
             "tf": d["tf"], "desde": desde, "hasta": hasta, "modelo": modelo, "tramo": tramo,
