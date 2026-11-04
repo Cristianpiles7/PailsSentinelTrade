@@ -69,6 +69,8 @@ class SymbolStatus(BaseModel):
     strategies: Optional[List[str]] = []
     # Puntuacion de cercania a compra/venta (agente puntuador, solo visual): {puntuacion, anterior, frase, mercado_abierto}
     proximidad: Optional[Dict] = None
+    # Estado del agente del simbolo (PST_LLM/estado_agentes.py): {agente, estado, regimen, setup, lado, texto, ts, edad_s}
+    agente: Optional[Dict] = None
 
 class OHLCBar(BaseModel):
     time: int

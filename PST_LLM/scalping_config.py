@@ -26,7 +26,8 @@ DEFECTO = {
     "max_abiertas": 2,              # operaciones simultaneas, en todos los simbolos del scalping
     "max_perdida_dia_r": 3.0,       # si el dia suma -R, no se abre nada mas
     "sl_atr": [1.0, 2.0],           # stop en ATR de M1, rango que puede elegir el modelo
-    "tp_r": [2.0, 3.0],             # objetivo en R (minimo 2: con 1,5 el acierto necesario era 40 %, y se acierta 25-33 %)
+    "tp_r": [2.0, 3.0],             # objetivo en R de los setups de tendencia (minimo 2: con 1,5 el acierto necesario era 40 %, y se acierta 25-33 %)
+    "tp_r_reversion": [1.2, 2.0],   # objetivo en R de reversion y rechazo_nivel: en rango el recorrido es corto (necesita mas acierto)
     "cooldown_tras_stop_min": 10,   # tras un stop, minutos sin entrar en ese simbolo
     "max_spread_sobre_stop": 0.10,  # el spread no puede pasar de esta fraccion de la distancia al stop
     "max_coste_r": 0.10,            # spread + comision ida y vuelta, en fraccion del R

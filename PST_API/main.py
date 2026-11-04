@@ -43,6 +43,7 @@ LLM_DIR = str(Path(__file__).resolve().parents[1] / "PST_LLM")
 if LLM_DIR not in sys.path:
     sys.path.insert(0, LLM_DIR)
 import rutas  # noqa: E402  (PST_LLM/rutas.py: datos fuera de _MEIPASS en el exe)
+import estado_agentes  # noqa: E402  (PST_LLM/estado_agentes.py: estado del agente de cada simbolo para la home)
 PUNTUADOR_JSON = rutas.AGENTS_DATA_DIR / "puntuador.json"
 
 # --- WEBSOCKET MANAGER (FASE 46) ---
@@ -237,7 +238,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="PST Sentinel Trade API (SMC Update)",
-    version="2.7.5",
+    version="2.7.6",
     description="Motor de persistencia, telemetría e histórico de Pails Sentinel Trade.",
     lifespan=lifespan
 )
@@ -636,6 +637,7 @@ async def get_symbols():
 
     results = []
     proximidad_map = _leer_proximidad()
+    agentes_map = await asyncio.to_thread(estado_agentes.estados, [s['symbol'] for s in symbols_cfg])
     for s in symbols_cfg:
         sym = s['symbol']
         m = mercado.get(sym, {})
@@ -675,6 +677,7 @@ async def get_symbols():
             sparkline=spark_data,
             strategies=SYMBOL_EA_NAMES.get(sym, []),
             proximidad=proximidad_map.get(sym),
+            agente=agentes_map.get(sym),
         ))
 
     results.sort(key=lambda x: (not x.market_open, x.symbol))

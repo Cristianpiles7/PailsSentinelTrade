@@ -46,6 +46,11 @@ STOP_FILE = DATA / "llm_scalping.STOP"
 SIMBOLOS_PERMITIDOS = registro.SIMBOLOS_SCALPING      # medidos sin comision (2026-11-02, MT5); lista unica en registro
 
 
+# Tipo de mercado que el modelo nombra en cada decision. Se guarda para medir cada setup por regimen.
+REGIMENES = ["tendencia_fuerte", "tendencia", "rango", "ruptura"]
+# Setups de reversion: objetivo mas corto (el centro o el otro lado del rango no da 2-3 R).
+SETUPS_REVERSION = ("reversion", "rechazo_nivel")
+
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -57,13 +62,15 @@ SCHEMA = {
                     "symbol": {"type": "string"},
                     "action": {"type": "string", "enum": ["hold", "buy", "sell", "close"]},
                     "sl_atr_mult": {"type": "number", "minimum": 1.0, "maximum": 2.0},
-                    "tp_r": {"type": "number", "minimum": 2.0, "maximum": 3.0},
+                    "tp_r": {"type": "number", "minimum": 1.0, "maximum": 3.0},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "regimen": {"type": "string", "enum": REGIMENES},
                     "setup": {"type": "string", "enum": ["breakout", "pullback", "rechazo_nivel", "reversion", "ninguno"]},
+                    "esperando": {"type": "string"},
                     "invalidacion": {"type": "number"},
                     "reason": {"type": "string"},
                 },
-                "required": ["symbol", "action", "reason"],
+                "required": ["symbol", "action", "regimen", "reason"],
             },
         },
     },
@@ -72,16 +79,20 @@ SCHEMA = {
 
 PROMPT_FIJO = """ROLE
 You are a discretionary SCALPER on a DEMO account. You trade index CFDs, holding positions for minutes.
-You are called once per cycle with one state per symbol. Decide each symbol on its own. Most decisions
-should be 'hold'.
+You are called once per cycle with one state per symbol. Decide each symbol on its own. Every regime has
+its own setup: hold when the setup of the current regime is not there yet, not because the regime is wrong.
 
 OUTPUT
 Reply ONLY with the JSON requested by the schema: 'decisions', one entry per symbol of the input 'symbols'
 list, each with its 'symbol' name. 'action' is hold, buy, sell or close. With no open position choose hold,
 buy or sell. With an open position choose hold or close.
 - 'sl_atr_mult': stop distance in ATR(14) of the M1 timeframe, between 1.0 and 2.0.
-- 'tp_r': take profit as a multiple of the stop distance, between 2.0 and 3.0.
+- 'tp_r': take profit as a multiple of the stop distance. Trend setups (breakout, pullback): 2.0 to 3.0.
+  Range setups (reversion, rechazo_nivel): 1.2 to 2.0. The system clamps it to these ranges.
+- 'regimen': the market regime you read: tendencia_fuerte, tendencia, rango or ruptura. Always required.
 - 'setup': the pattern you trade: breakout, pullback, rechazo_nivel or reversion. 'ninguno' when you hold without one.
+- 'esperando': with hold and no position, what you are waiting for to enter, in SPANISH, a few words with the
+  price (e.g. "retroceso a la EMA20 de M1 cerca de 21450 para comprar"). Empty when nothing is close.
 - 'invalidacion': the price at which your thesis is wrong. Required for buy and sell.
 - 'reason': one short sentence, in English, naming the structure you trade.
 
@@ -126,8 +137,9 @@ def simbolos_activos():
 
 # Columnas añadidas despues de la primera version: se agregan a una BBDD existente sin perder su historia.
 COLUMNAS_NUEVAS = {
-    "decisiones": {"setup": "TEXT", "invalidacion": "REAL"},
-    "operaciones": {"setup": "TEXT", "motivo_entrada": "TEXT", "invalidacion": "REAL", "be_movido": "INTEGER DEFAULT 0"},
+    "decisiones": {"setup": "TEXT", "invalidacion": "REAL", "regimen": "TEXT", "esperando": "TEXT"},
+    "operaciones": {"setup": "TEXT", "motivo_entrada": "TEXT", "invalidacion": "REAL", "be_movido": "INTEGER DEFAULT 0",
+                    "regimen": "TEXT"},
 }
 
 
@@ -251,7 +263,7 @@ def estado_llm(con, symbol, snap, cfg, pos_abierta):
         "timeframes": snap["marcos"], "niveles": snap["niveles"], "position": None,
         "day_r": round(r_del_dia(con), 2),
         "own_history": [{"lado": o["lado"], "setup": o["setup"], "tesis": o["motivo_entrada"], "r": o["r_real"],
-                         "cierre": o["motivo_cierre"]} for o in abiertas_recientes(con, symbol)],
+                         "regimen": o["regimen"], "cierre": o["motivo_cierre"]} for o in abiertas_recientes(con, symbol)],
     }
     if pos_abierta:
         p = pos_abierta
@@ -259,7 +271,7 @@ def estado_llm(con, symbol, snap, cfg, pos_abierta):
         estado["position"] = {"side": p["lado"], "open_price": p["precio"], "sl": p["sl"], "tp": p["tp"],
                               "floating_r": round(floating / p["dist"], 2),
                               "minutes_held": int((tick.time - p["epoch_abre"]) // 60),
-                              "setup": p["setup"], "thesis": p["motivo_entrada"], "invalidation": p["invalidacion"],
+                              "setup": p["setup"], "regimen": p["regimen"], "thesis": p["motivo_entrada"], "invalidation": p["invalidacion"],
                               "breakeven_moved": bool(p["be_movido"])}
     return estado
 
@@ -293,13 +305,14 @@ def repartir_uso(uso, n):
     return {k: (v if k == "duration_s" or v is None else v / n) for k, v in uso.items()}
 
 
-def calcular(mt5, symbol, lado, snap, cfg, sl_atr, tp_r, cuenta):
+def calcular(mt5, symbol, lado, snap, cfg, sl_atr, tp_r, cuenta, setup=None):
     """Orden concreta con los limites duros. Devuelve (orden, None) o (None, motivo)."""
     tick, info, atr = snap["tick"], snap["info"], snap["ind"]["M1"]["atr"]
     buy = lado == "buy"
     precio = tick.ask if buy else tick.bid
     sl_atr = min(max(float(sl_atr or cfg["sl_atr"][0]), cfg["sl_atr"][0]), cfg["sl_atr"][1])
-    tp_r = min(max(float(tp_r or cfg["tp_r"][0]), cfg["tp_r"][0]), cfg["tp_r"][1])
+    rango_tp = cfg["tp_r_reversion"] if setup in SETUPS_REVERSION else cfg["tp_r"]
+    tp_r = min(max(float(tp_r or rango_tp[0]), rango_tp[0]), rango_tp[1])
     dist = atr * sl_atr
     spread = tick.ask - tick.bid
     if spread > cfg["max_spread_sobre_stop"] * dist:
@@ -338,7 +351,7 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
         return False, f"confianza {float(confianza):.2f} bajo el minimo {cfg['confianza_minima']}"
     if cfg["bloquear_misma_direccion"] and any(x["lado"] == d["action"] for x in abiertas(con) if x["symbol"] != symbol):
         return False, "ya hay una operacion en el mismo sentido en otro simbolo"
-    o, motivo = calcular(mt5, symbol, d["action"], snap, cfg, d.get("sl_atr_mult"), d.get("tp_r"), cuenta)
+    o, motivo = calcular(mt5, symbol, d["action"], snap, cfg, d.get("sl_atr_mult"), d.get("tp_r"), cuenta, d.get("setup"))
     if o is None:
         return False, motivo
     inv = d.get("invalidacion") or None
@@ -363,11 +376,11 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
             time.sleep(0.5)
         ticket = max(pos, key=lambda p: p.time).ticket if pos else None   # None: vigilar_live lo recupera
     con.execute("""INSERT INTO operaciones (symbol, modo, lado, abierta, epoch_abre, precio, sl, tp, dist, lotes,
-                   riesgo_eur, ticket, estado, coste_r, setup, motivo_entrada, invalidacion)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'abierta',?,?,?,?)""",
+                   riesgo_eur, ticket, estado, coste_r, setup, motivo_entrada, invalidacion, regimen)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'abierta',?,?,?,?,?)""",
                 (symbol, modo, o["lado"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), o["epoch"], o["precio"],
                  o["sl"], o["tp"], o["dist"], o["lotes"], o["riesgo_eur"], ticket, o["coste_r"],
-                 d.get("setup"), d.get("reason"), inv))
+                 d.get("setup"), d.get("reason"), inv, d.get("regimen")))
     con.commit()
     return True, (f"{modo.upper()} {o['lado']} {o['lotes']:.2f} lotes @ {o['precio']:.{o['digits']}f} · "
                   f"SL {o['sl']:.{o['digits']}f} · TP {o['tp']:.{o['digits']}f} · riesgo ~{o['riesgo_eur']:.0f} EUR · "
@@ -447,7 +460,9 @@ def _cerrar_desde_historial(mt5, con, fila):
     """La posicion real ya no esta en MT5: cierra la fila con los deals de MT5. Si la fila no tiene ticket
     (no se pudo leer al abrir), lo saca del deal de entrada mas cercano a su apertura.
     Devuelve el motivo de cierre, o None si MT5 todavia no tiene la salida (se reintenta en la siguiente vuelta)."""
-    deals = [d for d in (mt5.history_deals_get(fila["epoch_abre"] - 300, int(time.time()) + 60) or [])
+    # Limite superior con un dia de margen: la hora del broker va por delante de la local (2 h en este broker)
+    # y con "ahora + 60 s" el cierre no aparecia hasta 2 h despues (bucle de 'close' sin posicion, nov 2026).
+    deals = [d for d in (mt5.history_deals_get(fila["epoch_abre"] - 300, int(time.time()) + 86400) or [])
              if d.magic == MAGIC and d.symbol == fila["symbol"]]
     if fila["ticket"] is None:
         entradas = [d for d in deals if d.entry == 0 and d.time >= fila["epoch_abre"] - 120]
@@ -573,12 +588,37 @@ def enfriamiento_tras_stop(con, symbol, cfg):
     return (datetime.now() - datetime.strptime(fila[1], "%Y-%m-%d %H:%M:%S")).total_seconds() < minutos * 60
 
 
+ESTADO_FILE = DATA / "llm_scalping_estado.json"
+
+
+def publicar_estado(symbol, d, ts, motivo=None, bloqueado=False):
+    """Ultimo estado de cada simbolo para la home (lo lee /api/symbols). Bloqueado conserva el regimen de la
+    ultima decision. Si falla, el agente sigue."""
+    try:
+        todos = json.loads(ESTADO_FILE.read_text(encoding="utf-8")) if ESTADO_FILE.is_file() else {}
+    except (ValueError, OSError):
+        todos = {}
+    if bloqueado:
+        todos[symbol] = {**(todos.get(symbol) or {}), "bloqueado": True, "motivo": motivo, "ts": ts}
+    else:
+        todos[symbol] = {"ts": ts, "accion": d.get("action", "hold"), "regimen": d.get("regimen"),
+                         "setup": d.get("setup"), "esperando": d.get("esperando") or None, "razon": d.get("reason"),
+                         "confianza": d.get("confidence"), "bloqueado": False, "motivo": motivo}
+    try:
+        tmp = ESTADO_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(todos, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(ESTADO_FILE)
+    except OSError as e:
+        print(f"[scalping] no pude publicar el estado de {symbol}: {e}", flush=True)
+
+
 def sin_llamada(con, symbol, modo, ts, motivo):
     """Anota por que no se llama al modelo. Con la vigilancia cada 10 s, solo se registra cuando cambia el motivo."""
     if _ULT_MOTIVO.get(symbol) == motivo:
         return
     _ULT_MOTIVO[symbol] = motivo
     print(f"[{ts}] {symbol} sin llamada: {motivo}", flush=True)
+    publicar_estado(symbol, None, ts, motivo, bloqueado=True)
     con.execute("INSERT INTO decisiones (ts, symbol, modo, llamada, motivo, accion, resultado) VALUES (?,?,?,0,?,'-',?)",
                 (ts, symbol, modo, motivo, motivo))
     con.commit()
@@ -676,12 +716,15 @@ def ejecutar(mt5, con, cfg, symbol, d, snap, pos, cuenta, uso, ts):
     if accion == "hold" and not pos:
         registrar_sombras(con, cfg, symbol, snap, ts)
     con.execute("""INSERT INTO decisiones (ts, symbol, modo, llamada, accion, confianza, sl_atr, tp_r, razon, setup,
-                   invalidacion, ejecutada, resultado, coste_usd, tokens_in, tokens_out, duracion_s)
-                   VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   invalidacion, ejecutada, resultado, coste_usd, tokens_in, tokens_out, duracion_s, regimen, esperando)
+                   VALUES (?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (ts, symbol, modo, accion, d.get("confidence"), d.get("sl_atr_mult"), d.get("tp_r"), d.get("reason"),
                  d.get("setup"), d.get("invalidacion") or None, int(ejecutada), str(resultado), uso.get("cost_usd"),
-                 uso.get("tokens_in"), uso.get("tokens_out"), uso.get("duration_s")))
+                 uso.get("tokens_in"), uso.get("tokens_out"), uso.get("duration_s"), d.get("regimen"),
+                 d.get("esperando") or None))
     con.commit()
+    # Entrada pedida pero frenada por un limite: la home lo muestra como "frenada" con el motivo.
+    publicar_estado(symbol, d, ts, str(resultado) if accion in ("buy", "sell") and not ejecutada else None)
     print(f"[{ts}] {symbol} {accion.upper()} | {d.get('reason', '')} | {resultado} | "
           f"coste={uso.get('cost_usd')}", flush=True)
 

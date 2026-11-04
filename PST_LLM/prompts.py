@@ -43,11 +43,21 @@ CRITERIO_DEFECTO = """- Por defecto, quédate fuera (hold). La mayoría de las v
 # Scalping: un criterio por simbolo, guardado con la clave "scalping:<simbolo>" para que no se mezcle con
 # la flota (un mismo simbolo podria pasar de una estrategia a otra). Sin fila, usa este por defecto.
 PREFIJO_SCALPING = "scalping:"
-CRITERIO_SCALPING_DEFECTO = """- Entra solo en un PULLBACK: el precio volvió a la EMA20 de M1 y reanuda la dirección de la tendencia. No entres en rupturas ni en velas de impulso.
-- M5 debe confirmar: precio al lado de la operación de su EMA20, ADX de M5 de al menos 20 y DI a favor.
-- Mercado sin tendencia: si el ADX de M5 está por debajo de 20, quédate fuera.
-- No persigas: si la última vela M1 ya se movió más de 0.5 ATR(M1) a tu favor, quédate fuera.
-- Con posición abierta, cierra solo si la estructura de M1 que la justificó se rompió en tu contra."""
+CRITERIO_SCALPING_DEFECTO = """1. RÉGIMEN. Clasifica primero el mercado con M5 y M15 (velas cerradas) y ponlo en 'regimen':
+- tendencia_fuerte: ADX M5 >= 25, DI a favor y precio al mismo lado de la EMA20 en M5 y M15.
+- tendencia: ADX M5 entre 18 y 25, con DI y EMA20 de M5 en el mismo sentido.
+- rango: ADX M5 < 18; el precio oscila entre las bandas de Bollinger de M5 o entre m15_swing_high_20 y m15_swing_low_20.
+- ruptura: el precio rompe m15_swing_high_20/low_20 o prev_day_high/low con vol_rel_m1 >= 1.5.
+
+2. SETUP SEGÚN EL RÉGIMEN. Cada régimen tiene su entrada: busca siempre la que toca, no te quedes fuera por el régimen.
+- tendencia_fuerte → 'breakout' (continuación): tras 2-5 velas M1 de pausa o retroceso corto (no hace falta tocar la EMA20), entra cuando el precio supera el máximo/mínimo de la pausa a favor. Invalidación: el otro lado de la pausa.
+- tendencia → 'pullback': retroceso a la EMA20 de M1 o al último swing M1, y vela M1 que reanuda a favor. Invalidación: más allá del mínimo/máximo del retroceso.
+- rango → 'reversion': rechazo en un extremo del rango (mecha larga y cierre hacia dentro) con RSI M1 en extremo. Objetivo: el centro o el otro lado del rango. Invalidación: fuera del extremo.
+- ruptura → 'breakout' en la ruptura con volumen, o 'rechazo_nivel' si la ruptura falla y el precio vuelve dentro del nivel.
+
+3. NO PERSIGAS solo si la vela M1 actual ya recorrió más de 1.5 ATR(M1) sin pausa: no entres en esa vela y espera la primera pausa (es el setup de continuación).
+4. En hold, di en 'esperando' qué setup y a qué precio entrarías.
+5. Con posición abierta, cierra si el precio cruza 'invalidation' o si el régimen cambió en tu contra (p. ej. una continuación cuando M5 pierde el DI a favor)."""
 
 
 def clave_scalping(symbol):

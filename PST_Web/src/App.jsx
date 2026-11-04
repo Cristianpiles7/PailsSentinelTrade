@@ -32,7 +32,7 @@ import { CalendarioRestringidoWidget } from './components/ui/CalendarioRestringi
 import { EstadoSistemaWidget } from './components/ui/EstadoSistemaWidget'
 import { ActualizacionAviso } from './components/ui/ActualizacionAviso'
 import { Sparkline } from './components/ui/Sparkline'
-import { ProximityGauge } from './components/ui/ProximityGauge'
+import { AgentStatusBadge } from './components/ui/AgentStatusBadge'
 import { Toast } from './components/ui/Toast'
 import { StatBox } from './components/ui/StatBox'
 import { LiveConsole } from './components/ui/LiveConsole'
@@ -1422,7 +1422,9 @@ function App() {
                         </div>
                         <div>
                           <h3 className="text-white text-[11px] font-bold uppercase tracking-widest leading-none">{s.symbol}</h3>
-                          <span className="text-[11px] font-bold text-zinc-500 tracking-tighter uppercase">{(s.strategies || []).length} EA{(s.strategies || []).length === 1 ? '' : 's'}</span>
+                          {s.agente
+                            ? <AgentStatusBadge agente={s.agente} compact />
+                            : <span className="text-[11px] font-bold text-zinc-500 tracking-tighter uppercase">{(s.strategies || []).length} EA{(s.strategies || []).length === 1 ? '' : 's'}</span>}
                         </div>
                       </div>
 
@@ -1502,9 +1504,9 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Puntuación de cercanía a compra/venta (agente puntuador, solo visual) */}
+                    {/* Estado del agente: régimen, qué hace y qué espera (sustituye a la puntuación del puntuador) */}
                     <div className="relative z-10 px-1">
-                      <ProximityGauge proximidad={s.proximidad} />
+                      <AgentStatusBadge agente={s.agente} />
                     </div>
 
                     {/* PnL — el detalle RSI/ADX por timeframe vive en Live Detail (clic en la
