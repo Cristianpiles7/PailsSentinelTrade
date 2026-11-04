@@ -2,7 +2,28 @@
 import os
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+def _raiz_fuentes():
+    """Donde viven los .mq5 y despliegues.json.
+
+    Desde el repo: el propio repo. Desde el exe: el repo del PC si existe (PST_EA_FUENTES, o <PST_DATA_ROOT>\\repo),
+    para que la app y los agentes trabajen sobre los MISMOS ficheros: un EA que crea un agente se puede instalar
+    sin esperar a una release. Si no hay repo, la copia empaquetada en el exe.
+    """
+    propio = Path(__file__).resolve().parents[2]
+    if not getattr(__import__("sys"), "frozen", False):
+        return propio
+    try:
+        import PST_Core.config  # noqa: F401  (carga el .env del exe: ahi esta PST_DATA_ROOT)
+    except Exception:
+        pass
+    for candidato in (os.environ.get("PST_EA_FUENTES"),
+                      os.path.join(os.environ.get("PST_DATA_ROOT", ""), "repo") if os.environ.get("PST_DATA_ROOT") else None):
+        if candidato and (Path(candidato) / "MT5" / "despliegues.json").exists():
+            return Path(candidato)
+    return propio
+
+
+REPO = _raiz_fuentes()
 MT5_REPO = REPO / "MT5"
 EXPERTS_REPO = MT5_REPO / "Experts"
 INCLUDE_REPO = MT5_REPO / "Include"

@@ -63,6 +63,9 @@ PROFILES = {
     "revisor":         {"model": "sonnet", "effort": "medium"},
     "cazador":         {"model": "opus",   "effort": "high"},
     "ingeniero-mql5":  {"model": "opus",   "effort": "high"},
+    # Taller de EAs (MT5/DESARROLLO_EAS.md §9): escriben MQL5 y backtestean, de ahi opus y timeout largo.
+    "mejora-eas":      {"model": "opus",   "effort": "medium", "timeout": 3600},
+    "nuevas-eas":      {"model": "opus",   "effort": "high",   "timeout": 3600},
 }
 
 # Tools permitidas por agente. Deliberadamente estrechas: un agente con mas superficie de
@@ -76,6 +79,8 @@ ALLOWED_TOOLS = {
     "revisor":        "mcp__pst__*,Read,Glob,Grep,Bash(git *)",
     "cazador":        "mcp__pst__*,Read,Glob,Grep",
     "ingeniero-mql5": "mcp__pst__*,Read,Write,Edit,Glob,Grep",
+    "mejora-eas":     "mcp__pst__*,Read,Write,Edit,Glob,Grep",
+    "nuevas-eas":     "mcp__pst__*,Read,Write,Edit,Glob,Grep",
 }
 
 
@@ -254,12 +259,16 @@ def main():
     ap.add_argument("--model")
     ap.add_argument("--effort")
     ap.add_argument("--dry-run", action="store_true", help="No escribe en BBDD; deja el JSON en .agents/out")
-    ap.add_argument("--timeout", type=int, default=600,
+    ap.add_argument("--contexto", default="",
+                    help="Texto que se anade al final del prompt (p. ej. el EA objetivo que elige el planificador)")
+    ap.add_argument("--timeout", type=int, default=None,
                     help="Tope de reloj. 600s es generoso: una pasada sana son segundos, "
                          "y un agente que pasa de aqui esta dando vueltas, no pensando.")
     args = ap.parse_args()
 
     profile = PROFILES[args.agent]
+    if args.timeout is None:
+        args.timeout = profile.get("timeout", 600)
     model = args.model or profile["model"]
     effort = args.effort or profile["effort"]
 
@@ -273,7 +282,10 @@ def main():
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_file = OUT_DIR / f"{args.agent}_{stamp}.json"
 
-    cmd = build_command(args.agent, model, effort, prompt_file.read_text(encoding="utf-8"))
+    prompt = prompt_file.read_text(encoding="utf-8")
+    if args.contexto:
+        prompt += "\n\n## Contexto de esta pasada (lo fija el planificador)\n\n" + args.contexto + "\n"
+    cmd = build_command(args.agent, model, effort, prompt)
     print(f"[{args.agent}] modelo={model} effort={effort} timeout={args.timeout}s")
 
     started = time.time()

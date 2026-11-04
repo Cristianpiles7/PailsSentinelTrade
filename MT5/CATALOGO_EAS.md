@@ -110,3 +110,13 @@ De las ~40 hipótesis del proyecto original, solo las de arriba pasaron el ciclo
 |---|---|---|
 | `PST_EmaCrossTimingTest_EURUSD_M5` (en `Experts/Experimental/`) | experimental | EA de diagnóstico (magic 109900, rango de la flota LLM). Sin control de la app. Revisar si sigue haciendo falta |
 | LiquiditySweep EURUSD M5 variante B (magic 101801) | retirada | No migrada. Si se recupera, EA propio con magic nuevo |
+
+## 5. Taller de EAs
+
+Lo escriben los agentes automáticos `mejora-eas` (cada noche, un EA no aprobado, máx. 3 variantes) y
+`nuevas-eas` (domingos, una hipótesis nueva). Variantes en `MT5/Experts/Experimental/` (magics 105000–106999
+para mejoras, 107000–108999 para nuevas). Nada se activa sin el usuario. Ver DESARROLLO_EAS.md §9.
+
+| Fecha | Agente | EA original / hipótesis | Variante | Qué cambia | Neto € | PF | Ops | DD % | IS € | OOS € | Veredicto |
+|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| 2026-11-04 | (manual) | Ichimoku_GER40_H1 | parámetros | `InpRiskPercent` 1,0 → 0,5 | +1168,12 | 1,20 | 168 | 7,42 | +824,92 | +324,18 | ✅ APROBADO (= multiplicador ×0,5 en la app) |

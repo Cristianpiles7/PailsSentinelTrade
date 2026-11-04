@@ -195,6 +195,115 @@ def puerta_cazador():
     return True, "sábado y el reconciliador ya pasó"
 
 
+# ── Taller de EAs (MT5/DESARROLLO_EAS.md §9) ─────────────────────────────────
+# Las puertas devuelven ademas un CONTEXTO: el EA objetivo y sus cifras, que se anade al prompt.
+
+def _tabla_existe(con, nombre):
+    return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (nombre,)).fetchone() is not None
+
+
+def _horas_desde_ultima_pasada(agente):
+    con = _db()
+    fila = con.execute("SELECT started_at FROM agent_runs WHERE agent=? AND status IN ('ok','failed') "
+                       "ORDER BY id DESC LIMIT 1", (agente,)).fetchone()
+    con.close()
+    if not fila or not fila["started_at"]:
+        return None
+    try:
+        return (datetime.now() - datetime.fromisoformat(str(fila["started_at"]).replace("Z", ""))).total_seconds() / 3600
+    except Exception:
+        return None
+
+
+def puerta_mejora_eas():
+    """Un EA no aprobado por noche: el mas cercano a aprobar, sin intentos en los ultimos 14 dias."""
+    h = _horas_desde_ultima_pasada("mejora-eas")
+    if h is not None and h < 20:
+        return False, f"ya corrio hace {h:.0f} h (una pasada al dia)", ""
+    con = _db()
+    if not _tabla_existe(con, "ea_despliegues"):
+        con.close()
+        return False, "la app aun no ha creado las tablas de EAs", ""
+    corte = time.time() - 14 * 86400
+    candidatos = []
+    for d in con.execute("SELECT * FROM ea_despliegues WHERE estado != 'retirada' AND categoria != 'Experimental'"):
+        intento = con.execute("SELECT 1 FROM ea_eventos WHERE despliegue_id=? AND accion='taller_mejora' AND ts>?",
+                              (d["id"], corte)).fetchone()
+        if intento:
+            continue
+        ver = con.execute("SELECT detalle FROM ea_eventos WHERE despliegue_id=? AND accion='veredicto' "
+                          "ORDER BY ts DESC LIMIT 1", (d["id"],)).fetchone()
+        if ver and ver["detalle"].startswith("APROBADO"):
+            continue
+        filas = {}
+        for b in con.execute("SELECT * FROM ea_backtests WHERE despliegue_id=? ORDER BY ts DESC LIMIT 3", (d["id"],)):
+            filas.setdefault(b["tramo"], dict(b))
+        if "completo" not in filas:
+            continue
+        c, is_, oos = filas["completo"], filas.get("IS", {}), filas.get("OOS", {})
+        # Cercania a aprobar: PF del completo + medio punto por cada mitad positiva
+        score = (c.get("pf") or 0) + 0.5 * ((is_.get("neto") or 0) > 0) + 0.5 * ((oos.get("neto") or 0) > 0)
+        candidatos.append((score, dict(d), c, is_, oos, ver["detalle"] if ver else "sin veredicto"))
+    con.close()
+    if not candidatos:
+        return False, "no hay EAs pendientes de mejorar (aprobados, retirados o intentados hace poco)", ""
+    candidatos.sort(key=lambda x: -x[0])
+    score, d, c, is_, oos, ver = candidatos[0]
+
+    def fmt(f):
+        return (f"neto {f.get('neto')} EUR, PF {f.get('pf')}, Sharpe {f.get('sharpe')}, "
+                f"{f.get('ops')} ops, DD {f.get('dd_equity_pct')} %")
+
+    contexto = (f"- EA objetivo: `{d['id']}` ({d['estrategia']}), {d['simbolo']} {d['tf']}, magic {d['magic']}, "
+                f"categoria {d['categoria']}.\n"
+                f"- Periodo de referencia (usalo en todos tus backtests): {c['desde']} -> {c['hasta']}.\n"
+                f"- Ultimo backtest completo: {fmt(c)}.\n"
+                f"- IS: {fmt(is_) if is_ else 'sin dato'}.\n"
+                f"- OOS: {fmt(oos) if oos else 'sin dato'}.\n"
+                f"- Veredicto: {ver}.\n"
+                f"- Fuente: MT5/Experts/{d['categoria']}/{d['id']}.mq5")
+    return True, f"objetivo {d['id']} (cercania {score:.2f})", contexto
+
+
+def puerta_nuevas_eas():
+    """Una hipotesis nueva por semana (domingo), si no se acumulan EAs nuevos sin revisar."""
+    if datetime.now().weekday() != 6:
+        return False, "solo corre los domingos", ""
+    h = _horas_desde_ultima_pasada("nuevas-eas")
+    if h is not None and h < 6 * 24:
+        return False, f"ya corrio hace {h / 24:.0f} dias", ""
+    con = _db()
+    if not _tabla_existe(con, "ea_despliegues"):
+        con.close()
+        return False, "la app aun no ha creado las tablas de EAs", ""
+    pendientes = con.execute("SELECT COUNT(*) FROM ea_despliegues WHERE estado='experimental' "
+                             "AND magic BETWEEN 107000 AND 108999").fetchone()[0]
+    cubiertos = sorted({r[0] for r in con.execute(
+        "SELECT d.simbolo FROM ea_despliegues d JOIN ea_eventos e ON e.despliegue_id=d.id "
+        "WHERE e.accion='veredicto' AND e.detalle LIKE 'APROBADO%'")})
+    con.close()
+    if pendientes >= 6:
+        return False, f"{pendientes} EAs nuevos experimentales sin revisar (tope 6)", ""
+    hoy = datetime.now().date()
+    contexto = (f"- Periodo de backtest: {(hoy - timedelta(days=730)).isoformat()} -> {hoy.isoformat()}.\n"
+                f"- Simbolos con algun EA aprobado: {', '.join(cubiertos) or 'ninguno'}.\n"
+                f"- EAs nuevos experimentales pendientes de revisar: {pendientes}.")
+    return True, "domingo y sin acumulacion", contexto
+
+
+def marcar_intento_mejora(contexto):
+    """Deja constancia del EA elegido (ea_eventos) para no repetirlo en 14 dias, aunque la pasada falle."""
+    import re
+    m = re.search(r"EA objetivo: `([^`]+)`", contexto or "")
+    if not m:
+        return
+    try:
+        from PST_Core.ea import store
+        store.evento(m.group(1), "taller_mejora", "pasada de mejora-eas lanzada por el planificador", "sistema")
+    except Exception as e:
+        print(f"  ! no se pudo marcar el intento: {e}")
+
+
 # agente -> (puerta, es_caro). "caro" = opus, que consume mucho más de la ventana.
 AGENDA = {
     # La autopsia va primero: es la mas barata de justificar (basta una perdida) y la que
@@ -203,6 +312,10 @@ AGENDA = {
     "reconciliador": (puerta_reconciliador, False),
     "juez":          (puerta_juez, False),
     "cazador":       (puerta_cazador, True),
+    # Taller de EAs. No van como "caros": sin dato de cuota (habblaud apagado) no correrian nunca. Su coste lo
+    # acotan sus puertas (mejora-eas una vez al dia, nuevas-eas una vez por semana) y el freno de la ventana de 5h.
+    "mejora-eas":    (puerta_mejora_eas, False),
+    "nuevas-eas":    (puerta_nuevas_eas, False),
     # revisor: no se programa, se lanza antes de cada release.
     # ingeniero-mql5: no se programa, solo tras una propuesta aprobada.
 }
@@ -222,9 +335,11 @@ async def registrar_salto(agente: str, motivo: str):
                               cost_tokens=0, duration_s=0.0)
 
 
-def lanzar(agente: str) -> int:
+def lanzar(agente: str, contexto: str = "") -> int:
     """Lanza un agente por el runner. Devuelve el código de salida."""
     cmd = [sys.executable, "-u", str(REPO_ROOT / ".agents" / "run_agent.py"), agente]
+    if contexto:
+        cmd += ["--contexto", contexto]
     print(f"  → lanzando {agente}...", flush=True)
     r = subprocess.run(cmd, cwd=str(REPO_ROOT))
     return r.returncode
@@ -309,11 +424,19 @@ def main():
             continue
 
         # Puerta del agente
+        contexto = ""
         if args.force == agente:
             puede, motivo = True, "forzado por --force"
+            try:                                   # con --force tambien se calcula el objetivo, si lo hay
+                res = puerta()
+                contexto = res[2] if len(res) > 2 else ""
+            except Exception:
+                pass
         else:
             try:
-                puede, motivo = puerta()
+                res = puerta()
+                puede, motivo = res[0], res[1]
+                contexto = res[2] if len(res) > 2 else ""
             except Exception as e:
                 puede, motivo = False, f"no se pudo evaluar la puerta: {e}"
 
@@ -324,10 +447,14 @@ def main():
             continue
 
         print(f"  ✓ {agente}: {motivo}")
+        if contexto:
+            print("    " + contexto.replace("\n", "\n    "))
         if args.dry_run:
             continue
 
-        code = lanzar(agente)
+        if agente == "mejora-eas":
+            marcar_intento_mejora(contexto)
+        code = lanzar(agente, contexto)
         lanzados += 1
         if code != 0:
             print(f"  ! {agente} terminó con código {code} (queda registrado en agent_runs)")

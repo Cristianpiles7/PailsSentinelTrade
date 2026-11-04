@@ -291,6 +291,7 @@ async def handle_list_tools() -> List[Tool]:
                 "id": {"type": "string"}, "desde": {"type": "string", "description": "YYYY-MM-DD"},
                 "hasta": {"type": "string", "description": "YYYY-MM-DD"}, "is_oos": {"type": "boolean", "default": True},
                 "modelo": {"type": "integer", "description": "0 ticks, 1 OHLC M1, 2 apertura, 4 ticks reales. Omitir = el de la app"},
+                "parametros": {"type": "object", "description": "Inputs del EA para esta pasada, p. ej. {\"InpRiskPercent\": 0.5, \"InpAdxThreshold\": 20}. Cuentan como una variante probada"},
                 "agente": {"type": "string"},
             }, "required": ["id", "desde", "hasta", "agente"]},
         ),
@@ -632,7 +633,7 @@ async def _tool_ea_backtest(args):
     f = servicio.backtest_is_oos if args.get("is_oos", True) else servicio.backtest
     try:
         return await asyncio.to_thread(f, args["id"], args["desde"], args["hasta"], modelo=args.get("modelo"),
-                                       origen=_origen(args))
+                                       origen=_origen(args), parametros=args.get("parametros"))
     except servicio.Prohibido as e:
         return {"ok": False, "prohibido": True, "error": str(e)}
 

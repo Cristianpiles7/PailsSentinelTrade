@@ -190,7 +190,9 @@ def compilar(despliegue_id, origen="app"):
     return res
 
 
-def backtest(despliegue_id, desde, hasta, modelo=None, tramo="completo", origen="app", compilar_antes=True):
+def backtest(despliegue_id, desde, hasta, modelo=None, tramo="completo", origen="app", compilar_antes=True,
+             parametros=None):
+    """parametros: inputs del EA para esta pasada, p. ej. {"InpRiskPercent": 0.5}. Quedan guardados en metricas."""
     _permiso("backtest", origen)
     d = _desp(despliegue_id)
     cfg = store.config()
@@ -202,8 +204,11 @@ def backtest(despliegue_id, desde, hasta, modelo=None, tramo="completo", origen=
     r = mt5cli.backtest(cfg["tester_dir"], d, desde, hasta, modelo=modelo, deposito=cfg["tester_deposito"],
                         divisa=cfg["tester_divisa"], apalancamiento=cfg["tester_apalancamiento"],
                         login=cfg["tester_login"], server=cfg["tester_server"], timeout_s=cfg["tester_timeout_s"],
-                        inputs={"InpMaxTotalLossAmount": 1000000} if cfg.get("tester_sin_freno_total", True) else None)
+                        inputs={**({"InpMaxTotalLossAmount": 1000000} if cfg.get("tester_sin_freno_total", True) else {}),
+                                **(parametros or {})} or None)
     m = r["metricas"]
+    if parametros:
+        m["parametros"] = parametros
     fila = {"ts": time.time(), "despliegue_id": despliegue_id, "version": d["version"], "simbolo": d["simbolo"],
             "tf": d["tf"], "desde": desde, "hasta": hasta, "modelo": modelo, "tramo": tramo,
             "neto": m.get("neto"), "pf": m.get("pf"), "sharpe": m.get("sharpe"), "ops": m.get("ops"),
@@ -237,13 +242,14 @@ def evaluar(filas):
     return {"aprobado": not motivos, "motivos": motivos}
 
 
-def backtest_is_oos(despliegue_id, desde, hasta, modelo=None, origen="app"):
+def backtest_is_oos(despliegue_id, desde, hasta, modelo=None, origen="app", parametros=None):
     """Periodo completo + mitad dentro de muestra (IS) + mitad fuera (OOS), y veredicto con los criterios."""
     d0, d1 = date.fromisoformat(desde), date.fromisoformat(hasta)
     medio = (d0 + (d1 - d0) / 2).isoformat()
     filas = []
     for i, (tramo, a, b) in enumerate((("completo", desde, hasta), ("IS", desde, medio), ("OOS", medio, hasta))):
-        r = backtest(despliegue_id, a, b, modelo=modelo, tramo=tramo, origen=origen, compilar_antes=(i == 0))
+        r = backtest(despliegue_id, a, b, modelo=modelo, tramo=tramo, origen=origen, compilar_antes=(i == 0),
+                     parametros=parametros)
         if not r["ok"]:
             return r
         filas.append(r["backtest"])
