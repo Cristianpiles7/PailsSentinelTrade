@@ -1,0 +1,12 @@
+<chart>
+symbol=EURUSD
+period_type=0
+period_size=1
+<expert>
+name=PST_TestNoop
+path=Experts\PST_V2\PST_TestNoop.ex5
+expertmode=5
+<inputs>
+</inputs>
+</expert>
+</chart>

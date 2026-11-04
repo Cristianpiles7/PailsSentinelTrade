@@ -96,7 +96,7 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
         const loadLines = async () => {
             try {
                 const token = localStorage.getItem('pst_token') || '';
-                const base = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
+                const base = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api");
                 console.log(`[PST] Cargando líneas para ${symbol}...`);
                 const res = await fetch(`${base}/user_levels/${symbol}`, {
                     headers: { 'X-PST-Token': token }
@@ -120,7 +120,7 @@ export function TradingChart({ data, symbol, activeTrade, replayTrade }) {
     const saveLinesToDB = async (linesToSave) => {
         try {
             const token = localStorage.getItem('pst_token') || '';
-            const base = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
+            const base = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api");
             console.log(`[PST] Guardando ${linesToSave.length} líneas en DB...`);
             const res = await fetch(`${base}/user_levels/${symbol}`, {
                 method: 'POST',

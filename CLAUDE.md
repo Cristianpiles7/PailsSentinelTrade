@@ -33,6 +33,51 @@ Hay dos mundos separados. No los mezcles.
 - Hay un `PST_MASTER.exe` en esa carpeta de Google Drive. **No se usa. Nunca abrirlo.** La app real es `C:\Users\crist\Desktop\PailsSentinelTrade\PST_MASTER.exe`.
 - Si aparece un proceso `PST_MASTER.exe` desde `G:\`, es un resto que no hay que arrancar ni tomar como referencia.
 
+## 1b. Entorno de pruebas (sin release)
+
+Sirve para probar cualquier cambio del repo **sin commit, tag, push ni release**. Arranca la app con
+Python directamente desde `repo\`, al lado del `PST_MASTER.exe` de producción, sin interferir con él.
+Guía completa: `manual_docs/ENTORNO_PRUEBAS.md`.
+
+### Cómo se arranca
+- Doble clic en `Tools\dev\PRUEBAS.cmd`, o desde `repo\`: `python Tools/dev/arrancar_dev.py --web`
+- Panel con recarga en caliente: **http://127.0.0.1:5174** (franja ámbar "Entorno de pruebas" arriba).
+- API de pruebas: http://127.0.0.1:8100. Producción sigue en el **8000** (el 8000 está prohibido en pruebas).
+- Cambios en `.jsx`: se ven al momento. Cambios en Python (`PST_API`, `PST_Core`, `PST_LLM`): Ctrl+C y volver a arrancar.
+- Contraseña del panel: la misma que en producción (`WEB_PASSWORD` del `.env`).
+
+### Opciones
+| Opción | Para qué |
+|---|---|
+| `--web` | Lanza también Vite (5174). Sin ella, solo API + panel compilado de `PST_Web/dist` (puede estar desfasado) |
+| `--refrescar-bd` | Copia de nuevo la BBDD y los `.json` de agentes de producción. Sin ella, reutiliza la copia anterior |
+| `--mt5-tester` | Conecta al terminal portable `C:\Users\crist\PST_MT5_Tester` en vez del vivo (para probar EAs) |
+| `--permitir-ordenes` | Deja pasar `order_send` (cuenta demo). Solo si el usuario lo pide expresamente |
+| `--puerto N` | Otro puerto para la API (por defecto 8100) |
+
+### Qué queda aislado
+- BBDD: copia en `C:\Users\crist\PST_DEV\PST_Core\data\pst_trading.db`. La de producción solo se lee para copiarla.
+- Órdenes MT5 bloqueadas, agentes LLM/scalping/puntuador no se lanzan, el actualizador tampoco.
+- No puede matar procesos que no haya lanzado él (el botón "parar agente" no toca los de producción).
+- Sin Telegram, monitor, alertas de calendario, protección de cierre por horario ni habblaud.
+- Se comparte: el terminal MT5 vivo en lectura (salvo `--mt5-tester`) y los secretos del `.env`.
+- Mecanismo: `PST_ENTORNO=dev` → `PST_Core/config.py` no deja que el `.env` pise rutas y
+  `PST_API/main.py` (`ES_DEV`) no arranca las tareas que actúan sobre la cuenta. `/api/health` devuelve `"entorno": "dev"`.
+
+### Flujo de trabajo (obligatorio)
+1. Trabajar en una rama, nunca en `main` directamente.
+2. Probar en el entorno de pruebas hasta que funcione.
+3. Solo entonces: merge a `main` y release (sección 2), pidiendo confirmación al usuario.
+
+### Reglas para Claude
+- Comprobar los cambios en el entorno de pruebas **antes** de proponer commit o release. Arrancarlo en
+  segundo plano (`python -u Tools/dev/arrancar_dev.py`), probar por la API del 8100 y **pararlo al terminar**
+  (matar solo los PID que escuchan en 8100/5174; nunca procesos `PST_MASTER.exe`).
+- No usar `--permitir-ordenes` sin que el usuario lo pida.
+- Si un cambio añade una tarea de fondo que opera, envía avisos o lanza procesos, debe respetar `ES_DEV`
+  (o quedar cubierta por los bloqueos de `Tools/dev/arrancar_dev.py`). Añadirlo a esta lista si hace falta.
+- Si se añaden componentes web con la URL de la API fija, usar `import.meta.env.VITE_API_URL` como en `App.jsx`.
+
 ## 2. Cómo se publica una versión (tag → Release)
 
 Idioma del historial: `vX.Y.Z - descripción en una línea`. Ver también `repo\.claude\commands\release.md` y `repo\.agents\workflows\release.md`.

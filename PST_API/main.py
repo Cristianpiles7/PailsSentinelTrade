@@ -104,6 +104,10 @@ load_dotenv() # Carga variables desde el archivo .env
 # arranca en vez de caer en una credencial publica.
 WEB_PASSWORD = os.getenv("WEB_PASSWORD")
 
+# Entorno de pruebas (Tools/dev/arrancar_dev.py): copia de la BBDD, otro puerto, sin ordenes ni
+# tareas que actuen sobre la cuenta. Ver manual_docs/ENTORNO_PRUEBAS.md.
+ES_DEV = os.getenv("PST_ENTORNO") == "dev"
+
 
 from PST_Core.utils import alertas, backup_db, salud  # noqa: E402
 
@@ -171,8 +175,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error starting MT5 position sync: {e}")
 
+    if ES_DEV:
+        logger.warning("🧪 ENTORNO DE PRUEBAS: sin monitor/Telegram, sin proteccion de sesion y sin alertas de calendario.")
+
     # Iniciar Agente Monitor en segundo plano
     try:
+        if ES_DEV:
+            raise RuntimeError("desactivado en el entorno de pruebas")
         from PST_Core.engine.monitor_agent import PSTMonitorAgent
         from PST_Core.engine.telegram_manager import telegram_bot
 
@@ -187,6 +196,8 @@ async def lifespan(app: FastAPI):
     # Protección de cierre por horario (acciones antes de NYSE, todo antes del fin de semana). Vivía en
     # global_trade_management, que solo lanza el orquestador retirado: sin esta tarea no se cerraba nada.
     try:
+        if ES_DEV:
+            raise RuntimeError("desactivada en el entorno de pruebas (cierra posiciones reales)")
         from PST_Core.engine.executor import PSTExecutor
         session_executor = PSTExecutor(db=db, portfolio=portfolio)
 
@@ -204,8 +215,9 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error starting session protection: {e}")
 
     # Avisos por Telegram antes de cada bloqueo del calendario restringido (PST_API/llm_api.py)
-    from PST_API.llm_api import alertas_calendario
-    _lanzar(alertas_calendario())
+    if not ES_DEV:
+        from PST_API.llm_api import alertas_calendario
+        _lanzar(alertas_calendario())
 
     # Latido para el vigia externo (PST_UTIL/vigia_salud.py) y copia de seguridad diaria de la BBDD.
     async def _latido_loop():
@@ -340,6 +352,7 @@ async def health():
         "calendario_t": news_guard.last_update.timestamp() if news_guard.last_update else None,
         "copia_t": copia.stat().st_mtime if copia else None,
         "servidor_t": time.time(),
+        "entorno": "dev" if ES_DEV else "prod",
     }
 
 

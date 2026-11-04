@@ -43,7 +43,9 @@ def get_db_path():
             p = os.path.join(d, ".env")
             if os.path.exists(p):
                 print(f"DEBUG: Cargando .env desde {p}", file=sys.stderr)
-                load_dotenv(p, override=True)
+                # En el entorno de pruebas (Tools/dev/arrancar_dev.py) las variables ya vienen fijadas
+                # (otra BBDD, otro puerto): el .env de produccion no puede pisarlas.
+                load_dotenv(p, override=os.getenv("PST_ENTORNO") != "dev")
                 break
         else:
             print("DEBUG: No se encontro archivo .env en las rutas buscadas.", file=sys.stderr)

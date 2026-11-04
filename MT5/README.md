@@ -1,5 +1,8 @@
 # MT5 — Estrategias en producción (PailsSentinelMT5TradeV2)
 
+> **En desarrollo (rama `feature/eas-mt5`):** gestión de los EAs desde la app y por agentes.
+> Plan y estado: [DESARROLLO_EAS.md](DESARROLLO_EAS.md). Catálogo de despliegues: [CATALOGO_EAS.md](CATALOGO_EAS.md).
+
 Migrado desde `PailsSentinelMT5TradeV2` (proyecto separado, EAs en MQL5 puro para MetaTrader 5,
 cuenta FTMO-Demo). Contiene solo lo que está **actualmente activo en demo**, no el histórico de
 hipótesis descartadas ni las herramientas de cribado en Python — ese proceso de investigación

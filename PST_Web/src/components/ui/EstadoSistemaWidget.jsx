@@ -56,8 +56,17 @@ export function EstadoSistemaWidget({ url }) {
   const calendario = minutosDesde(salud.calendario_t)
   const copia = minutosDesde(salud.copia_t)
 
+  const dev = salud.entorno === 'dev'
+  if (dev) document.title = '[PRUEBAS] Pails Sentinel Trade'
+
   return (
     <div className="flex items-center gap-4 bg-zinc-900/50 px-5 py-2.5 rounded-2xl border border-zinc-800/50 text-[11px] font-bold uppercase tracking-widest">
+      {dev && (
+        <div className="fixed top-0 inset-x-0 z-[9999] bg-amber-500 text-black text-[11px] font-black uppercase tracking-widest text-center py-0.5 pointer-events-none">
+          Entorno de pruebas · copia de la BBDD · sin órdenes ni agentes
+        </div>
+      )}
+      {dev && <span className="px-2 py-0.5 rounded-md bg-amber-500 text-black">Pruebas</span>}
       <Activity size={14} className="text-zinc-500" />
       <Punto ok={salud.mt5} texto={salud.mt5 ? 'MT5 conectado' : 'MT5 desconectado'} />
       <Punto ok={calendario != null && calendario < MIN_CALENDARIO} texto={`Noticias ${formatear(calendario)}`} />

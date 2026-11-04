@@ -9,6 +9,12 @@
       "cwd": "PST_Web"
     },
     {
+      "name": "pst-dev",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["Tools/dev/arrancar_dev.py", "--web"],
+      "port": 5174
+    },
+    {
       "name": "pst-api",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "uvicorn", "PST_API.main:app", "--host", "127.0.0.1", "--port", "8000"],

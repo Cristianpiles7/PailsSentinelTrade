@@ -3,7 +3,7 @@ import { TradingChart } from './TradingChart';
 import { usePollingWhenVisible } from '../hooks/usePolling';
 import { LayoutGrid, Maximize2, Settings, RefreshCw, X } from 'lucide-react';
 
-const API_BASE = import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api";
+const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api");
 
 export function MultiChartWorkspace({ symbols, api }) {
     // Estado inicial: 4 ranuras (slots)
