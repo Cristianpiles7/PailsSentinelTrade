@@ -28,7 +28,10 @@ void PST_LogTrade(string eaName, string action, string symbol,
                    double lots, double price, double sl, double tp,
                    string comment = "")
   {
-   string fname = "PST_trade_log.csv";
+   // Common\Files es compartido por todos los terminales (vivo y tester portable): el tester escribe
+   // aparte para no mezclar operaciones simuladas con las reales.
+   string fname = (MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION))
+                  ? "PST_trade_log_tester.csv" : "PST_trade_log.csv";
    bool exists = FileIsExist(fname, FILE_COMMON);
 
    int fh = FileOpen(fname, FILE_READ|FILE_WRITE|FILE_CSV|FILE_ANSI|FILE_COMMON, ';');

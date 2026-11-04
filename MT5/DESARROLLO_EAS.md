@@ -153,6 +153,19 @@ controlado del terminal vivo fuera de horario.
 
 ## 7. Gotchas conocidos
 
+- ⚠️ **INCIDENTE 2026-11-04 — `mt5.initialize()` sin ruta se engancha al último terminal arrancado.**
+  Hay 31 llamadas así (PST_API, PST_LLM, PST_MCP, Tools). Al arrancar el terminal portable para las
+  pruebas, la app de producción y sus agentes pasaron a conectarse a él: a las 20:01:51 `PST_MASTER.exe`
+  (PID 8728) relanzó `C:\Users\crist\PST_MT5_Tester\terminal64.exe` y la flota operó a través de él
+  (misma cuenta demo, así que las órdenes son válidas). Consecuencias: el portable queda ocupado (no se
+  puede hacer backtest) y producción depende de un terminal que no es el suyo.
+  **Arreglo:** un único helper que llame a `mt5.initialize(path=<terminal vivo>)` con la ruta de la
+  configuración, usado en las 31 llamadas. Requiere release. Hasta entonces, **no arrancar el portable**
+  mientras producción esté abierta, o asumir que producción se puede enganchar a él.
+- Common\Files es compartido por todos los terminales del usuario: el tester escribía sus operaciones
+  simuladas en `PST_trade_log.csv` (corregido: ahora `PST_trade_log_tester.csv`), y el entorno de pruebas
+  usa la carpeta de control `PST_EA_DEV` para no tocar los EAs reales.
+
 - El terminal solo escanea `MQL5\Experts\` al arrancar: un `.ex5` nuevo no aparece en el tester
   hasta reiniciar. En el portable no importa (se lanza de cero en cada backtest).
 - `WebRequest()` no funciona en el Strategy Tester: un EA que llame a un LLM no se puede backtestear.
