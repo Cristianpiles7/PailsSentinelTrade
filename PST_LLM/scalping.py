@@ -355,8 +355,13 @@ def abrir(mt5, con, cfg, symbol, d, snap, cuenta):
         ok, txt, _ = lt.enviar_orden(mt5, req, cuenta)
         if not ok:
             return False, f"orden no enviada: {txt}"
-        pos = pos_mt5(mt5, symbol)
-        ticket = max(pos, key=lambda p: p.time).ticket if pos else None
+        pos = []
+        for _ in range(10):      # el broker tarda un momento en mostrar la posicion
+            pos = pos_mt5(mt5, symbol)
+            if pos:
+                break
+            time.sleep(0.5)
+        ticket = max(pos, key=lambda p: p.time).ticket if pos else None   # None: vigilar_live lo recupera
     con.execute("""INSERT INTO operaciones (symbol, modo, lado, abierta, epoch_abre, precio, sl, tp, dist, lotes,
                    riesgo_eur, ticket, estado, coste_r, setup, motivo_entrada, invalidacion)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'abierta',?,?,?,?)""",
@@ -438,21 +443,43 @@ def vigilar_sim(mt5, con, cfg, fila, snap):
     return None
 
 
+def _cerrar_desde_historial(mt5, con, fila):
+    """La posicion real ya no esta en MT5: cierra la fila con los deals de MT5. Si la fila no tiene ticket
+    (no se pudo leer al abrir), lo saca del deal de entrada mas cercano a su apertura.
+    Devuelve el motivo de cierre, o None si MT5 todavia no tiene la salida (se reintenta en la siguiente vuelta)."""
+    deals = [d for d in (mt5.history_deals_get(fila["epoch_abre"] - 300, int(time.time()) + 60) or [])
+             if d.magic == MAGIC and d.symbol == fila["symbol"]]
+    if fila["ticket"] is None:
+        entradas = [d for d in deals if d.entry == 0 and d.time >= fila["epoch_abre"] - 120]
+        if not entradas:
+            return None
+        fila["ticket"] = min(entradas, key=lambda d: abs(d.time - fila["epoch_abre"])).position_id
+        con.execute("UPDATE operaciones SET ticket=? WHERE id=?", (fila["ticket"], fila["id"]))
+        con.commit()
+    deals = [d for d in deals if d.position_id == fila["ticket"]]
+    salida = [d for d in deals if d.entry == 1]
+    if not salida:
+        return None
+    total = sum(d.profit + d.commission + d.swap + getattr(d, "fee", 0.0) for d in deals)
+    motivo = {4: "stop", 5: "objetivo"}.get(salida[-1].reason, "mt5")
+    if motivo == "stop" and fila["be_movido"]:
+        motivo = "be"
+    cerrar_fila(con, fila, salida[-1].price, motivo, total / fila["riesgo_eur"] if fila["riesgo_eur"] else 0.0)
+    return motivo
+
+
 def vigilar_live(mt5, con, cfg, fila, snap):
     """Operacion real: si MT5 ya no la tiene, la cierra en el registro con el resultado de sus deals."""
     tick = snap["tick"]
     if fila["ticket"] is None:
-        return None
+        abiertas_mt5 = pos_mt5(mt5, fila["symbol"])
+        if not abiertas_mt5:
+            return _cerrar_desde_historial(mt5, con, fila)
+        fila["ticket"] = abiertas_mt5[0].ticket
+        con.execute("UPDATE operaciones SET ticket=? WHERE id=?", (fila["ticket"], fila["id"]))
+        con.commit()
     if not mt5.positions_get(ticket=fila["ticket"]):
-        deals = mt5.history_deals_get(position=fila["ticket"]) or []
-        total = sum(d.profit + d.commission + d.swap + getattr(d, "fee", 0.0) for d in deals)
-        salida = [d for d in deals if d.entry == 1]
-        motivo = {4: "stop", 5: "objetivo"}.get(salida[-1].reason, "mt5") if salida else "mt5"
-        if motivo == "stop" and fila["be_movido"]:
-            motivo = "be"
-        precio = salida[-1].price if salida else fila["precio"]
-        cerrar_fila(con, fila, precio, motivo, total / fila["riesgo_eur"] if fila["riesgo_eur"] else 0.0)
-        return motivo
+        return _cerrar_desde_historial(mt5, con, fila)
     if toca_be(cfg, fila, precio=tick.bid if fila["lado"] == "buy" else tick.ask):
         mover_sl_live(mt5, con, fila, snap, fila["precio"])
     if tick.time - fila["epoch_abre"] >= cfg["max_hold_min"] * 60:
@@ -522,7 +549,7 @@ def vigilar_sombras(mt5, con, cfg, symbol, tick):
 def cerrar_live(mt5, con, fila, snap, motivo):
     p = [x for x in pos_mt5(mt5, fila["symbol"]) if x.ticket == fila["ticket"]]
     if not p:
-        return None
+        return _cerrar_desde_historial(mt5, con, fila)
     p = p[0]
     tick, info = snap["tick"], snap["info"]
     compra = p.type == 0
