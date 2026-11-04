@@ -186,6 +186,30 @@ function Historial({ api, API_BASE }) {
   )
 }
 
+function Planificador({ api, API_BASE, setError }) {
+  const [e, setE] = useState(null)
+  const cargar = useCallback(() => api.get(`${API_BASE}/eas/planificador`).then(r => setE(r.data)).catch(() => {}), [api, API_BASE])
+  useEffect(() => { cargar() }, [cargar])
+  usePollingWhenVisible(cargar, 10000)
+  if (!e) return null
+  const lanzar = async () => {
+    try { await api.post(`${API_BASE}/eas/planificador/lanzar`); await cargar() } catch (err) { setError(err?.response?.data?.detail || 'No se pudo lanzar') }
+  }
+  return (
+    <div className={TARJETA}>
+      <div className="flex flex-wrap items-center gap-4 mb-2">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Planificador de agentes</p>
+        <Punto ok={e.activo} aviso={!e.activo} texto={e.activo ? `Cada noche a las ${e.hora}` : 'Apagado'} />
+        <span className="text-[10px] uppercase tracking-wider text-zinc-400">Última: {fecha(e.ultima)}{e.motivo ? ` (${e.motivo})` : ''}</span>
+        {e.en_curso && <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 animate-pulse">En curso</span>}
+        <button className={`${BTN_NEUTRO} ml-auto`} disabled={e.en_curso} onClick={lanzar}>Lanzar ahora</button>
+      </div>
+      <p className="text-[11px] text-zinc-600 mb-2">Decide qué agentes tocan (mejora-eas a diario, nuevas-eas los domingos, flota según sus puertas) y respeta los topes de cuota. Si no hay trabajo, no gasta nada.</p>
+      {!!e.log?.length && <pre className="text-[10px] text-zinc-400 bg-black/40 rounded-lg p-2 max-h-48 overflow-auto whitespace-pre-wrap">{e.log.join('\n')}</pre>}
+    </div>
+  )
+}
+
 // Etiquetas y tipos de la configuracion global (claves de PST_Core/ea/store.py CONFIG_DEFECTO)
 const CAMPOS = [
   ['Terminales', [
@@ -204,6 +228,10 @@ const CAMPOS = [
     ['tester_sin_freno_total', 'Backtest sin el freno de pérdida total de FTMO (recomendado para evaluar)', 'bool'],
   ]],
   ['Riesgo', [['mult_riesgo_max', 'Multiplicador de riesgo máximo por EA', 'numero']]],
+  ['Agentes automáticos (taller de EAs y flota)', [
+    ['planificador_activo', 'Lanzar el planificador de agentes cada noche', 'bool'],
+    ['planificador_hora', 'Hora (HH:MM). Solo corre en las 4 h siguientes', 'texto'],
+  ]],
   ['Criterios para aprobar un backtest', [
     ['criterio_pf_min', 'Profit factor mínimo', 'numero'],
     ['criterio_sharpe_min', 'Sharpe mínimo', 'numero'],
@@ -225,6 +253,7 @@ function Configuracion({ api, API_BASE, config, onCambio, setError }) {
   const pon = (k, x) => setCambios({ ...cambiosConf, [k]: x })
   return (
     <div className="flex flex-col gap-4">
+      <Planificador api={api} API_BASE={API_BASE} setError={setError} />
       {CAMPOS.map(([grupo, campos]) => (
         <div key={grupo} className={TARJETA}>
           <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">{grupo}</p>

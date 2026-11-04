@@ -17,13 +17,25 @@
 //|    PST_H25_VwapAdx_UK100_H1;UK100.cash;H1;1                      |
 //+------------------------------------------------------------------+
 #property copyright "PailsSentinelTrade"
-#property version   "1.00"
+#property version   "1.21"
 #property strict
 
 input string InpPstControlDir = "PST_EA";
 input int    InpIntervaloSeg  = 10;
+// false = cargado a mano o con [StartUp]: abre un grafico propio con su plantilla (que lo pone a true) y se
+// retira. Asi queda en un grafico normal, que el terminal guarda en el perfil y recarga en cada arranque.
+input bool   InpPersistente   = false;
 
 #define MAX_DESP 128
+#define MAX_GRAFICOS 300   // tope de vueltas al recorrer graficos
+
+// ChartNext() puede devolver el MISMO grafico mientras el terminal cierra graficos (visto el 2026-11-04: el
+// gestor se quedo colgado en un bucle infinito tras cerrar 9). Si se repite, se corta el recorrido.
+long SiguienteGrafico(const long c)
+  {
+   long n = ChartNext(c);
+   return (n == c) ? -1 : n;
+  }
 
 string   g_id[MAX_DESP];
 string   g_sym[MAX_DESP];
@@ -92,11 +104,11 @@ bool LeerDespliegues()
 long ChartConEa(const string id)
   {
    long c = ChartFirst();
-   while(c >= 0)
+   for(int vueltas = 0; c >= 0 && vueltas < MAX_GRAFICOS; vueltas++)
      {
       if(ChartGetString(c, CHART_EXPERT_NAME) == id)
          return c;
-      c = ChartNext(c);
+      c = SiguienteGrafico(c);
      }
    return 0;
   }
@@ -104,11 +116,11 @@ long ChartConEa(const string id)
 bool ChartExiste(const long cid)
   {
    long c = ChartFirst();
-   while(c >= 0)
+   for(int vueltas = 0; c >= 0 && vueltas < MAX_GRAFICOS; vueltas++)
      {
       if(c == cid)
          return true;
-      c = ChartNext(c);
+      c = SiguienteGrafico(c);
      }
    return false;
   }
@@ -200,6 +212,79 @@ void EscribirEstado()
   }
 
 //+------------------------------------------------------------------+
+//| Ordenes de la app: Common\Files\<dir>\gestor_ordenes.csv         |
+//|   orden;token      (cada token se ejecuta una sola vez)          |
+//|   cerrar_sin_ea    cierra los graficos que no tienen ningun EA   |
+//|   reaplicar        vuelve a aplicar la plantilla (estilo e        |
+//|                    inputs) a los graficos de los EAs del gestor  |
+//+------------------------------------------------------------------+
+void CerrarSinEa()
+  {
+   long cerrar[];
+   int n = 0;
+   long c = ChartFirst();
+   for(int vueltas = 0; c >= 0 && vueltas < MAX_GRAFICOS; vueltas++)
+     {
+      // Sin EA, CHART_EXPERT_NAME devuelve una cadena NULA (no ""): comparar con "" falla. Se mira la longitud.
+      string ea = ChartGetString(c, CHART_EXPERT_NAME);
+      if(c != ChartID() && StringLen(ea) == 0)
+        {
+         ArrayResize(cerrar, n + 1);
+         cerrar[n++] = c;
+        }
+      c = SiguienteGrafico(c);
+     }
+   for(int i = 0; i < n; i++)
+      ChartClose(cerrar[i]);
+   PrintFormat("[PST_Gestor] orden cerrar_sin_ea: %d graficos cerrados", n);
+  }
+
+void Reaplicar()
+  {
+   int n = 0;
+   for(int k = 0; k < g_n; k++)
+     {
+      if(g_instalar[k] != 1)
+         continue;
+      long c = ChartConEa(g_id[k]);
+      if(c != 0 && ChartApplyTemplate(c, "\Profiles\Templates\PST_EA\\" + g_id[k] + ".tpl"))
+         n++;
+     }
+   PrintFormat("[PST_Gestor] orden reaplicar: plantilla aplicada a %d graficos", n);
+  }
+
+void AtenderOrdenes()
+  {
+   int fh = FileOpen(InpPstControlDir + "\gestor_ordenes.csv",
+                     FILE_READ|FILE_CSV|FILE_ANSI|FILE_COMMON|FILE_SHARE_READ|FILE_SHARE_WRITE, ';');
+   if(fh == INVALID_HANDLE)
+      return;
+   bool cabecera = true;
+   while(!FileIsEnding(fh))
+     {
+      string orden = FileReadString(fh);
+      if(FileIsEnding(fh) && orden == "")
+         break;
+      string token = FileReadString(fh);
+      while(!FileIsLineEnding(fh) && !FileIsEnding(fh))
+         FileReadString(fh);
+      if(cabecera) { cabecera = false; continue; }
+      string gv = "PST_Gestor_" + orden;
+      double tok = StringToDouble(token);
+      if(tok == 0 || (GlobalVariableCheck(gv) && GlobalVariableGet(gv) == tok))
+         continue;
+      GlobalVariableSet(gv, tok);                  // antes de ejecutar: una orden nunca se repite
+      if(orden == "cerrar_sin_ea")
+         CerrarSinEa();
+      else if(orden == "reaplicar")
+         Reaplicar();
+      else
+         PrintFormat("[PST_Gestor] orden desconocida: %s", orden);
+     }
+   FileClose(fh);
+  }
+
+//+------------------------------------------------------------------+
 void Ciclo()
   {
    if(!LeerDespliegues())
@@ -228,6 +313,7 @@ void Ciclo()
             g_abiertoIntentos[a] = 0;              // cargado: se reinicia el contador
         }
      }
+   AtenderOrdenes();
    EscribirEstado();
   }
 
@@ -236,6 +322,46 @@ int OnInit()
   {
    if(MQLInfoInteger(MQL_TESTER))
       return(INIT_FAILED);                         // el gestor no tiene sentido en el tester
+
+   if(!InpPersistente)
+     {
+      // Cargado a mano o con [StartUp] (ese grafico no se guarda en el perfil). Si ya hay un gestor
+      // persistente, este sobra. Si no, abre un grafico propio con la plantilla del gestor y se retira.
+      long c = ChartFirst();
+      for(int vueltas = 0; c >= 0 && vueltas < MAX_GRAFICOS; vueltas++)
+        {
+         if(c != ChartID() && ChartGetString(c, CHART_EXPERT_NAME) == "PST_Gestor")
+           {
+            Print("[PST_Gestor] ya hay un gestor en este terminal: este se retira.");
+            ExpertRemove();
+            return(INIT_SUCCEEDED);
+           }
+         c = SiguienteGrafico(c);
+        }
+      long nuevo = ChartOpen("EURUSD", PERIOD_H1);
+      if(nuevo != 0 && ChartApplyTemplate(nuevo, "\\Profiles\\Templates\\PST_EA\\PST_Gestor.tpl"))
+        {
+         PrintFormat("[PST_Gestor] gestor persistente creado en el grafico %I64d; este se retira.", nuevo);
+         ExpertRemove();
+         return(INIT_SUCCEEDED);
+        }
+      Print("[PST_Gestor] no se pudo crear el grafico persistente (falta la plantilla?): sigo aqui, sin persistencia.");
+     }
+   else
+     {
+      // Dos persistentes a la vez (no deberia pasar): se queda el de id de grafico menor.
+      long c = ChartFirst();
+      for(int vueltas = 0; c >= 0 && vueltas < MAX_GRAFICOS; vueltas++)
+        {
+         if(c < ChartID() && ChartGetString(c, CHART_EXPERT_NAME) == "PST_Gestor")
+           {
+            Print("[PST_Gestor] hay otro gestor persistente: este se retira.");
+            ExpertRemove();
+            return(INIT_SUCCEEDED);
+           }
+         c = SiguienteGrafico(c);
+        }
+     }
    FolderCreate(InpPstControlDir, FILE_COMMON);
    EventSetTimer(MathMax(InpIntervaloSeg, 3));
    PrintFormat("[PST_Gestor] arrancado. Carpeta de control: Common\\Files\\%s", InpPstControlDir);

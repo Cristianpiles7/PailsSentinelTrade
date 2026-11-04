@@ -26,7 +26,7 @@ Versión 2.0 = la misma lógica que la v1 del proyecto original + control desde 
 | `PST_BollingerRsi_EURGBP_H4` | Bollinger + RSI (reversión a la media) | EURGBP | H4 | 100500 | 2.0 | pausada |
 | `PST_BollingerRsi_AUDCAD_H4` | Bollinger + RSI (reversión a la media) | AUDCAD | H4 | 100501 | 2.0 | pausada |
 | `PST_BollingerRsi_GBPAUD_H4` | Bollinger + RSI (reversión a la media) | GBPAUD | H4 | 100502 | 2.0 | pausada |
-| `PST_BollingerRsi_GBPUSD_H4` | Bollinger + RSI (reversión a la media) | GBPUSD | H4 | 100503 | 2.0 | pausada |
+| `PST_BollingerRsi_GBPUSD_H4` | Bollinger + RSI (reversión a la media) | GBPUSD | H4 | 100503 | 2.0 | **activa ×0,5** |
 | `PST_GapFill_JP225_D1` | Relleno de gap de apertura | JP225.cash | D1 | 100700 | 2.0 | pausada |
 | `PST_RelativeStrength_AAPL_H1` | Fuerza relativa frente a US500.cash | AAPL | H1 | 101000 | 2.0 | pausada |
 | `PST_RelativeStrength_MSFT_H1` | Fuerza relativa frente a US500.cash | MSFT | H1 | 101001 | 2.0 | pausada |
@@ -34,10 +34,10 @@ Versión 2.0 = la misma lógica que la v1 del proyecto original + control desde 
 | `PST_VwapAdx_UK100_H1` | Reversión a VWAP de sesión + ADX | UK100.cash | H1 | 101100 | 2.0 | pausada |
 | `PST_LiquiditySweep_EURUSD_M5` | Fade de barrido de liquidez | EURUSD | M5 | 101800 | 2.0 | pausada |
 | `PST_MacdMomentum_GER40_H1` | Momentum MACD + ADX + EMA200 | GER40.cash | H1 | 101300 | 2.0 | pausada |
-| `PST_Ichimoku_GER40_H1` | Tendencia Ichimoku (nube + Tenkan/Kijun) | GER40.cash | H1 | 102001 | 2.0 | pausada |
+| `PST_Ichimoku_GER40_H1` | Tendencia Ichimoku (nube + Tenkan/Kijun) | GER40.cash | H1 | 102001 | 2.0 | **activa ×0,5** |
 | `PST_Ichimoku_CADJPY_H4` | Tendencia Ichimoku (nube + Tenkan/Kijun) | CADJPY | H4 | 102003 | 2.0 | pausada |
 | `PST_DonchianVolumen_AAPL_H1` | Ruptura Donchian + volumen + tendencia | AAPL | H1 | 101900 | 2.0 | pausada |
-| `PST_DonchianVolumen_TSLA_H1` | Ruptura Donchian + volumen + tendencia | TSLA | H1 | 101901 | 2.0 | pausada |
+| `PST_DonchianVolumen_TSLA_H1` | Ruptura Donchian + volumen + tendencia | TSLA | H1 | 101901 | 2.0 | **activa ×0,5** |
 | `PST_GapAndGo_AAPL_H1` | Gap and go (hueco confirmado tras 1h) | AAPL | H1 | 101902 | 2.0 | pausada |
 
 Notas:
@@ -100,6 +100,7 @@ Notas:
 | Fecha | EA | Cambio | Quién | Aprobado por |
 |---|---|---|---|---|
 | 2026-09-02 | Los 9 EAs | Migrados desde `PailsSentinelMT5TradeV2` a `MT5/` | — | — |
+| 2026-11-04 | DonchianVolumen_TSLA_H1, BollingerRsi_GBPUSD_H4, Ichimoku_GER40_H1 | Instalados en el terminal vivo y **activados con riesgo ×0,5** (interruptor general encendido). Aprobados en la línea base (Ichimoku con ×0,5) | Claude | Usuario |
 | 2026-11-04 | Todos | v2.0: un fichero por despliegue (9 → 16), control desde la app, posiciones por magic, nombres sin códigos de hipótesis. Magics nuevos: 100501–100503, 101001–101002 | Claude | Usuario |
 
 ## 4. Ideas y descartadas

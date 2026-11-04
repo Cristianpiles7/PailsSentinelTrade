@@ -117,7 +117,12 @@ posiciones, compilar, backtest (con IS/OOS), latido y estado del gestor.
       por token y retirada responden en < 6 s
 - [x] Backtest de regresión v2 = v1: idéntico (+85,14 €, PF 1,18, 17 ops)
 - [x] Bloqueo de aperturas en pruebas (`InpPstBloquearAperturas`): ni `AllowLiveTrading=0` ni `expertmode` quitan el permiso
-- [ ] Instalar el gestor en el terminal vivo (una vez) y comprobar si detecta un `.ex5` nuevo sin reiniciar
+- [x] Gestor en el terminal vivo, **persistente** (v1.21): si se carga a mano o con `[StartUp]`, abre su propio gráfico con
+      su plantilla (`InpPersistente=true`) y se retira; ese gráfico queda en el perfil y vuelve en cada arranque
+- [x] Órdenes al gestor desde la app (`gestor_ordenes.csv`, una vez por token): `cerrar_sin_ea`, `reaplicar`
+- [x] Gráficos con el estilo del usuario (velas, fondo negro, sin cuadrícula, verde/rojo): `control.ESTILO_GRAFICO`
+- [x] 3 EAs activos ×0,5 (DonchianVolumen TSLA, BollingerRsi GBPUSD, Ichimoku GER40)
+- [x] Programador de agentes dentro de la app (`PST_Core/ea/planificador.py`), sin tarea de Windows
 - [ ] Tope de riesgo común EAs + flota LLM (hoy cada uno vigila el suyo)
 
 ### Fase 2 — Compilar y backtest automáticos (código hecho)
@@ -148,6 +153,12 @@ posiciones, compilar, backtest (con IS/OOS), latido y estado del gestor.
 - El terminal solo escanea `MQL5\Experts\` al arrancar: un `.ex5` nuevo no aparece en el tester hasta reiniciar.
   En el portable da igual (arranca de cero en cada backtest). En el vivo está por comprobar con el gestor.
 - `WebRequest()` no funciona en el Strategy Tester.
+- **Recompilar un EA no lo recarga** en el terminal: hay que reiniciar el terminal (los EAs del perfil vuelven solos).
+- Un EA cargado con `[StartUp]` del `.ini` **no se guarda en el perfil** (por eso el gestor se recrea en un gráfico propio).
+- `CHART_EXPERT_NAME` de un gráfico sin EA devuelve una cadena **nula**, no `""`: comparar con `StringLen`.
+- `ChartNext()` puede repetir el mismo gráfico mientras se cierran gráficos: bucles con tope (`SiguienteGrafico`).
+- Cerrar el terminal puede tardar 15–60 s. Al reiniciar: esperar a que salga y relanzarlo si la app no lo ha hecho
+  (el 2026-11-04 producción estuvo 1 min 40 s sin MT5 por no esperar).
 - Logs de MetaEditor e informes del tester en UTF-16. Las etiquetas del informe dependen del idioma del terminal
   (el parser lee español e inglés).
 - Includes `<PST_V2\...>`: en cada terminal tienen que estar en `MQL5\Include\PST_V2\` (`mt5cli` los copia).
@@ -185,3 +196,4 @@ Dos agentes que corren solos desde el planificador nocturno (`.agents/scheduler.
   `PST_Control.mqh`, `PST_Gestor.mq5`, `PST_Core/ea`, API, sección EAs MT5, tools MCP `ea_*`, agentes actualizados.
   Incidente de conexión MT5 detectado y arreglado en código (pendiente de release).
 - **2026-11-04** — Release v2.8.0 publicada y en producción (conexión a MT5 ya con ruta: producción no volvió a engancharse al portable). Probado en MT5 el control y el gestor; regresión v2 = v1; línea base de 2 años: 2 de 16 aprobados. Backtests de evaluación sin el freno de pérdida total. Bloqueo de aperturas en pruebas.
+- **2026-11-04 (noche)** — Gestor persistente en el terminal vivo, órdenes `cerrar_sin_ea`/`reaplicar`, estilo de gráfico del usuario, 9 gráficos sin EA cerrados. 3 EAs activos ×0,5. Programador de agentes dentro de la app. Primera pasada real de `mejora-eas` (GapFill JP225: sin propuesta).

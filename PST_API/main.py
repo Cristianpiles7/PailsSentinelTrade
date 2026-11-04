@@ -262,6 +262,10 @@ async def lifespan(app: FastAPI):
         from PST_Core.ea import servicio as ea_servicio
         await asyncio.to_thread(ea_servicio.sincronizar)
         logger.info("✅ [EAs] Control de EAs sincronizado.")
+        if not ES_DEV:
+            from PST_Core.ea import planificador as ea_planificador
+            _lanzar(ea_planificador.bucle())
+            logger.info("✅ [EAs] Programador de agentes iniciado (lanza .agents/scheduler.py cada noche).")
     except Exception as e:
         logger.error(f"Error sincronizando el control de EAs: {e}")
 

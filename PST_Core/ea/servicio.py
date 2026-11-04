@@ -176,6 +176,20 @@ def retirar(despliegue_id, origen="app"):
     sincronizar()
 
 
+def orden_gestor(orden, origen="app"):
+    """cerrar_sin_ea: cierra los graficos sin EA del terminal. reaplicar: estilo/inputs de nuevo en los graficos."""
+    if origen != "app":
+        raise Prohibido("las ordenes al gestor solo las da el usuario")
+    if orden == "reaplicar":                      # plantillas al dia antes de reaplicarlas
+        datos, _ = terminal_ejecucion()
+        for d in store.listar():
+            if d["instalar"]:
+                control.escribir_plantilla(datos, d)
+    token = control.escribir_orden_gestor(orden)
+    store.evento(None, f"gestor_{orden}", f"token {token}", origen)
+    return {"token": token}
+
+
 # ------------------------------------------------------------------ compilar y backtest
 def compilar(despliegue_id, origen="app"):
     """Compila en el terminal de PRUEBAS (portable). No toca el terminal vivo."""

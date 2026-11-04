@@ -47,15 +47,26 @@ def escribir_despliegue(despliegues):
     _escribir_atomico(rutas.carpeta_control() / "despliegue.csv", "\r\n".join(lineas) + "\r\n")
 
 
+# Estilo de los graficos del usuario (copiado de su perfil el 2026-11-04): velas, fondo negro, sin cuadricula,
+# alcistas en verde y bajistas en rojo. Colores en formato MT5 (BGR decimal): 0 negro, 65280 verde, 255 rojo.
+ESTILO_GRAFICO = {
+    "mode": 1, "grid": 0, "fore": 0, "volume": 0, "ohlc": 0, "bidline": 1, "askline": 0,
+    "background_color": 0, "foreground_color": 16777215, "barup_color": 65280, "bardown_color": 255,
+    "bullcandle_color": 65280, "bearcandle_color": 255, "chartline_color": 65280, "volumes_color": 3329330,
+    "grid_color": 10061943, "bidline_color": 10061943, "askline_color": 255, "stops_color": 255,
+}
+
+
 def plantilla(despliegue, inputs=None):
-    """Plantilla de grafico minima con el EA cargado y la carpeta de control correcta."""
+    """Plantilla de grafico: estilo del usuario + el EA con la carpeta de control correcta."""
     entradas = {"InpPstControlDir": rutas.carpeta_control_nombre(), **(inputs or {})}
     if rutas.ES_DEV:
         # En pruebas el EA nunca abre operaciones. Ni AllowLiveTrading=0 del terminal ni expertmode de la
         # plantilla le quitan el permiso de forma fiable (probado 2026-11-04): el bloqueo va en el propio EA.
         entradas["InpPstBloquearAperturas"] = "true"
     lineas_inputs = "\r\n".join(f"{k}={v}" for k, v in entradas.items())
-    return ("<chart>\r\n<expert>\r\n"
+    estilo = "".join(f"{k}={v}\r\n" for k, v in ESTILO_GRAFICO.items())
+    return ("<chart>\r\n" + estilo + "<expert>\r\n"
             f"name={despliegue['id']}\r\n"
             f"path=Experts\\PST_V2\\{despliegue['id']}.ex5\r\n"
             "expertmode=5\r\n"
@@ -63,10 +74,44 @@ def plantilla(despliegue, inputs=None):
             "</expert>\r\n</chart>\r\n")
 
 
+def plantilla_gestor():
+    """Plantilla del propio gestor: se la aplica a si mismo para quedar guardado en el perfil del terminal."""
+    estilo = "".join(f"{k}={v}\r\n" for k, v in ESTILO_GRAFICO.items())
+    return ("<chart>\r\n" + estilo + "<expert>\r\nname=PST_Gestor\r\npath=Experts\\PST_V2\\PST_Gestor.ex5\r\n"
+            "expertmode=5\r\n<inputs>\r\n"
+            f"InpPstControlDir={rutas.carpeta_control_nombre()}\r\nInpIntervaloSeg=10\r\nInpPersistente=true\r\n"
+            "</inputs>\r\n</expert>\r\n</chart>\r\n")
+
+
+def escribir_plantilla_gestor(terminal_datos):
+    ruta = Path(terminal_datos) / "MQL5" / "Profiles" / "Templates" / "PST_EA" / "PST_Gestor.tpl"
+    _escribir_atomico(ruta, plantilla_gestor())
+    return ruta
+
+
 def escribir_plantilla(terminal_datos, despliegue, inputs=None):
     ruta = Path(terminal_datos) / "MQL5" / "Profiles" / "Templates" / "PST_EA" / f"{despliegue['id']}.tpl"
     _escribir_atomico(ruta, plantilla(despliegue, inputs))
     return ruta
+
+
+ORDENES_GESTOR = ("cerrar_sin_ea", "reaplicar")
+
+
+def escribir_orden_gestor(orden):
+    """Orden para el gestor (se ejecuta una vez por token). Conserva el ultimo token de cada orden."""
+    if orden not in ORDENES_GESTOR:
+        raise ValueError(f"orden desconocida: {orden}")
+    ruta = rutas.carpeta_control() / "gestor_ordenes.csv"
+    tokens = {}
+    if ruta.exists():
+        for linea in ruta.read_text(encoding="latin-1").splitlines()[1:]:
+            if ";" in linea:
+                o, t = linea.split(";", 1)
+                tokens[o.strip()] = t.strip()
+    tokens[orden] = str(int(time.time()))
+    _escribir_atomico(ruta, "orden;token\r\n" + "".join(f"{o};{t}\r\n" for o, t in tokens.items()))
+    return tokens[orden]
 
 
 def _leer_clave_valor(ruta: Path):

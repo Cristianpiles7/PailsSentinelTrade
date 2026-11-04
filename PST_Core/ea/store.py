@@ -32,6 +32,8 @@ CONFIG_DEFECTO = {
     "tester_sin_freno_total": True,       # backtest sin el freno de perdida TOTAL de FTMO (1000 EUR): si no, la
                                           # primera mala racha para el EA para siempre y no se ve la estrategia
     "mult_riesgo_max": 1.5,
+    "planificador_activo": True,          # la app lanza .agents/scheduler.py cada noche (PST_Core/ea/planificador.py)
+    "planificador_hora": "03:00",
     "agentes_pueden": ["pausar", "compilar", "backtest"],   # acciones que un agente hace sin aprobacion
     "criterio_pf_min": 1.2,
     "criterio_sharpe_min": 1.0,

@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from PST_Core.ea import mt5cli, servicio, store
+from PST_Core.ea import mt5cli, planificador, servicio, store
 
 router = APIRouter(prefix="/api/eas", tags=["EAs"])
 logger = logging.getLogger("PST-EAs")
@@ -110,6 +110,22 @@ async def eventos_globales(limite: int = 200):
     return await _hilo(store.eventos, None, limite)
 
 
+@router.get("/planificador")
+async def estado_planificador():
+    return await _hilo(planificador.estado)
+
+
+@router.post("/planificador/lanzar")
+async def lanzar_planificador():
+    from PST_Core.ea.rutas import ES_DEV
+    if ES_DEV:
+        raise HTTPException(400, "en el entorno de pruebas no se lanzan agentes")
+    r = await _hilo(planificador.lanzar, "manual desde la app")
+    if not r["ok"]:
+        raise HTTPException(409, r["error"])
+    return r
+
+
 @router.get("/trabajos")
 async def trabajos():
     return sorted(_trabajos.values(), key=lambda t: -t["inicio"])[:30]
@@ -133,6 +149,11 @@ async def backtests(despliegue_id: str):
 
 
 # ------------------------------------------------------------------ escritura
+@router.post("/gestor/{orden}")
+async def orden_gestor(orden: str):
+    return {"ok": True, **(await _hilo(servicio.orden_gestor, orden, "app"))}
+
+
 @router.post("/global")
 async def global_(body: GlobalRequest):
     await _hilo(servicio.interruptor_global, body.activo, "app")
