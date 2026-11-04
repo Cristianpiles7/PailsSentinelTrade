@@ -50,6 +50,10 @@ def escribir_despliegue(despliegues):
 def plantilla(despliegue, inputs=None):
     """Plantilla de grafico minima con el EA cargado y la carpeta de control correcta."""
     entradas = {"InpPstControlDir": rutas.carpeta_control_nombre(), **(inputs or {})}
+    if rutas.ES_DEV:
+        # En pruebas el EA nunca abre operaciones. Ni AllowLiveTrading=0 del terminal ni expertmode de la
+        # plantilla le quitan el permiso de forma fiable (probado 2026-11-04): el bloqueo va en el propio EA.
+        entradas["InpPstBloquearAperturas"] = "true"
     lineas_inputs = "\r\n".join(f"{k}={v}" for k, v in entradas.items())
     return ("<chart>\r\n<expert>\r\n"
             f"name={despliegue['id']}\r\n"

@@ -34,6 +34,8 @@
 // tester portable): el entorno de pruebas de la app usa "PST_EA_DEV" para no tocar los EAs reales.
 input group    "--- Control desde la app (PST_Control.mqh) ---"
 input string   InpPstControlDir = "PST_EA";
+// true = este EA no abre NUNCA operaciones, diga lo que diga control.csv. Lo pone el entorno de pruebas.
+input bool     InpPstBloquearAperturas = false;
 
 string          g_ctlEa        = "";
 long            g_ctlMagic     = 0;
@@ -195,6 +197,7 @@ void PST_Control_Latido(const string estado)
    FileWriteString(fh, "tf;" + EnumToString((ENUM_TIMEFRAMES)_Period) + "\r\n");
    FileWriteString(fh, StringFormat("cuenta;%I64d\r\n", AccountInfoInteger(ACCOUNT_LOGIN)));
    FileWriteString(fh, "puede_abrir;" + (PST_Control_PuedeAbrirSinLog() ? "1" : "0") + "\r\n");
+   FileWriteString(fh, "bloqueo_pruebas;" + (InpPstBloquearAperturas ? "1" : "0") + "\r\n");
    FileWriteString(fh, "activo_app;" + (g_ctlActivo ? "1" : "0") + "\r\n");
    FileWriteString(fh, "activo_global;" + (g_ctlGlobal ? "1" : "0") + "\r\n");
    FileWriteString(fh, StringFormat("mult_riesgo;%.2f\r\n", g_ctlMult));
@@ -215,6 +218,8 @@ bool PST_Control_PuedeAbrirSinLog()
   {
    if(PST_Control_EnTester())
       return true;
+   if(InpPstBloquearAperturas)
+      return false;
    return g_ctlLeido && g_ctlGlobal && g_ctlActivo && g_ctlMult > 0;
   }
 
