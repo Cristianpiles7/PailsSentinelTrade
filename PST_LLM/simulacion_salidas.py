@@ -30,6 +30,22 @@ BE_R, PARCIAL_R, RESTO_STOP_R = 1.0, 1.5, 0.5
 MINIMO_PASO = 150
 
 
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def simular(barras_r, tp_r, regla):
     """barras_r: [(minimo_R, maximo_R)] tras la entrada, con la entrada en 0 y el stop inicial en -1.
     Devuelve (R bruto, salida). 'abierta' si ninguna vela toco nada: se valora al ultimo extremo conservador."""
@@ -160,7 +176,7 @@ if __name__ == "__main__":
     ap.add_argument("--desde")
     a = ap.parse_args()
     import MetaTrader5 as mt5
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"MT5 no disponible: {mt5.last_error()}", file=sys.stderr)
         sys.exit(1)
     try:

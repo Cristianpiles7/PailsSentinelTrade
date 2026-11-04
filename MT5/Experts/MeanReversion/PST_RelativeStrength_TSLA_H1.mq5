@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
-//| PST_H20_RelativeStrength_AAPL_H1.mq5
-//| Despliegue: H20 - Fuerza relativa frente a US500.cash
-//| Simbolo AAPL | TF H1 | magic 101000 | version 2.0
+//| PST_RelativeStrength_TSLA_H1.mq5
+//| Estrategia: Fuerza relativa frente a US500.cash
+//| Simbolo TSLA | TF H1 | magic 101002 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
 //| Derivado de MeanReversion/PST_RelativeStrength_H1.mq5 (v1, ver git 329ff20). La cabecera original
@@ -55,13 +55,13 @@
 #include <PST_V2\PST_OptExport.mqh>
 #include <PST_V2\PST_Control.mqh>
 
-#define PST_DESPLIEGUE_SIMBOLO "AAPL"
+#define PST_DESPLIEGUE_SIMBOLO "TSLA"
 #define PST_DESPLIEGUE_TF      PERIOD_H1
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H20_RelativeStrength_AAPL_H1";
-input int      InpMagicNumber      = 101000;
+input string   EA_Name             = "PST_RelativeStrength_TSLA_H1";
+input int      InpMagicNumber      = 101002;
 
 input group    "--- Estrategia H20: fortaleza relativa vs indice ---"
 input string   InpIndexSymbol      = "US500.cash";

@@ -39,6 +39,22 @@ TF_S = {"M15": 900, "H1": 3600, "H4": 14400}
 
 
 # ── Indicadores (vectoriales por serie, recursivos como los de MT5) ──────────
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def ema(x, n):
     out, a = np.empty(len(x)), 2 / (n + 1)
     out[0] = x[0]
@@ -220,7 +236,7 @@ if __name__ == "__main__":
     ap.add_argument("--tp", type=float, default=2.0)
     a = ap.parse_args()
     import MetaTrader5 as mt5
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"MT5 no disponible: {mt5.last_error()}", file=sys.stderr)
         sys.exit(1)
     try:

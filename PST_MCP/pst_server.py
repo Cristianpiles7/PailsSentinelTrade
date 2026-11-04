@@ -85,6 +85,22 @@ LAB_TIMEOUT_S = 300
 
 
 # ── Acceso a BBDD ─────────────────────────────────────────────────────────────
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def query_db(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
     """Lectura en modo READ-ONLY (uri=...?mode=ro): el servidor no puede alterar datos
     por accidente desde una tool de consulta."""
@@ -112,7 +128,7 @@ def _mt5():
 
 def get_live_account_info():
     mt5 = _mt5()
-    if not mt5 or not mt5.initialize():
+    if not mt5 or not _pst_conectar_mt5(mt5):
         return None
     acc = mt5.account_info()
     result = None
@@ -233,6 +249,63 @@ async def handle_list_tools() -> List[Tool]:
                 "rationale": {"type": "string", "description": "Por que, en una o dos frases"},
                 "agent_run_id": {"type": "integer", "description": "Omitir: se resuelve a la ejecucion en curso"},
             }, "required": ["kind", "target", "rationale"]},
+        ),
+
+        # --- EAs de MT5 (PST_Core/ea, MT5/DESARROLLO_EAS.md) ---
+        Tool(
+            name="ea_listar",
+            description=("EAs de MT5: un registro por estrategia x simbolo x TF x magic, con estado, interruptor, "
+                         "multiplicador de riesgo, latido del EA en MT5 y ultimo backtest. Tambien la config "
+                         "(criterios de aprobacion y que puede hacer un agente sin aprobacion: agentes_pueden)."),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="ea_historial",
+            description="Eventos (quien hizo que y cuando) y backtests guardados de un EA, o de todos si se omite el id.",
+            inputSchema={"type": "object", "properties": {"id": {"type": "string"}, "limit": {"type": "integer", "default": 50}}},
+        ),
+        Tool(
+            name="ea_accion",
+            description=("ESCRIBE: accion sobre un EA. pausar (deja de abrir operaciones nuevas), activar, cerrar "
+                         "(cierra sus posiciones), riesgo (multiplicador en `valor`), instalar (compila en el terminal "
+                         "de ejecucion y lo pone en un grafico, entra pausado), retirar. Solo se ejecuta si la accion "
+                         "esta en agentes_pueden; si no, devuelve error y debes usar propose_change con target=<id del EA>."),
+            inputSchema={"type": "object", "properties": {
+                "id": {"type": "string"}, "accion": {"type": "string", "enum": ["pausar", "activar", "cerrar", "riesgo", "instalar", "retirar"]},
+                "valor": {"type": "number", "description": "Solo para riesgo"},
+                "motivo": {"type": "string", "description": "Por que, en una frase (queda en el historial)"},
+                "agente": {"type": "string", "description": "Tu nombre de agente (queda en el historial)"},
+            }, "required": ["id", "accion", "agente"]},
+        ),
+        Tool(
+            name="ea_compilar",
+            description="Compila el .mq5 del EA (MT5/Experts/<categoria>/<id>.mq5) en el terminal PORTABLE de pruebas. Devuelve errores y avisos.",
+            inputSchema={"type": "object", "properties": {"id": {"type": "string"}, "agente": {"type": "string"}}, "required": ["id", "agente"]},
+        ),
+        Tool(
+            name="ea_backtest",
+            description=("Backtest en el Strategy Tester del terminal portable (tarda de segundos a minutos). Con is_oos=true "
+                         "corre el periodo completo + 1a mitad (IS) + 2a mitad (OOS) y da un veredicto con los criterios de la app. "
+                         "Compila antes. Uno a la vez."),
+            inputSchema={"type": "object", "properties": {
+                "id": {"type": "string"}, "desde": {"type": "string", "description": "YYYY-MM-DD"},
+                "hasta": {"type": "string", "description": "YYYY-MM-DD"}, "is_oos": {"type": "boolean", "default": True},
+                "modelo": {"type": "integer", "description": "0 ticks, 1 OHLC M1, 2 apertura, 4 ticks reales. Omitir = el de la app"},
+                "agente": {"type": "string"},
+            }, "required": ["id", "desde", "hasta", "agente"]},
+        ),
+        Tool(
+            name="ea_alta",
+            description=("ESCRIBE: da de alta un EA nuevo ya escrito en MT5/Experts/<categoria>/<id>.mq5 (copia uno existente "
+                         "como base: debe incluir PST_Control.mqh y sus #define de simbolo/TF). Reglas: UN EA = una estrategia "
+                         "x un simbolo x un TF; id 'PST_<Estrategia>_<SIMBOLO>_<TF>' SIN codigos de hipotesis (H5, H25...); "
+                         "magic unico entre 100000 y 108999 (109xxx es de la flota LLM). Entra como 'experimental' y pausado."),
+            inputSchema={"type": "object", "properties": {
+                "id": {"type": "string"}, "estrategia": {"type": "string", "description": "Descripcion corta legible"},
+                "categoria": {"type": "string", "enum": ["MeanReversion", "TrendFollowing", "Breakout", "Experimental"]},
+                "simbolo": {"type": "string"}, "tf": {"type": "string", "enum": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]},
+                "magic": {"type": "integer"}, "agente": {"type": "string"},
+            }, "required": ["id", "estrategia", "categoria", "simbolo", "tf", "magic", "agente"]},
         ),
 
         # --- Mantenimiento explicito ---
@@ -457,7 +530,7 @@ async def _tool_sync_mt5_today(args):
     dia se reactiva start_v6, hay que quitar esta tool o hacerla de solo lectura antes.**
     """
     mt5 = _mt5()
-    if not mt5 or not mt5.initialize():
+    if not mt5 or not _pst_conectar_mt5(mt5):
         return {"error": "MT5 no disponible o desconectado"}
     from datetime import datetime, time as dt_time
     desde = datetime.combine(datetime.now().date(), dt_time.min)
@@ -495,7 +568,88 @@ async def _tool_list_active_trades(args):
     )
 
 
+# ── EAs de MT5: todo pasa por PST_Core/ea/servicio.py (mismos permisos que la app) ──
+def _ea():
+    from PST_Core.ea import servicio, store, rutas
+    return servicio, store, rutas
+
+
+def _origen(args):
+    return f"agente:{(args.get('agente') or 'desconocido').strip()[:40]}"
+
+
+async def _tool_ea_listar(args):
+    servicio, _, _ = _ea()
+    r = await asyncio.to_thread(servicio.resumen)
+    campos = ("id", "estrategia", "categoria", "simbolo", "tf", "magic", "version", "estado", "activo", "instalar", "mult_riesgo")
+    filas = []
+    for d in r["despliegues"]:
+        f = {k: d[k] for k in campos}
+        lat = d.get("latido") or {}
+        f["latido"] = {k: lat.get(k) for k in ("vivo", "puede_abrir", "posiciones", "flotante", "edad_s", "error")} if lat else None
+        ub = d.get("ultimo_backtest")
+        f["ultimo_backtest"] = {k: ub[k] for k in ("tramo", "desde", "hasta", "neto", "pf", "sharpe", "ops", "dd_equity_pct")} if ub else None
+        filas.append(f)
+    return {"entorno": r["entorno"], "gestor": r["gestor"], "config": r["config"], "despliegues": filas}
+
+
+async def _tool_ea_historial(args):
+    _, store, _ = _ea()
+    i, n = args.get("id"), int(args.get("limit", 50))
+    return {"eventos": await asyncio.to_thread(store.eventos, i, n),
+            "backtests": await asyncio.to_thread(store.backtests, i, n)}
+
+
+async def _tool_ea_accion(args):
+    servicio, _, _ = _ea()
+    i, accion, origen = args["id"], args["accion"], _origen(args)
+    f = {
+        "pausar": lambda: servicio.pausar(i, args.get("motivo", ""), origen),
+        "activar": lambda: servicio.activar(i, origen),
+        "cerrar": lambda: servicio.cerrar_posiciones(i, origen),
+        "riesgo": lambda: servicio.fijar_riesgo(i, args["valor"], origen),
+        "instalar": lambda: servicio.instalar(i, origen),
+        "retirar": lambda: servicio.retirar(i, origen),
+    }.get(accion)
+    if f is None:
+        return {"error": f"accion desconocida: {accion}"}
+    try:
+        return {"ok": True, "resultado": await asyncio.to_thread(f)}
+    except servicio.Prohibido as e:
+        return {"ok": False, "prohibido": True, "error": str(e)}
+
+
+async def _tool_ea_compilar(args):
+    servicio, _, _ = _ea()
+    try:
+        return await asyncio.to_thread(servicio.compilar, args["id"], _origen(args))
+    except servicio.Prohibido as e:
+        return {"ok": False, "prohibido": True, "error": str(e)}
+
+
+async def _tool_ea_backtest(args):
+    servicio, _, _ = _ea()
+    f = servicio.backtest_is_oos if args.get("is_oos", True) else servicio.backtest
+    try:
+        return await asyncio.to_thread(f, args["id"], args["desde"], args["hasta"], modelo=args.get("modelo"),
+                                       origen=_origen(args))
+    except servicio.Prohibido as e:
+        return {"ok": False, "prohibido": True, "error": str(e)}
+
+
+async def _tool_ea_alta(args):
+    servicio, store, rutas = _ea()
+    return await asyncio.to_thread(servicio.alta, {k: args[k] for k in ("id", "estrategia", "categoria", "simbolo", "tf", "magic")},
+                                   _origen(args))
+
+
 HANDLERS = {
+    "ea_listar": _tool_ea_listar,
+    "ea_historial": _tool_ea_historial,
+    "ea_accion": _tool_ea_accion,
+    "ea_compilar": _tool_ea_compilar,
+    "ea_backtest": _tool_ea_backtest,
+    "ea_alta": _tool_ea_alta,
     "get_trading_stats": _tool_get_trading_stats,
     "list_active_trades": _tool_list_active_trades,
     "get_drawdown_report": _tool_get_drawdown_report,

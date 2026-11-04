@@ -31,27 +31,39 @@ DOC = REPO_ROOT / "manual_docs" / "ESTRATEGIAS_ACTIVAS.md"
 START, END = "<!-- AUTO:START -->", "<!-- AUTO:END -->"
 HISTORY_DAYS = 400
 
-# magic -> (hipotesis / EA, simbolo, timeframe). Fuente: MT5/README.md. Si se despliega o se
-# retira una estrategia, se cambia AQUI y en el catalogo manual del documento.
+# magic -> (EA, simbolo, timeframe). Los EAs salen de MT5/despliegues.json (un EA por estrategia x simbolo x
+# TF, nombres sin codigos de hipotesis); aqui solo se anaden los historicos y los experimentos de la flota LLM.
+def _catalogo_eas():
+    import json
+    datos = json.loads((REPO_ROOT / "MT5" / "despliegues.json").read_text(encoding="utf-8"))["despliegues"]
+    return {int(d["magic"]): (d["id"].removeprefix("PST_"), d["simbolo"], d["tf"]) for d in datos}
+
+
 CATALOGO = {
-    100500: ("H5 Bollinger+RSI", "EURGBP/AUDCAD/GBPUSD/GBPAUD", "H4"),
-    100700: ("H12 GapFill", "JP225.cash", "D1"),
-    101000: ("H20 RelativeStrength", "AAPL/MSFT/TSLA", "H1"),
-    101100: ("H25 VWAP+ADX", "UK100.cash", "H1"),
-    101300: ("H28b MACD Momentum", "GER40.cash", "H1"),
-    101800: ("H21 LiquiditySweep (ventana A)", "EURUSD", "M5"),
-    101801: ("H21 LiquiditySweep (ventana B)", "EURUSD", "M5"),
-    101900: ("H41 Donchian+Volumen (AAPL)", "AAPL", "H1"),
-    101901: ("H41 Donchian+Volumen (TSLA)", "TSLA", "H1"),
-    101902: ("H42 GapAndGo", "AAPL", "H1"),
-    102001: ("H45 Ichimoku (GER40)", "GER40.cash", "H1"),
-    102003: ("H45 Ichimoku (CADJPY)", "CADJPY", "H4"),
+    **_catalogo_eas(),
+    101801: ("LiquiditySweep_EURUSD_M5 (variante retirada)", "EURUSD", "M5"),
     109001: ("Experimento: agente LLM BTCUSD (PST_LLM/llm_trader.py)", "BTCUSD", "M5"),
     109002: ("Experimento: agente LLM ETHUSD (PST_LLM/llm_trader.py)", "ETHUSD", "M5"),
     109003: ("Experimento: agente LLM XAUUSD (PST_LLM/llm_trader.py)", "XAUUSD", "M15"),
     109004: ("Experimento: agente LLM EURUSD (PST_LLM/llm_trader.py)", "EURUSD", "M15"),
     109005: ("Experimento: agente LLM US500.cash (PST_LLM/llm_trader.py)", "US500.cash", "M15"),
 }
+
+
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
 
 
 def _agrupar_operaciones(deals, abiertas):
@@ -171,7 +183,7 @@ def main():
     except ImportError:
         print("Falta el paquete MetaTrader5", file=sys.stderr)
         return 1
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"MT5 no disponible: {mt5.last_error()}", file=sys.stderr)
         return 1
     try:

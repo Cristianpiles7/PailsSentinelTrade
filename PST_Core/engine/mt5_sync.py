@@ -22,23 +22,11 @@ logger = logging.getLogger("PST-Sync")
 
 CHECK_INTERVAL_SEC = 15
 
-# Mapa magic number -> nombre de estrategia, fuente de verdad: MT5/README.md (migrado desde
-# PailsSentinelMT5TradeV2). Sin esto, cualquier posicion no abierta por el bot se etiquetaba
-# genericamente "AUTO_SYNC" en sync_mt5_history -- con el mapa, las 9 estrategias en produccion
-# aparecen con su nombre real en el historial/dashboard.
-MAGIC_STRATEGY_MAP = {
-    100500: "H5 Bollinger+RSI",
-    100700: "H12 GapFill",
-    101000: "H20 RelativeStrength",
-    101100: "H25 VWAP+ADX",
-    101300: "H28b MACD Momentum",
-    101800: "H21 LiquiditySweep",
-    101900: "H41 Donchian+Volumen (AAPL)",
-    101901: "H41 Donchian+Volumen (TSLA)",
-    101902: "H42 GapAndGo (AAPL)",
-    102001: "H45 Ichimoku (GER40.cash)",
-    102003: "H45 Ichimoku (CADJPY)",
-}
+# Mapa magic number -> nombre del EA. Fuente unica: MT5/despliegues.json (un EA por estrategia x simbolo x
+# TF). Sin esto, cualquier posicion no abierta por el bot se etiquetaba "AUTO_SYNC" en sync_mt5_history.
+from PST_Core.ea.rutas import nombres_por_magic
+
+MAGIC_STRATEGY_MAP = nombres_por_magic()
 
 
 class MT5PositionSync:

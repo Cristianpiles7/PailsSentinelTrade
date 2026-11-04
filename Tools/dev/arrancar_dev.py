@@ -99,6 +99,8 @@ def preparar_entorno(puerto, mt5_tester):
         if not MT5_TESTER.exists():
             sys.exit(f"[DEV] No encuentro el terminal de pruebas en {MT5_TESTER}")
         os.environ["PST_MT5_PATH"] = str(MT5_TESTER)
+        os.environ["PST_MT5_PORTABLE"] = "1"      # lo usa PST_Core/utils/terminal_mt5.py
+    # Sin --mt5-tester, PST_Core/utils/terminal_mt5.py conecta al terminal FTMO instalado (nunca al portable)
 
 
 def instalar_protecciones(permitir_ordenes):

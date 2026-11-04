@@ -49,6 +49,7 @@ jobs:
           --add-data "PST_Web/dist;PST_Web/dist" `
           --add-data "PST_LLM;PST_LLM" `
           --add-data "PST_Core;PST_Core" `
+          --add-data "MT5;MT5" `
           --add-data ".agents/run_agent.py;.agents" `
           --add-data ".agents/scheduler.py;.agents" `
           --paths "PST_LLM" `

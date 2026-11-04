@@ -1,59 +1,47 @@
-# MT5 — Estrategias en producción (PailsSentinelMT5TradeV2)
+# MT5 — EAs de PST
 
-> **En desarrollo (rama `feature/eas-mt5`):** gestión de los EAs desde la app y por agentes.
-> Plan y estado: [DESARROLLO_EAS.md](DESARROLLO_EAS.md). Catálogo de despliegues: [CATALOGO_EAS.md](CATALOGO_EAS.md).
+EAs en MQL5 puro para MetaTrader 5 (cuenta FTMO-Demo), gestionados desde la app (Estrategias → **EAs MT5**)
+y por agentes (tools `ea_*` del MCP `pst`). Migrados desde `PailsSentinelMT5TradeV2` el 2026-09-02.
 
-Migrado desde `PailsSentinelMT5TradeV2` (proyecto separado, EAs en MQL5 puro para MetaTrader 5,
-cuenta FTMO-Demo). Contiene solo lo que está **actualmente activo en demo**, no el histórico de
-hipótesis descartadas ni las herramientas de cribado en Python — ese proceso de investigación
-vive en el proyecto original si hace falta consultarlo.
+- **Qué EAs hay, estado y resultados:** [CATALOGO_EAS.md](CATALOGO_EAS.md)
+- **Cómo funciona el sistema, decisiones y pendientes:** [DESARROLLO_EAS.md](DESARROLLO_EAS.md)
+- **Lista canónica de EAs:** [despliegues.json](despliegues.json)
+
+## Reglas
+
+- **Un EA = una estrategia × un símbolo × un timeframe × un magic.** Un fichero por combinación; el EA se
+  niega a arrancar en otro símbolo o TF.
+- Nombre `PST_<Estrategia>_<SIMBOLO>_<TF>`, sin códigos de hipótesis.
+- Magic único entre 100000 y 108999 (109xxx es de la flota LLM).
+- Todos incluyen `PST_RiskManager.mqh`, `PST_Logger.mqh`, `PST_OptExport.mqh` y `PST_Control.mqh`.
+- Las posiciones se buscan por magic, nunca solo por símbolo.
 
 ## Estructura
 
 ```
 MT5/
+  despliegues.json          lista de EAs (la app da de alta desde aqui)
   Experts/
-    TrendFollowing/   PST_MacdMomentum_GER40_H1.mq5, PST_IchimokuTrend_GER40_H1.mq5
-    Breakout/         PST_DonchianVolumeBreakout_Stocks.mq5, PST_GapAndGo_AAPL_H1.mq5
-    MeanReversion/    PST_LiquiditySweepFade_EURUSD_M5.mq5, PST_MeanReversion_EURGBP_BB.mq5,
-                      PST_MeanReversion_GapFill_D1.mq5, PST_RelativeStrength_H1.mq5,
-                      PST_VwapReversion_ADX.mq5
-  Include/            PST_RiskManager.mqh, PST_Logger.mqh, PST_OptExport.mqh
-                      (los 3 son obligatorios para compilar cualquiera de los EAs anteriores)
-  docs/               broker-y-datos.md, politica-de-riesgo.md
+    MeanReversion/          PST_BollingerRsi_* (4), PST_GapFill_JP225_D1, PST_RelativeStrength_* (3),
+                            PST_VwapAdx_UK100_H1, PST_LiquiditySweep_EURUSD_M5
+    TrendFollowing/         PST_MacdMomentum_GER40_H1, PST_Ichimoku_GER40_H1, PST_Ichimoku_CADJPY_H4
+    Breakout/               PST_DonchianVolumen_AAPL_H1, PST_DonchianVolumen_TSLA_H1, PST_GapAndGo_AAPL_H1
+    Experimental/           EAs en investigacion (solo tester)
+    Sistema/                PST_Gestor.mq5 (pone/quita EAs de los graficos segun la app)
+  Include/                  PST_RiskManager.mqh, PST_Logger.mqh, PST_OptExport.mqh, PST_Control.mqh
+  docs/                     broker-y-datos.md, politica-de-riesgo.md
+  pruebas/                  ficheros de las pruebas de viabilidad
 ```
 
-Para instalar en un terminal MT5: copiar `Include/*.mqh` a `MQL5/Include/PST_V2/` de la carpeta de
-datos del terminal, y cada `.mq5` a su subcarpeta correspondiente dentro de `MQL5/Experts/PST_V2/`
-(los `#include` de los EAs los referencian como `<PST_V2\PST_RiskManager.mqh>`, etc.). Compilar
-con F7 en MetaEditor.
+## Instalación
 
-## Estrategias activas (9 despliegues, 9 ficheros)
+No se hace a mano: la app (botón **Instalar en el terminal**) o un agente (`ea_accion instalar`) copia los
+includes a `MQL5\Include\PST_V2\`, el `.mq5` a `MQL5\Experts\PST_V2\`, compila con MetaEditor, escribe la
+plantilla del gráfico y pide al gestor que lo cargue. Entra **pausado**. Una sola vez hay que cargar
+`PST_Gestor` en un gráfico cualquiera del terminal vivo (ver DESARROLLO_EAS.md §6).
 
-| Hipótesis | EA | Símbolo(s) | Timeframe | Magic | Idea |
-|---|---|---|---|---|---|
-| H5 | `PST_MeanReversion_EURGBP_BB.mq5` | EURGBP, AUDCAD, GBPAUD, GBPUSD | H4 | 100500 | Reversión a la media con Bandas de Bollinger + RSI |
-| H12 | `PST_MeanReversion_GapFill_D1.mq5` | JP225.cash | D1 | 100700 | Relleno de gap de apertura en índices |
-| H20 | `PST_RelativeStrength_H1.mq5` | AAPL, MSFT, TSLA | H1 | 101000 | Fuerza relativa de una acción frente a US500.cash |
-| H25 | `PST_VwapReversion_ADX.mq5` | UK100.cash | H1 | 101100 | Reversión a VWAP de sesión filtrada por ADX (rango) — mejor resultado confirmado del proyecto (Sharpe 5.45) |
-| H28b | `PST_MacdMomentum_GER40_H1.mq5` | GER40.cash | H1 | 101300 | Momentum de histograma MACD + ADX + EMA200 |
-| H21 | `PST_LiquiditySweepFade_EURUSD_M5.mq5` | EURUSD | M5 | 101800 | Fade de barrido de liquidez Londres-NY, TP dinámico por ADX |
-| H41 | `PST_DonchianVolumeBreakout_Stocks.mq5` | AAPL (magic 101900), TSLA (magic 101901) | H1 | 101900/101901 | Ruptura de rango Donchian + volumen + filtro de tendencia |
-| H42 | `PST_GapAndGo_AAPL_H1.mq5` | AAPL | H1 | 101902 | Gap and go: hueco de apertura confirmado tras 1h |
-| H45 | `PST_IchimokuTrend_GER40_H1.mq5` | GER40.cash (magic 102001), CADJPY (magic 102003) | H1 / H4 | 102001/102003 | Tendencia con nube de Ichimoku + cruce Tenkan/Kijun |
+## Proceso de validación
 
-Todas comparten `PST_RiskManager.mqh` (1% riesgo/operación, máx. 4% riesgo simultáneo de cartera,
-máx. 2.5% por grupo correlacionado, límites de importe absoluto de cuenta FTMO — pérdida diaria
-máx. 500€, pérdida total máx. 1000€ sobre balance inicial 10 000€, ver `docs/politica-de-riesgo.md`)
-y registran sus operaciones vía `PST_Logger.mqh`.
-
-## Proceso de validación (por si se retoma la investigación)
-
-Cada hipótesis siguió el mismo ciclo antes de llegar aquí: prototipo vectorizado en Python (sin
-fricción) → cribado con coste de spread real → si pasa, EA en MQL5 → confirmación individual en
-Strategy Tester real (tick data) → split in/out-of-sample (ambas mitades del periodo deben ser
-positivas) → solo entonces demo. La mayoría de hipótesis probadas NO llegan a esta carpeta: de
-~40 hipótesis exploradas en el proyecto original, estas 9 son las que sobrevivieron el ciclo
-completo.
-
-*(Última actualización de esta migración: 2026-09-02)*
+Prototipo → cribado con coste de spread real → EA en MQL5 → backtest en el Strategy Tester → split
+dentro/fuera de muestra (ambas mitades positivas) → demo con riesgo reducido → activa. De ~40 hipótesis del
+proyecto original, solo las del catálogo pasaron el ciclo completo.

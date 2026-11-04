@@ -43,6 +43,22 @@ TOL_SHARPE = 0.10   # tolerancia de sharpe para el veredicto
 
 
 # ─────────────────────────────────────────── carga de estrategias
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def _load_from_source(src, tag):
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=f"_{tag}.py", delete=False, encoding="utf-8")
     tmp.write(src); tmp.close()
@@ -71,7 +87,7 @@ def get_data(symbol, days, refresh=False):
 
     import MetaTrader5 as mt5
     import pandas as pd
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"    ⚠️  MT5 init falló: {mt5.last_error()}"); return None
     # Símbolos fuera del Market Watch (no "visible") necesitan symbol_select antes de poder
     # pedirles histórico — sin esto, copy_rates_range se cuelga/devuelve vacío indefinidamente.

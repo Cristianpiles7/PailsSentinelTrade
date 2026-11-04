@@ -46,6 +46,22 @@ _TF_SPEC = {  # tf: (const_name, días_extra_de_historial)
 }
 
 
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def get_data(symbol, days, refresh=False):
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = os.path.join(CACHE_DIR, f"range_{symbol}_{days}d.pkl")
@@ -55,7 +71,7 @@ def get_data(symbol, days, refresh=False):
 
     import MetaTrader5 as mt5
     import pandas as pd
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"    ⚠️  MT5 init falló: {mt5.last_error()}")
         return None
     # Símbolos fuera del Market Watch necesitan symbol_select antes de pedir histórico —

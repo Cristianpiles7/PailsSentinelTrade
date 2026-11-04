@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
-//| PST_H25_VwapAdx_UK100_H1.mq5
-//| Despliegue: H25 - Reversion a VWAP de sesion + ADX
+//| PST_VwapAdx_UK100_H1.mq5
+//| Estrategia: Reversion a VWAP de sesion + ADX
 //| Simbolo UK100.cash | TF H1 | magic 101100 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
@@ -64,7 +64,7 @@
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H25_VwapAdx_UK100_H1";
+input string   EA_Name             = "PST_VwapAdx_UK100_H1";
 input int      InpMagicNumber      = 101100;
 
 input group    "--- Estrategia H25: reversion a VWAP de sesion + filtro ADX ---"

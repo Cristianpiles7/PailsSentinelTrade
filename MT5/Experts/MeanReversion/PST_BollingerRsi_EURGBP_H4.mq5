@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
-//| PST_H5_BollingerRsi_EURGBP_H4.mq5
-//| Despliegue: H5 - Bollinger + RSI (reversion a la media)
+//| PST_BollingerRsi_EURGBP_H4.mq5
+//| Estrategia: Bollinger + RSI (reversion a la media)
 //| Simbolo EURGBP | TF H4 | magic 100500 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
@@ -54,7 +54,7 @@
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H5_BollingerRsi_EURGBP_H4";
+input string   EA_Name             = "PST_BollingerRsi_EURGBP_H4";
 input int      InpMagicNumber      = 100500;
 
 input group    "--- Estrategia H5: Bollinger + RSI (reversion a la media) ---"

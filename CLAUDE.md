@@ -78,6 +78,17 @@ Guía completa: `manual_docs/ENTORNO_PRUEBAS.md`.
   (o quedar cubierta por los bloqueos de `Tools/dev/arrancar_dev.py`). Añadirlo a esta lista si hace falta.
 - Si se añaden componentes web con la URL de la API fija, usar `import.meta.env.VITE_API_URL` como en `App.jsx`.
 
+## 1c. EAs de MT5 (rama `feature/eas-mt5`)
+
+- Plan, decisiones y pendientes: `MT5/DESARROLLO_EAS.md`. Catálogo (mantenerlo al día en cada cambio): `MT5/CATALOGO_EAS.md`.
+- **Un EA = una estrategia × un símbolo × un timeframe × un magic** (un `.mq5` cada uno). Nombres
+  `PST_<Estrategia>_<SIMBOLO>_<TF>`, **sin códigos de hipótesis** (H5, H25…). Magic 100000–108999.
+- Toda acción sobre EAs pasa por `PST_Core/ea/servicio.py` (la usan la API `/api/eas` y las tools MCP `ea_*`).
+- Compilar y backtest solo en el terminal **portable** `C:\Users\crist\PST_MT5_Tester`, nunca en el vivo.
+- **Conexión a MT5:** usar siempre `_pst_conectar_mt5(mt5)` / `PST_Core/utils/terminal_mt5.conectar`, nunca
+  `mt5.initialize()` sin ruta (se engancha al último terminal arrancado: incidente del 2026-11-04).
+- MCP `pst`: requiere `pip install -r requirements-dev.txt`. Sin `PST_ENTORNO=dev` actúa sobre producción.
+
 ## 2. Cómo se publica una versión (tag → Release)
 
 Idioma del historial: `vX.Y.Z - descripción en una línea`. Ver también `repo\.claude\commands\release.md` y `repo\.agents\workflows\release.md`.

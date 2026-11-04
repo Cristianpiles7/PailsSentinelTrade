@@ -250,3 +250,68 @@ def backtest_is_oos(despliegue_id, desde, hasta, modelo=None, origen="app"):
     store.evento(despliegue_id, "veredicto", ("APROBADO" if veredicto["aprobado"] else "NO aprobado: ")
                  + "; ".join(veredicto["motivos"]), origen)
     return {"ok": True, "backtests": filas, "veredicto": veredicto}
+
+
+# ------------------------------------------------------------------ alta de un EA nuevo
+_TF = ("M1", "M5", "M15", "M30", "H1", "H4", "D1")
+MAGIC_MIN, MAGIC_MAX = 100000, 108999      # 109xxx es de la flota LLM
+
+
+def validar_alta(datos):
+    """Reglas de MT5/DESARROLLO_EAS.md: un EA = estrategia x simbolo x TF; nombre sin codigos de hipotesis."""
+    import re
+    errores = []
+    i, sim, tf, magic = datos["id"], datos["simbolo"], datos["tf"], int(datos["magic"])
+    if not re.fullmatch(r"PST_[A-Za-z0-9]+_[A-Za-z0-9]+_(M1|M5|M15|M30|H1|H4|D1)", i):
+        errores.append("id debe ser PST_<Estrategia>_<SIMBOLO>_<TF> (solo letras y numeros en cada parte)")
+    if re.match(r"PST_H\d+b?_", i) or re.search(r"_H\d+b?_", i):
+        errores.append("el nombre no puede llevar codigos de hipotesis (H5, H25...)")
+    if tf not in _TF or not i.endswith(f"_{tf}"):
+        errores.append(f"el id debe terminar en _{tf} y el TF ser uno de {_TF}")
+    if sim.split(".")[0].upper() not in i.upper():
+        errores.append(f"el id debe contener el simbolo ({sim.split('.')[0]})")
+    if not MAGIC_MIN <= magic <= MAGIC_MAX:
+        errores.append(f"magic fuera de rango [{MAGIC_MIN}, {MAGIC_MAX}] (109xxx es de la flota LLM)")
+    for d in store.listar():
+        if d["id"] == i:
+            errores.append("ya existe un EA con ese id")
+        if int(d["magic"]) == magic:
+            errores.append(f"magic {magic} ya lo usa {d['id']}")
+        if (d["estado"] != "retirada" and d["simbolo"] == sim and d["tf"] == tf
+                and d["estrategia"].strip().lower() == datos["estrategia"].strip().lower()):
+            errores.append(f"ya hay un EA de esa estrategia en {sim} {tf}: {d['id']} (mejoralo con una version nueva)")
+    fuente = rutas.EXPERTS_REPO / datos["categoria"] / f"{i}.mq5"
+    if not fuente.exists():
+        errores.append(f"no existe {fuente.relative_to(rutas.REPO)}")
+    else:
+        src = fuente.read_text(encoding="utf-8", errors="ignore")
+        if "PST_Control.mqh" not in src:
+            errores.append("el .mq5 no incluye PST_Control.mqh")
+        if f'#define PST_DESPLIEGUE_SIMBOLO "{sim}"' not in src:
+            errores.append(f'falta #define PST_DESPLIEGUE_SIMBOLO "{sim}"')
+        if f"PERIOD_{tf}" not in src:
+            errores.append(f"falta #define PST_DESPLIEGUE_TF PERIOD_{tf}")
+        if str(magic) not in src:
+            errores.append(f"el magic {magic} no aparece en el .mq5 (InpMagicNumber)")
+        if "PST_Control_PuedeAbrir()" not in src:
+            errores.append("el EA no consulta PST_Control_PuedeAbrir() antes de abrir")
+    return errores
+
+
+def alta(datos, origen="app"):
+    """Registra un EA nuevo (estado experimental, pausado) en la BBDD y en MT5/despliegues.json."""
+    import json
+    errores = validar_alta(datos)
+    if errores:
+        return {"ok": False, "errores": errores}
+    nuevo = {"id": datos["id"], "estrategia": datos["estrategia"], "categoria": datos["categoria"],
+             "simbolo": datos["simbolo"], "tf": datos["tf"], "magic": int(datos["magic"]), "version": "1.0",
+             "estado_inicial": "experimental", "origen": f"alta por {origen}"}
+    contenido = json.loads(rutas.DESPLIEGUES_JSON.read_text(encoding="utf-8"))
+    contenido["despliegues"].append(nuevo)
+    rutas.DESPLIEGUES_JSON.write_text(json.dumps(contenido, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    store.inicializar()                       # da de alta lo nuevo del json
+    store.actualizar(nuevo["id"], estado="experimental")
+    store.evento(nuevo["id"], "alta_ea", f"{nuevo['estrategia']} {nuevo['simbolo']} {nuevo['tf']} magic {nuevo['magic']}", origen)
+    sincronizar()
+    return {"ok": True, "despliegue": store.obtener(nuevo["id"])}

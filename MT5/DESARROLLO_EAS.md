@@ -2,185 +2,161 @@
 
 Rama: `feature/eas-mt5` · Iniciado: 2026-11-04
 
-Documento de trabajo del proyecto. Aquí van el objetivo, las decisiones, cómo funciona cada pieza,
-lo que ya se ha probado y lo que falta. El catálogo de estrategias (qué EA corre en qué símbolo,
-con qué versión y con qué resultados) está aparte, en [CATALOGO_EAS.md](CATALOGO_EAS.md).
+Documento de trabajo del proyecto: objetivo, decisiones, cómo funciona cada pieza, qué está probado y qué
+falta. El catálogo de EAs (qué hay, en qué estado y con qué resultados) está en [CATALOGO_EAS.md](CATALOGO_EAS.md).
+Todo se prueba en el entorno de pruebas (`manual_docs/ENTORNO_PRUEBAS.md`) antes de cualquier release.
 
 ---
 
 ## 1. Objetivo
 
-Una tercera familia de estrategias en la app, además de la flota LLM y el scalping: **EAs de MQL5**.
-Son estrategias escritas en código (deterministas, se pueden backtestear), no agentes. Los agentes
-trabajan **alrededor** de ellas:
+Una familia de estrategias más en la app, junto a la flota LLM y el scalping: **EAs de MQL5**. Son estrategias
+escritas en código (deterministas, backtesteables), no agentes. Los agentes trabajan **alrededor** de ellas:
+crean o modifican EAs, los compilan, les hacen backtest, proponen añadir una estrategia a un símbolo o mejorar
+una existente, y pausan si algo va mal.
 
-- crean o modifican EAs, los compilan y les hacen backtest;
-- proponen añadir una estrategia a un símbolo o mejorar una existente;
-- activan y desactivan despliegues.
-
-El usuario no tiene que entrar en MT5 para nada del día a día. Todo se ve y se configura en la app.
+El usuario no entra en MT5 para el día a día. Todo se ve y se configura en la app → Estrategias → **EAs MT5**.
 
 ## 2. Decisiones tomadas
 
 | # | Decisión | Motivo |
 |---|---|---|
-| D1 | Proyecto en rama propia `feature/eas-mt5` | Es casi un proyecto nuevo; no mezclar con releases de la flota |
-| D2 | Herramientas propias en `PST_MCP/pst_server.py`, no el `metatrader5-mcp` externo | El externo ya no está instalado, no tenía tool de compilar y perdía el `run_id` del tester. La línea de comandos de MT5 funciona (probado, §4) |
-| D3 | Dos terminales: **vivo** y **tester** (copia portable) | El terminal vivo no puede lanzar el tester por CLI y solo detecta EAs nuevos al reiniciarse. El de tester se reinicia sin afectar a la operativa |
-| D4 | Un **gestor** dentro del terminal vivo pone y quita EAs de los gráficos | Desde Python no se puede adjuntar un EA a un gráfico. Desde MQL5 sí (`ChartOpen` + `ChartApplyTemplate`), probado en §4 |
-| D5 | Además, cada EA lee un **fichero de control** (activo / riesgo / cerrar) | Pausar es instantáneo, sin tocar gráficos, y funciona aunque el gestor falle |
-| D6 | El agente puede **pausar** solo. **Activar o desplegar una versión nueva** requiere aprobación en la app | Pausar reduce riesgo; activar lo aumenta |
-| D7 | "Desactivar" = no abrir operaciones nuevas; lo abierto sigue con su SL/TP. "Cerrar posiciones" es un botón aparte | Evita cierres a mercado por un clic |
-| D8 | Toda la configuración vive en la app (BBDD), no en `.ini` ni en inputs a mano | Requisito del usuario: claro y configurable desde la app |
+| D1 | Proyecto en rama propia `feature/eas-mt5` | Es casi un proyecto nuevo |
+| D2 | Herramientas propias (`PST_Core/ea` + tools `ea_*` del MCP `pst`), no el `metatrader5-mcp` externo | El externo ya no está, no compilaba y perdía el `run_id` del tester. La línea de comandos de MT5 funciona (§4) |
+| D3 | Dos terminales: **vivo** (opera) y **portable** de pruebas (compila y backtestea) | El vivo no puede lanzar el tester por CLI y solo detecta EAs nuevos al reiniciarse |
+| D4 | Un **gestor** (`PST_Gestor.mq5`) dentro del terminal vivo pone y quita EAs de los gráficos | Desde Python no se puede adjuntar un EA a un gráfico; desde MQL5 sí (`ChartOpen` + `ChartApplyTemplate`) |
+| D5 | Cada EA lee un **fichero de control** (activo / riesgo / cerrar) cada 5 s | Pausar es instantáneo y no depende del gestor |
+| D6 | Un agente solo hace sin aprobación lo que diga `agentes_pueden` (por defecto pausar, compilar, backtest) | Pausar reduce riesgo; activar lo aumenta |
+| D7 | Desactivar = no abrir nuevas; lo abierto sigue con su SL/TP. Cerrar posiciones es otra acción | Evita cierres a mercado por un clic |
+| D8 | Toda la configuración vive en la app (tabla `ea_config`) | Requisito: claro y configurable desde la app |
+| D9 | **Un EA = una estrategia × un símbolo × un timeframe × un magic** (un fichero cada uno) | Requisito del usuario: cada combinación evoluciona por su cuenta |
+| D10 | **Nombres sin códigos de hipótesis**: `PST_<Estrategia>_<SIMBOLO>_<TF>` | Requisito del usuario. El código antiguo queda solo como `referencia_historica` en `despliegues.json` |
+| D11 | Falla cerrado: si un EA no encuentra `control.csv` o su fila, no abre operaciones | Un EA recién instalado no opera hasta que la app lo active |
+| D12 | El entorno de pruebas usa la carpeta de control `PST_EA_DEV` y el terminal portable para instalar | `Common\Files` es compartido por todos los terminales: pruebas nunca puede tocar EAs reales |
+| D13 | Toda conexión a MT5 pasa la ruta del terminal (`PST_Core/utils/terminal_mt5.py`) | Incidente del 2026-11-04 (§7) |
 
 ## 3. Arquitectura
 
 ```
-APP (PST_API + PST_Web)                   AGENTES (Claude Code + MCP pst)
-  sección Estrategias > EAs                 ingeniero-mql5, cazador, juez
-  BBDD: ea_despliegues, ea_versiones,         │  ea_listar / ea_estado
-        ea_backtests, ea_config               │  ea_compilar / ea_backtest / ea_comparar
-        │                                     │  ea_proponer / ea_pausar
-        │ escribe                             │
-        ▼                                     ▼
-  Common\Files\PST_EA\control.csv  ◄──── mismas funciones Python (PST_Core/ea/...)
-  Common\Files\PST_EA\despliegue.csv          │
-        │ lee cada N s                        │ CLI
-        ▼                                     ▼
-  TERMINAL VIVO (FTMO)                    TERMINAL TESTER (portable)
-    PST_Gestor (servicio/EA)                C:\Users\crist\PST_MT5_Tester
-      abre/cierra gráficos,                 metaeditor64 /compile
-      aplica plantillas con EA              terminal64 /portable /config:tester.ini
-    EAs con PST_Control.mqh                 informe .htm + CSV de PST_OptExport
-      escriben latido estado_<magic>.csv
+APP (PST_API/eas_api.py + PST_Web EasPanel)        AGENTES (MCP pst: ea_listar, ea_historial,
+  Estrategias > EAs MT5                              ea_accion, ea_compilar, ea_backtest, ea_alta)
+          │                                                  │
+          └──────────────► PST_Core/ea/servicio.py ◄─────────┘   (mismas funciones y permisos)
+                              │          │           │
+                 BBDD ea_*  ◄─┘          │           └─► mt5cli: MetaEditor /compile, terminal64 /portable /config
+                                         ▼                          (terminal portable de pruebas)
+                 Common\Files\PST_EA\control.csv      ──► cada EA (PST_Control.mqh), cada 5 s
+                 Common\Files\PST_EA\despliegue.csv   ──► PST_Gestor (abre/cierra gráficos)
+                 Common\Files\PST_EA\estado_<magic>.csv ◄── latido de cada EA
+                 Common\Files\PST_EA\gestor_estado.csv  ◄── lo que ve el gestor
+                 <terminal>\MQL5\Profiles\Templates\PST_EA\<id>.tpl   plantilla por EA
 ```
 
-Regla: **la app y los agentes usan el mismo código Python** para cada acción (`PST_Core/ea/`).
-El botón de la app y la tool MCP llaman a la misma función, así nunca se comportan distinto.
+| Pieza | Fichero |
+|---|---|
+| Lista de EAs (semilla) | `MT5/despliegues.json` |
+| EAs | `MT5/Experts/<categoria>/<id>.mq5` (16) |
+| Control desde la app | `MT5/Include/PST_Control.mqh` |
+| Gestor | `MT5/Experts/Sistema/PST_Gestor.mq5` |
+| Lógica Python | `PST_Core/ea/` (`rutas`, `store`, `control`, `mt5cli`, `servicio`) |
+| API | `PST_API/eas_api.py` (`/api/eas/...`) |
+| Interfaz | `PST_Web/src/components/EasPanel.jsx` (dentro de `EstrategiaView`) |
+| Tools de agentes | `PST_MCP/pst_server.py` (`ea_*`), agentes `ingeniero-mql5` y `cazador` |
+| Migración v1→v2 | `Tools/ea/separar_eas.py` (lee los originales del commit `329ff20`) |
 
-### 3.1 Ficheros de intercambio (en `Terminal\Common\Files\PST_EA\`)
+### 3.1 Formatos
 
-| Fichero | Lo escribe | Lo lee | Contenido |
-|---|---|---|---|
-| `despliegue.csv` | app | gestor | Qué EA va en qué símbolo/TF/magic y con qué plantilla. El gestor lo reconcilia con los gráficos abiertos |
-| `control.csv` | app | cada EA | Por magic: `activo`, `mult_riesgo`, `cerrar_posiciones`, `version_esperada` |
-| `estado_<magic>.csv` | cada EA | app | Latido: hora, versión, posiciones, último error |
-| `gestor_estado.csv` | gestor | app | Gráficos abiertos, EAs cargados, errores al aplicar plantillas |
+- `control.csv`: `magic;activo;mult_riesgo;cerrar_token`. Fila `0` = interruptor general. `cerrar_token` nuevo
+  (≠ 0 y distinto del último atendido, guardado en una variable global del terminal) = el EA cierra sus posiciones.
+- `despliegue.csv`: `id;simbolo;tf;instalar`.
+- `estado_<magic>.csv`: `clave;valor` (estado, versión, cuenta, puede_abrir, posiciones, flotante, error…).
+- Multiplicador de riesgo: el EA lo limita a [0, 2]; la app a [0, `mult_riesgo_max`] (1,5 por defecto).
 
-### 3.2 Ciclo de vida de una estrategia
+### 3.2 Ciclo de vida
 
-`idea` → `experimental` (en `Experts/Experimental/`, solo tester) → `propuesta` (backtest IS/OOS
-superado, pendiente de aprobación) → `demo riesgo reducido` → `activa` → `pausada` / `retirada`.
-
-Cada cambio de código es una **versión nueva** (`ea_versiones`), con su backtest guardado.
-Nunca se sobrescribe la versión que está operando.
+`idea` → `experimental` (solo tester) → `propuesta` (IS/OOS superado) → `demo-reducido` → `activa` →
+`pausada` / `retirada`. El estado lo cambia solo el usuario. Cada cambio de código sube `PST_EA_VERSION` y
+se backtestea con el mismo periodo que la versión anterior.
 
 ## 4. Pruebas de viabilidad (2026-11-04) ✅
 
-Las tres piezas que podían bloquear el proyecto, probadas sin tocar el terminal vivo.
-Los ficheros usados están en [pruebas/](pruebas/).
+Ficheros en [pruebas/](pruebas/).
 
 | Prueba | Resultado |
 |---|---|
-| Compilar por CLI | ✅ `MetaEditor64.exe /compile:<mq5> /inc:<carpeta MQL5> /log:<log>` → `PST_VwapReversion_ADX.ex5`, 0 errores, 2 avisos. El log sale en UTF-16 |
-| Backtest sin ventanas | ✅ `terminal64.exe /portable /config:tester_prueba.ini` en la copia portable. 30 s. Informe `.htm` completo. H25 en UK100.cash H1, 2026-06-01 → 2026-11-01, modelo OHLC M1: neto +85,14 €, PF 1,18, Sharpe 1,62, 17 operaciones, DD equity 2,80 %, calidad del historial 100 % |
-| Poner y quitar un EA de un gráfico desde MQL5 | ✅ `PST_GestorTest` arrancado con `[StartUp]` del `.ini`: `ChartOpen(EURUSD,H1)` → `ChartApplyTemplate(pst_noop.tpl)` = true → `CHART_EXPERT_NAME` = `PST_TestNoop` → el EA escribió latidos cada 2 s → `ChartClose` = true → `deinit` |
+| Compilar por CLI | ✅ `MetaEditor64.exe /compile:<mq5> /inc:<carpeta MQL5> /log:<log>`. Log en UTF-16 |
+| Backtest sin ventanas | ✅ `terminal64.exe /portable /config:<ini>` en la copia portable, 30 s, informe `.htm` completo |
+| Poner y quitar un EA de un gráfico desde MQL5 | ✅ `ChartOpen` → `ChartApplyTemplate` → `CHART_EXPERT_NAME` correcto → latidos → `ChartClose` |
+| Los 16 EAs v2 compilan | ✅ 0 errores, los mismos 2 avisos que la v1 |
+| API `/api/eas` en el entorno de pruebas | ✅ activar, pausar, riesgo con tope, interruptor general, cerrar, config, historial; todo en `PST_EA_DEV` |
+| Tools MCP `ea_*` | ✅ permisos (pausar sí, activar bloqueado), validación de alta (rechaza códigos H y magics 109xxx) |
 
-Notas de las pruebas:
-- La copia portable es `C:\Users\crist\PST_MT5_Tester` (copia de `C:\Program Files\FTMO Global
-  Markets MT5 Terminal` + `accounts.dat`, `servers.dat`, `common.ini` y `MQL5\` del terminal vivo).
-  Inicia sesión sola con la cuenta guardada.
-- Plantilla mínima que funciona: ver [pruebas/pst_noop.tpl](pruebas/pst_noop.tpl). Va en
-  `MQL5\Profiles\Templates\`.
-- En la prueba del gestor, `AllowLiveTrading=0`: el EA de prueba no opera.
+## 5. Configuración en la app (pestaña Configuración de EAs MT5)
 
-Pendiente de probar: el gestor **en el terminal vivo**, con un EA recién compilado y sin reiniciar
-(¿aparece en la plantilla sin reiniciar el terminal?). Si no, el gestor tendrá que pedir un reinicio
-controlado del terminal vivo fuera de horario.
+- Interruptor general (cabecera).
+- Terminales: carpeta de datos e instalación del vivo (vacío = autodetectar), terminal portable, cuenta del tester.
+- Backtest por defecto: modelo, depósito, divisa, apalancamiento, tiempo máximo.
+- Multiplicador de riesgo máximo por EA.
+- Criterios para aprobar: PF, Sharpe, operaciones mínimas, DD máximo, IS y OOS positivos.
+- Qué pueden hacer los agentes sin aprobación.
 
-## 5. Configuración en la app (todo editable desde la UI)
-
-**Global (sección EAs > Configuración)**
-- Interruptor general de EAs (para todos a la vez).
-- Rutas: terminal vivo, terminal tester, MetaEditor. Comprobación con botón "probar".
-- Cuenta del tester (login y servidor; la contraseña no se guarda en la BBDD).
-- Límites de riesgo comunes con la flota LLM: pérdida diaria €, pérdida total €, riesgo de cartera %,
-  riesgo por grupo correlacionado %. Los leen los EAs (vía `control.csv`) y la flota.
-- Permisos de los agentes: qué pueden hacer solos (por defecto solo pausar).
-- Criterios para aceptar una propuesta: PF mínimo, Sharpe mínimo, nº mínimo de operaciones,
-  DD máximo, ambas mitades IS/OOS positivas.
-- Backtest por defecto: modelo (OHLC M1 / ticks reales), años de historial, división IS/OOS.
-
-**Por despliegue (EA × símbolo × TF × magic)**
-- Activo / pausado, multiplicador de riesgo, horario permitido.
-- Parámetros del EA (inputs) con valores por defecto y rango para optimizar.
-- Versión en uso e historial de versiones con su backtest.
-- Botones: pausar, activar, cerrar posiciones, lanzar backtest, ver informe.
-
-**Vista**
-- Estado vivo (latido, posiciones, P&L) frente a lo esperado por el backtest.
-- Propuestas de los agentes pendientes de aprobar, con el diff del código y la comparación.
+Por EA (fila desplegable): estado, activo, multiplicador de riesgo, instalar/quitar del gráfico, cerrar
+posiciones, compilar, backtest (con IS/OOS), latido y estado del gestor.
 
 ## 6. Fases
 
 ### Fase 0 — Viabilidad ✅
-- [x] Rama `feature/eas-mt5`
-- [x] Compilar por CLI
-- [x] Backtest por CLI en terminal portable
-- [x] Gestor: poner/quitar EA en un gráfico
-- [ ] Gestor en el terminal vivo con EA recién compilado (sin reinicio)
 
-### Fase 1 — Control desde la app
-- [ ] `MT5/Include/PST_Control.mqh`: lectura de `control.csv` + latido. Añadirlo a los 9 EAs (versión nueva de cada uno)
-- [ ] `PST_Gestor` (servicio o EA) que reconcilia `despliegue.csv` con los gráficos
-- [ ] Tablas `ea_despliegues`, `ea_versiones`, `ea_backtests`, `ea_config` (migración en código, con copia previa de la BBDD)
-- [ ] `PST_Core/ea/`: funciones de control, lectura de latidos, instalación de `.ex5` y plantillas
-- [ ] `PST_API/eas_api.py` + sección "EAs" en `PST_Web` (lista, interruptores, configuración, estado)
-- [ ] Stats reales por magic (reutilizar `mt5_sync` y `Tools/update_active_strategies.py`)
-- [ ] Tope de riesgo común EAs + flota LLM
+### Fase 1 — Control desde la app (código hecho, falta probar en MT5)
+- [x] `PST_Control.mqh` (interruptor, riesgo, cierre por token, latido, posiciones por magic)
+- [x] 16 EAs v2, uno por despliegue, nombres sin códigos de hipótesis
+- [x] `PST_Gestor.mq5`
+- [x] Tablas `ea_*`, `PST_Core/ea/`, `PST_API/eas_api.py`, sección EAs MT5 en la web
+- [x] Nombres por magic desde `despliegues.json` (historial, Telegram, ESTRATEGIAS_ACTIVAS)
+- [ ] **Probar en MT5**: un EA con `PST_Control` respondiendo a activar/pausar/cerrar y el gestor
+      instalando desde `despliegue.csv` (en el portable, con `PST_EA_DEV` y sin permitir trading)
+- [ ] Backtest de regresión v2 = v1 (VwapAdx UK100, 2026-06-01 → 2026-11-01: +85,14 €, 17 ops)
+- [ ] Instalar el gestor en el terminal vivo (una vez) y comprobar si detecta un `.ex5` nuevo sin reiniciar
+- [ ] Tope de riesgo común EAs + flota LLM (hoy cada uno vigila el suyo)
 
-### Fase 2 — Compilar y backtest automáticos
-- [ ] `PST_Core/ea/tester.py`: genera el `.ini`, lanza el terminal portable, espera, parsea el informe
-- [ ] Split IS/OOS y comparación de versiones
-- [ ] Tools MCP: `ea_listar`, `ea_estado`, `ea_compilar`, `ea_backtest`, `ea_comparar`, `ea_pausar`, `ea_proponer`
-- [ ] Botón "lanzar backtest" en la app y cola de backtests (uno a la vez en el portable)
+### Fase 2 — Compilar y backtest automáticos (código hecho)
+- [x] `mt5cli.compilar` / `mt5cli.backtest` + parseo del informe
+- [x] IS/OOS y veredicto con los criterios de la app
+- [x] Botones y trabajos en segundo plano en la app; tools MCP
+- [ ] Línea base de 2 años para los 16 EAs
 
 ### Fase 3 — Agentes
-- [ ] Actualizar `ingeniero-mql5` y `cazador` a las tools nuevas (quitar `metatrader5-mcp`)
-- [ ] Flujo de propuestas EA en la app (aprobar / rechazar, diff, comparación)
-- [ ] Revisión periódica: el agente compara vivo vs backtest y propone pausar/mejorar
-- [ ] Mitigaciones de sobreajuste (nº de pruebas por hipótesis, OOS obligatorio, ya descritas en `cazador.md`)
+- [x] `ingeniero-mql5` y `cazador` con las tools `ea_*` (sin `metatrader5-mcp`)
+- [ ] Bandeja de propuestas de EAs en la app (hoy van por `propose_change`, sin pantalla propia)
+- [ ] Revisión periódica: comparar vivo contra backtest y proponer pausar o mejorar
+- [ ] Optimización de parámetros (el tester lo soporta; falta la tool y el control de sobreajuste)
 
 ## 7. Gotchas conocidos
 
-- ⚠️ **INCIDENTE 2026-11-04 — `mt5.initialize()` sin ruta se engancha al último terminal arrancado.**
-  Hay 31 llamadas así (PST_API, PST_LLM, PST_MCP, Tools). Al arrancar el terminal portable para las
-  pruebas, la app de producción y sus agentes pasaron a conectarse a él: a las 20:01:51 `PST_MASTER.exe`
-  (PID 8728) relanzó `C:\Users\crist\PST_MT5_Tester\terminal64.exe` y la flota operó a través de él
-  (misma cuenta demo, así que las órdenes son válidas). Consecuencias: el portable queda ocupado (no se
-  puede hacer backtest) y producción depende de un terminal que no es el suyo.
-  **Arreglo:** un único helper que llame a `mt5.initialize(path=<terminal vivo>)` con la ruta de la
-  configuración, usado en las 31 llamadas. Requiere release. Hasta entonces, **no arrancar el portable**
-  mientras producción esté abierta, o asumir que producción se puede enganchar a él.
-- Common\Files es compartido por todos los terminales del usuario: el tester escribía sus operaciones
-  simuladas en `PST_trade_log.csv` (corregido: ahora `PST_trade_log_tester.csv`), y el entorno de pruebas
-  usa la carpeta de control `PST_EA_DEV` para no tocar los EAs reales.
-
-- El terminal solo escanea `MQL5\Experts\` al arrancar: un `.ex5` nuevo no aparece en el tester
-  hasta reiniciar. En el portable no importa (se lanza de cero en cada backtest).
-- `WebRequest()` no funciona en el Strategy Tester: un EA que llame a un LLM no se puede backtestear.
-- Los logs de MetaEditor y los informes del tester salen en UTF-16.
-- Los includes de los EAs son `<PST_V2\...>`: en cada terminal tienen que estar en
-  `MQL5\Include\PST_V2\`.
-- La cuenta ha cambiado varias veces (1514332119 → 1515029407 → 1515057736 → 1515130055 en
-  `common.ini` el 2026-11-04). El tester debe leer la cuenta de la configuración de la app, no estar fijada.
-- Magics: EAs en 100xxx–102xxx, flota LLM en 109xxx. `gestion_salidas.py` filtra por magic: no se pisan.
-  Reservar rangos en `ea_config` para que un EA nuevo no choque.
+- ⚠️ **INCIDENTE 2026-11-04: `mt5.initialize()` sin ruta se engancha al último terminal arrancado.**
+  Al arrancar el portable para las pruebas, producción y sus agentes pasaron a conectarse a él: a las 20:01:51
+  `PST_MASTER.exe` (PID 8728) relanzó `C:\Users\crist\PST_MT5_Tester\terminal64.exe` y la flota operó a través
+  de él (misma cuenta demo: las órdenes son válidas). El portable queda ocupado y no se puede backtestear.
+  **Arreglado en código** (31 llamadas → `PST_Core/utils/terminal_mt5.py`, ruta del terminal FTMO instalado o
+  `MT5_TERMINAL_PATH` en `.env`). **Llega a producción con la siguiente release.** Hasta entonces: no arrancar el
+  portable con producción abierta. Para recuperar: cerrar la app de producción → cerrar el portable → abrir la app.
+- `Common\Files` es compartido por todos los terminales del usuario: por eso el tester escribe sus operaciones en
+  `PST_trade_log_tester.csv` y el entorno de pruebas usa `PST_EA_DEV`.
+- El terminal solo escanea `MQL5\Experts\` al arrancar: un `.ex5` nuevo no aparece en el tester hasta reiniciar.
+  En el portable da igual (arranca de cero en cada backtest). En el vivo está por comprobar con el gestor.
+- `WebRequest()` no funciona en el Strategy Tester.
+- Logs de MetaEditor e informes del tester en UTF-16. Las etiquetas del informe dependen del idioma del terminal
+  (el parser lee español e inglés).
+- Includes `<PST_V2\...>`: en cada terminal tienen que estar en `MQL5\Include\PST_V2\` (`mt5cli` los copia).
+- La cuenta ha cambiado varias veces (1514332119 → … → 1515130055). Nada la tiene fijada: se lee del terminal.
+- El servidor MCP `pst` necesita `pip install -r requirements-dev.txt` (`mcp` 1.x). Sin `PST_ENTORNO=dev` trabaja
+  sobre la BBDD y la carpeta de control de **producción**.
 
 ## 8. Bitácora
 
-- **2026-11-04** — Arranque. Rama creada. Pruebas de viabilidad de §4 superadas. Documentos
-  `DESARROLLO_EAS.md` y `CATALOGO_EAS.md` creados. Copia portable del tester en
-  `C:\Users\crist\PST_MT5_Tester`.
-- **2026-11-04** — Entorno de pruebas sin release (`Tools/dev/arrancar_dev.py`, ver
-  `manual_docs/ENTORNO_PRUEBAS.md`). Todo el desarrollo de EAs se prueba ahí antes de cualquier release.
+- **2026-11-04** — Arranque. Rama, pruebas de viabilidad, `DESARROLLO_EAS.md` y `CATALOGO_EAS.md`. Portable en
+  `C:\Users\crist\PST_MT5_Tester`. Entorno de pruebas sin release.
+- **2026-11-04** — Fase 1 y 2 en código: 16 EAs v2 (un fichero por despliegue, nombres sin códigos de hipótesis,
+  posiciones por magic: antes un EA podía cerrar la posición de otro EA o de la flota en el mismo símbolo),
+  `PST_Control.mqh`, `PST_Gestor.mq5`, `PST_Core/ea`, API, sección EAs MT5, tools MCP `ea_*`, agentes actualizados.
+  Incidente de conexión MT5 detectado y arreglado en código (pendiente de release).

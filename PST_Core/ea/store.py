@@ -43,7 +43,7 @@ ACCIONES_AGENTE = ("pausar", "activar", "cerrar", "riesgo", "instalar", "retirar
 _ESQUEMA = """
 CREATE TABLE IF NOT EXISTS ea_despliegues (
     id TEXT PRIMARY KEY,
-    hipotesis TEXT, estrategia TEXT, categoria TEXT,
+    referencia TEXT, estrategia TEXT, categoria TEXT,   -- referencia: codigo del proyecto original, no se muestra
     simbolo TEXT NOT NULL, tf TEXT NOT NULL, magic INTEGER NOT NULL UNIQUE,
     version TEXT,
     estado TEXT NOT NULL DEFAULT 'pausada',
@@ -101,10 +101,10 @@ def inicializar():
             if existe:
                 continue
             con.execute(
-                "INSERT INTO ea_despliegues (id, hipotesis, estrategia, categoria, simbolo, tf, magic, version,"
+                "INSERT INTO ea_despliegues (id, referencia, estrategia, categoria, simbolo, tf, magic, version,"
                 " estado, activo, instalar, mult_riesgo, creado, actualizado)"
                 " VALUES (?,?,?,?,?,?,?,?,'pausada',0,0,1.0,?,?)",
-                (d["id"], d["hipotesis"], d["estrategia"], d["categoria"], d["simbolo"], d["tf"], d["magic"],
+                (d["id"], d.get("referencia_historica", ""), d["estrategia"], d["categoria"], d["simbolo"], d["tf"], d["magic"],
                  d["version"], ahora, ahora))
             con.execute("INSERT INTO ea_eventos (ts, despliegue_id, accion, detalle, origen) VALUES (?,?,?,?,?)",
                         (ahora, d["id"], "alta", f"desde despliegues.json (origen {d.get('origen', '')})", "sistema"))
@@ -120,7 +120,7 @@ def _asegurar():
 def listar():
     _asegurar()
     with conexion() as con:
-        return [dict(r) for r in con.execute("SELECT * FROM ea_despliegues ORDER BY categoria, hipotesis, simbolo")]
+        return [dict(r) for r in con.execute("SELECT * FROM ea_despliegues ORDER BY categoria, estrategia, simbolo")]
 
 
 def obtener(despliegue_id):
@@ -200,7 +200,7 @@ def config():
 def guardar_config(cambios):
     desconocidas = [k for k in cambios if k not in CONFIG_DEFECTO]
     if desconocidas:
-        raise KeyError(f"claves desconocidas: {desconocidas}")
+        raise ValueError(f"claves desconocidas: {desconocidas}")
     _asegurar()
     with conexion() as con:
         for k, v in cambios.items():

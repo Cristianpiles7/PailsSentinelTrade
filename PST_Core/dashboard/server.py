@@ -39,6 +39,22 @@ asyncio.run(db_engine.initialize()) # Inicialización síncrona para Flask
 portfolio = PortfolioManager(db=db_engine, max_risk_pct=MAX_RISK_PCT, max_drawdown_pct=MAX_DRAWDOWN_PCT) 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "pst_trading.db")
 
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 @app.after_request
 def add_header(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
@@ -47,7 +63,7 @@ def add_header(response):
     return response
 
 # Inicializar MT5 en este proceso para poder leer la cuenta
-if not mt5.initialize():
+if not _pst_conectar_mt5(mt5):
     print("⚠️ [DASHBOARD] No se pudo inicializar MT5 para lectura de cuenta.")
 
 def get_db_connection():
@@ -1580,7 +1596,7 @@ def import_history_from_mt5():
         from datetime import datetime, timedelta
         
         # 1. Conexión MT5
-        if not mt5.initialize():
+        if not _pst_conectar_mt5(mt5):
              return jsonify({"error": "MT5 no disponible"}), 500
              
         # 2. Obtener Deals (30 días)

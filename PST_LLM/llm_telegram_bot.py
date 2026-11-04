@@ -57,10 +57,19 @@ _spec = importlib.util.spec_from_file_location("lt", rutas.PST_LLM_DIR / "llm_tr
 lt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lt)
 
-# magic -> nombre de los EAs de MT5 (MT5/README.md; mismo mapa que PST_Core/engine/mt5_sync.py)
-EAS = {100500: "H5 Bollinger+RSI", 100700: "H12 GapFill", 101000: "H20 RelativeStrength", 101100: "H25 VWAP+ADX",
-       101300: "H28b MACD", 101800: "H21 LiquiditySweep", 101801: "H21 LiquiditySweep", 101900: "H41 Donchian AAPL",
-       101901: "H41 Donchian TSLA", 101902: "H42 GapAndGo", 102001: "H45 Ichimoku GER40", 102003: "H45 Ichimoku CADJPY"}
+# magic -> nombre de los EAs de MT5. Fuente unica: MT5/despliegues.json (mismo criterio que
+# PST_Core/ea/rutas.nombres_por_magic, que usa mt5_sync). Se lee aqui sin importar PST_Core.
+def _nombres_eas():
+    try:
+        datos = json.loads((rutas.RECURSOS / "MT5" / "despliegues.json").read_text(encoding="utf-8"))["despliegues"]
+        nombres = {int(d["magic"]): d["id"].removeprefix("PST_") for d in datos}
+    except (OSError, ValueError, KeyError):
+        nombres = {}
+    nombres.setdefault(101801, "LiquiditySweep_EURUSD_M5 (variante retirada)")
+    return nombres
+
+
+EAS = _nombres_eas()
 RAZON = {0: ("✋", "Manual"), 1: ("📱", "Móvil"), 2: ("🌐", "Web"), 3: ("🤖", "Decisión del agente/EA"),
          4: ("🛑", "Stop loss"), 5: ("🎯", "Take profit"), 6: ("⚠️", "Stop-out del broker")}
 
@@ -70,6 +79,22 @@ INFORMES = {"📈 Abiertas": "abiertas", "📋 Cerradas hoy": "cerradas", "💰 
 
 
 # ── API de Telegram ──────────────────────────────────────────────────────────
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def api(metodo, espera=15, **kw):
     token, _ = lt._env_telegram()
     req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{metodo}", data=json.dumps(kw).encode("utf-8"),
@@ -644,7 +669,7 @@ def main():
     a = ap.parse_args()
 
     import MetaTrader5 as mt5
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"MT5 no disponible: {mt5.last_error()}", file=sys.stderr)
         return 1
     _, chat = lt._env_telegram()

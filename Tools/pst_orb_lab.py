@@ -64,6 +64,22 @@ ENTRY_WINDOW_H = 4      # solo entradas en las 4h posteriores a la apertura
 MIN_TRADES_GRID = 80    # muestra mínima agregada para que un combo sea elegible
 
 
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def asset_class(symbol: str) -> str:
     s = symbol.upper()
     if "XAU" in s or "XAG" in s:
@@ -102,7 +118,7 @@ def get_data(symbol: str, days: int, refresh: bool = False):
             return pickle.load(f)
 
     import MetaTrader5 as mt5
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"    MT5 init falló: {mt5.last_error()}")
         return None
     info = mt5.symbol_info(symbol)

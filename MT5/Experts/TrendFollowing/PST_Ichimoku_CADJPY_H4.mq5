@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
-//| PST_H45_Ichimoku_GER40_H1.mq5
-//| Despliegue: H45 - Tendencia Ichimoku (nube + Tenkan/Kijun)
-//| Simbolo GER40.cash | TF H1 | magic 102001 | version 2.0
+//| PST_Ichimoku_CADJPY_H4.mq5
+//| Estrategia: Tendencia Ichimoku (nube + Tenkan/Kijun)
+//| Simbolo CADJPY | TF H4 | magic 102003 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
 //| Derivado de TrendFollowing/PST_IchimokuTrend_GER40_H1.mq5 (v1, ver git 329ff20). La cabecera original
@@ -73,13 +73,13 @@
 #include <PST_V2\PST_OptExport.mqh>
 #include <PST_V2\PST_Control.mqh>
 
-#define PST_DESPLIEGUE_SIMBOLO "GER40.cash"
-#define PST_DESPLIEGUE_TF      PERIOD_H1
+#define PST_DESPLIEGUE_SIMBOLO "CADJPY"
+#define PST_DESPLIEGUE_TF      PERIOD_H4
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H45_Ichimoku_GER40_H1";
-input int      InpMagicNumber      = 102001;
+input string   EA_Name             = "PST_Ichimoku_CADJPY_H4";
+input int      InpMagicNumber      = 102003;
 
 input group    "--- Estrategia H45: tendencia con nube de Ichimoku ---"
 input int      InpTenkanPeriod     = 9;

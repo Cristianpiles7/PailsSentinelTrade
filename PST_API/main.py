@@ -31,6 +31,7 @@ from PST_API.agents_api import router as agents_router
 from PST_API.llm_api import router as llm_router
 from PST_API.puntuador_api import router as puntuador_router
 from PST_API.estrategias_api import router as estrategias_router
+from PST_API.eas_api import router as eas_router
 from PST_API.updater_api import router as updater_router, limpiar_restos as limpiar_restos_actualizacion
 from pydantic import BaseModel
 from PST_Core.engine.executor import PSTExecutor
@@ -47,6 +48,22 @@ import estado_agentes  # noqa: E402  (PST_LLM/estado_agentes.py: estado del agen
 PUNTUADOR_JSON = rutas.AGENTS_DATA_DIR / "puntuador.json"
 
 # --- WEBSOCKET MANAGER (FASE 46) ---
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -149,7 +166,7 @@ async def lifespan(app: FastAPI):
     await db.initialize()
     db_size = os.path.getsize(DB_PATH) / (1024 * 1024) if os.path.exists(DB_PATH) else 0
     logger.info(f"✅ Sentinel v2.0.9: DB Detectada en {DB_PATH} ({db_size:.2f} MB)")
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         logger.error("❌ Fallo al inicializar MetaTrader 5 en la API")
 
     # Registrar el WSLogHandler en el logger root para capturar todo
@@ -239,6 +256,14 @@ async def lifespan(app: FastAPI):
 
     _lanzar(_latido_loop())
     _lanzar(_copia_loop())
+
+    # EAs de MT5: tablas ea_* y ficheros de control al dia (si no hay control.csv, los EAs no abren nada).
+    try:
+        from PST_Core.ea import servicio as ea_servicio
+        await asyncio.to_thread(ea_servicio.sincronizar)
+        logger.info("✅ [EAs] Control de EAs sincronizado.")
+    except Exception as e:
+        logger.error(f"Error sincronizando el control de EAs: {e}")
 
     yield
 
@@ -332,7 +357,7 @@ def ensure_mt5_connected():
         return False
     _mt5_ultimo_intento = ahora
     logger.warning("🔄 MT5 desconectado. Intentando re-inicializar...")
-    if mt5.initialize():
+    if _pst_conectar_mt5(mt5):
         logger.info("✅ Re-conexión con MT5 exitosa.")
         _mt5_caida_desde = None
         return True
@@ -1323,6 +1348,7 @@ app.include_router(agents_router)
 app.include_router(llm_router)
 app.include_router(puntuador_router)
 app.include_router(estrategias_router)
+app.include_router(eas_router)
 app.include_router(updater_router)
 
 if os.path.isdir(react_dist_path):

@@ -88,6 +88,22 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "PST_Core" / "data"
 
 
 # ───────────────────────────────────────────── datos (caché compartida con pst_bt_lab)
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def get_data(symbol: str, days: int, refresh: bool = False) -> Optional[dict]:
     """M1 + M5 REAL de MT5, cacheado igual que Tools/pst_bt_lab.py (barras idénticas)."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,7 +116,7 @@ def get_data(symbol: str, days: int, refresh: bool = False) -> Optional[dict]:
         import MetaTrader5 as mt5
     except Exception:
         raise RuntimeError("MetaTrader5 no está instalado. Ejecuta en el mismo entorno que el bot.")
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"    ⚠️  MT5 init falló para {symbol}: {mt5.last_error()}")
         return None
 

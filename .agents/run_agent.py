@@ -74,8 +74,8 @@ ALLOWED_TOOLS = {
     "reconciliador":  "mcp__pst__*,Read,Glob,Grep",
     "juez":           "mcp__pst__*,Read,Glob,Grep",
     "revisor":        "mcp__pst__*,Read,Glob,Grep,Bash(git *)",
-    "cazador":        "mcp__pst__*,Read,Glob,Grep,mcp__metatrader5-mcp__*",
-    "ingeniero-mql5": "mcp__pst__*,Read,Write,Edit,Glob,Grep,mcp__metatrader5-mcp__*,Bash(*metaeditor64*)",
+    "cazador":        "mcp__pst__*,Read,Glob,Grep",
+    "ingeniero-mql5": "mcp__pst__*,Read,Write,Edit,Glob,Grep",
 }
 
 

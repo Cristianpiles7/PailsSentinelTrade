@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
-//| PST_H41_DonchianVolumen_AAPL_H1.mq5
-//| Despliegue: H41 - Ruptura Donchian + volumen + tendencia
+//| PST_DonchianVolumen_AAPL_H1.mq5
+//| Estrategia: Ruptura Donchian + volumen + tendencia
 //| Simbolo AAPL | TF H1 | magic 101900 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
@@ -83,7 +83,7 @@
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H41_DonchianVolumen_AAPL_H1";
+input string   EA_Name             = "PST_DonchianVolumen_AAPL_H1";
 input int      InpMagicNumber      = 101900;
 
 input group    "--- Estrategia H41: ruptura de rango + volumen + tendencia ---"

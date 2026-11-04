@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Layers, Bot, Activity } from 'lucide-react'
+import { Layers, Bot, Activity, Cpu } from 'lucide-react'
 import { ConfigForm } from './ConfigForm'
 import { LlmCriterioPanel } from './LlmCriterioPanel'
 import { PuntuadorPanel } from './PuntuadorPanel'
+import { EasPanel } from './EasPanel'
 
 // Una pantalla por estrategia. Pestañas: Resumen (que hace y como va), Simbolos (los agentes de esa
 // estrategia, con su configuracion propia desplegable) y Configuracion (parametros de la estrategia).
@@ -103,7 +104,7 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
   }, [api, API_BASE])
 
   useEffect(() => {
-    if (!activa || seccion !== 'config') return
+    if (!activa || activa === 'eas' || seccion !== 'config') return
     api.get(`${API_BASE}/estrategias/${activa}/config`)
       .then(r => setConfigEst(r.data.valores))
       .catch(() => setConfigEst(null))
@@ -154,20 +155,37 @@ export function EstrategiaView({ api, API_BASE, agentes, symbols }) {
   }
 
   if (error) return <p className="text-[11px] text-rose-400 font-bold uppercase tracking-wider">{error}</p>
+  // Selector de estrategia. "EAs MT5" es una familia aparte: estrategias en codigo MQL5, no agentes.
+  const selector = (
+    <div className="flex flex-wrap items-center gap-2">
+      {estrategias.map(e => (
+        <button key={e.id} onClick={() => { setActiva(e.id); setAbierto(null); }}
+          className={`flex items-center gap-2 text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl border transition-all ${activa === e.id ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+          <Layers size={14} />{e.nombre}
+          <span className="text-zinc-600">{e.n_simbolos}</span>
+        </button>
+      ))}
+      <span className="mx-1 h-6 w-px bg-zinc-800" />
+      <button onClick={() => { setActiva('eas'); setAbierto(null); }}
+        className={`flex items-center gap-2 text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl border transition-all ${activa === 'eas' ? 'bg-emerald-600/15 border-emerald-500/50 text-emerald-200' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+        <Cpu size={14} />EAs MT5
+      </button>
+    </div>
+  )
+
+  if (activa === 'eas') {
+    return (
+      <div className="max-w-6xl mx-auto flex flex-col gap-6">
+        {selector}
+        <EasPanel api={api} API_BASE={API_BASE} />
+      </div>
+    )
+  }
   if (!estrategia) return <p className="text-[11px] text-zinc-600 font-bold uppercase tracking-wider">Cargando estrategias…</p>
 
   return (
     <div className="max-w-5xl mx-auto flex flex-col gap-6">
-      {/* Selector de estrategia */}
-      <div className="flex flex-wrap items-center gap-2">
-        {estrategias.map(e => (
-          <button key={e.id} onClick={() => { setActiva(e.id); setAbierto(null); }}
-            className={`flex items-center gap-2 text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl border transition-all ${activa === e.id ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
-            <Layers size={14} />{e.nombre}
-            <span className="text-zinc-600">{e.n_simbolos}</span>
-          </button>
-        ))}
-      </div>
+      {selector}
 
       {/* Pestañas de la estrategia */}
       <div className="flex items-center gap-1 border-b border-zinc-800/60">

@@ -1,4 +1,13 @@
 //+------------------------------------------------------------------+
+//| PST_BollingerRsi_GBPAUD_H4.mq5
+//| Estrategia: Bollinger + RSI (reversion a la media)
+//| Simbolo GBPAUD | TF H4 | magic 100502 | version 2.0
+//| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
+//| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
+//| Derivado de MeanReversion/PST_MeanReversion_EURGBP_BB.mq5 (v1, ver git 329ff20). La cabecera original
+//| sigue debajo; si habla de varios simbolos, aqui ya solo aplica al de arriba.
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                       PST_MeanReversion_EURGBP_BB.mq5             |
 //|                              PailsSentinelMT5TradeV2 — Fase 6     |
 //|                                                                   |
@@ -31,17 +40,22 @@
 //|  - Lotaje por % de riesgo, circuit breaker de drawdown diario.    |
 //+------------------------------------------------------------------+
 #property copyright "PailsSentinelMT5Trade"
-#property version   "1.00"
+#property version   "2.00"
 #property strict
 
 #include <Trade\Trade.mqh>
 #include <PST_V2\PST_RiskManager.mqh>
 #include <PST_V2\PST_Logger.mqh>
 #include <PST_V2\PST_OptExport.mqh>
+#include <PST_V2\PST_Control.mqh>
+
+#define PST_DESPLIEGUE_SIMBOLO "GBPAUD"
+#define PST_DESPLIEGUE_TF      PERIOD_H4
+#define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_MeanReversion_EURGBP_BB";
-input int      InpMagicNumber      = 100500;
+input string   EA_Name             = "PST_BollingerRsi_GBPAUD_H4";
+input int      InpMagicNumber      = 100502;
 
 input group    "--- Estrategia H5: Bollinger + RSI (reversion a la media) ---"
 input int      InpBbPeriod         = 20;
@@ -78,6 +92,11 @@ string g_correlationGroup[];
 //+------------------------------------------------------------------+
 int OnInit()
   {
+   int ctl = PST_Control_Init(EA_Name, InpMagicNumber, PST_EA_VERSION,
+                              PST_DESPLIEGUE_SIMBOLO, PST_DESPLIEGUE_TF);
+   if(ctl != INIT_SUCCEEDED)
+      return(ctl);
+
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetTypeFillingBySymbol(_Symbol);
 
@@ -106,6 +125,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
+   PST_Control_Deinit(reason);
    IndicatorRelease(handleBands);
    IndicatorRelease(handleRsi);
    IndicatorRelease(handleAtr);
@@ -140,7 +160,7 @@ void UpdateDailyBalanceTracker()
 //+------------------------------------------------------------------+
 bool HasOpenPosition()
   {
-   return PositionSelect(_Symbol) && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber;
+   return PST_SelectMyPosition(_Symbol, InpMagicNumber);
   }
 
 //+------------------------------------------------------------------+
@@ -196,7 +216,7 @@ void OnTick()
       double curSl = PositionGetDouble(POSITION_SL);
       if(MathAbs(newTp - curTp) >= point)
         {
-         if(trade.PositionModify(_Symbol, curSl, newTp))
+         if(PST_ModifyMyPosition(trade, _Symbol, InpMagicNumber, curSl, newTp))
             PST_Log(EA_Name, StringFormat("TP dinamico actualizado a %s (banda media).", DoubleToString(newTp, digits)));
          else
             PST_Log(EA_Name, "ERROR al actualizar TP dinamico: " + IntegerToString(trade.ResultRetcode()));
@@ -210,7 +230,7 @@ void OnTick()
         {
          double price = (posType == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID)
                                                           : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         if(trade.PositionClose(_Symbol))
+         if(PST_CloseMyPosition(trade, _Symbol, InpMagicNumber))
             PST_LogTrade(EA_Name, "CLOSE", _Symbol, 0, price, 0, 0, "retorno a banda central");
          else
             PST_Log(EA_Name, "ERROR al cerrar posicion: " + IntegerToString(trade.ResultRetcode()));
@@ -249,6 +269,9 @@ void OnTick()
 
    if(wantLong || wantShort)
      {
+      // Interruptor de la app (PST_Control): si esta pausado no se abre nada nuevo.
+      if(!PST_Control_PuedeAbrir())
+         return;
       if(!PST_PortfolioRiskOk(InpRiskPercent, InpMaxPortfolioRiskPercent))
         {
          PST_Log(EA_Name, StringFormat("Operacion bloqueada: riesgo de cartera ya al limite (max %.1f%%).", InpMaxPortfolioRiskPercent));
@@ -269,7 +292,7 @@ void OnTick()
       double slDistancePoints = (ask - sl) / point;
       if(slDistancePoints <= 0)
          return;
-      double lots = PST_CalcLotByRisk(_Symbol, InpRiskPercent, slDistancePoints);
+      double lots = PST_CalcLotByRisk(_Symbol, PST_RiesgoEfectivo(InpRiskPercent), slDistancePoints);
       if(lots <= 0)
         {
          PST_Log(EA_Name, "Lotaje calculado invalido (0). No se abre operacion larga.");
@@ -292,7 +315,7 @@ void OnTick()
       double slDistancePoints = (sl - bid) / point;
       if(slDistancePoints <= 0)
          return;
-      double lots = PST_CalcLotByRisk(_Symbol, InpRiskPercent, slDistancePoints);
+      double lots = PST_CalcLotByRisk(_Symbol, PST_RiesgoEfectivo(InpRiskPercent), slDistancePoints);
       if(lots <= 0)
         {
          PST_Log(EA_Name, "Lotaje calculado invalido (0). No se abre operacion corta.");
@@ -331,5 +354,12 @@ double OnTester()
                  TesterStatistics(STAT_EXPECTED_PAYOFF));
    PST_AppendOptCsv(fileName, header, line);
    return TesterStatistics(STAT_PROFIT_FACTOR);
+  }
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+void OnTimer()
+  {
+   PST_Control_OnTimer(trade);
   }
 //+------------------------------------------------------------------+

@@ -1,4 +1,13 @@
 //+------------------------------------------------------------------+
+//| PST_MacdMomentum_GER40_H1.mq5
+//| Estrategia: Momentum MACD + ADX + EMA200
+//| Simbolo GER40.cash | TF H1 | magic 101300 | version 2.0
+//| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
+//| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
+//| Derivado de TrendFollowing/PST_MacdMomentum_GER40_H1.mq5 (v1, ver git 329ff20). La cabecera original
+//| sigue debajo; si habla de varios simbolos, aqui ya solo aplica al de arriba.
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                          PST_MacdMomentum_GER40_H1.mq5            |
 //|                              PailsSentinelMT5TradeV2 — Fase 6     |
 //|                                                                   |
@@ -48,13 +57,18 @@
 //| proyecto, suavizado de Wilder = pandas ewm alpha=1/period).       |
 //+------------------------------------------------------------------+
 #property copyright "PailsSentinelMT5Trade"
-#property version   "1.00"
+#property version   "2.00"
 #property strict
 
 #include <Trade\Trade.mqh>
 #include <PST_V2\PST_RiskManager.mqh>
 #include <PST_V2\PST_Logger.mqh>
 #include <PST_V2\PST_OptExport.mqh>
+#include <PST_V2\PST_Control.mqh>
+
+#define PST_DESPLIEGUE_SIMBOLO "GER40.cash"
+#define PST_DESPLIEGUE_TF      PERIOD_H1
+#define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
 input string   EA_Name             = "PST_MacdMomentum_GER40_H1";
@@ -149,6 +163,11 @@ bool BootstrapMacdState()
 //+------------------------------------------------------------------+
 int OnInit()
   {
+   int ctl = PST_Control_Init(EA_Name, InpMagicNumber, PST_EA_VERSION,
+                              PST_DESPLIEGUE_SIMBOLO, PST_DESPLIEGUE_TF);
+   if(ctl != INIT_SUCCEEDED)
+      return(ctl);
+
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetTypeFillingBySymbol(_Symbol);
 
@@ -181,6 +200,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
+   PST_Control_Deinit(reason);
    IndicatorRelease(handleEmaTrend);
    IndicatorRelease(handleAdx);
    IndicatorRelease(handleAtr);
@@ -215,7 +235,7 @@ void UpdateDailyBalanceTracker()
 //+------------------------------------------------------------------+
 bool HasOpenPosition()
   {
-   return PositionSelect(_Symbol) && PositionGetInteger(POSITION_MAGIC) == InpMagicNumber;
+   return PST_SelectMyPosition(_Symbol, InpMagicNumber);
   }
 
 //+------------------------------------------------------------------+
@@ -243,7 +263,7 @@ void OnTick()
       if(g_barsHeld >= InpMaxBarsHold)
         {
          double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         if(trade.PositionClose(_Symbol))
+         if(PST_CloseMyPosition(trade, _Symbol, InpMagicNumber))
             PST_LogTrade(EA_Name, "CLOSE", _Symbol, 0, price, 0, 0, StringFormat("max_bars_hold alcanzado (%d)", InpMaxBarsHold));
          else
             PST_Log(EA_Name, "ERROR al cerrar posicion (max_bars_hold): " + IntegerToString(trade.ResultRetcode()));
@@ -292,6 +312,12 @@ void OnTick()
    if(ddExceeded || dailyLossExceeded || totalLossExceeded)
       return;
 
+   // Interruptor de la app (PST_Control): si esta pausado no se abre nada nuevo.
+
+   if(!PST_Control_PuedeAbrir())
+
+      return;
+
    if(!PST_PortfolioRiskOk(InpRiskPercent, InpMaxPortfolioRiskPercent))
      {
       PST_Log(EA_Name, StringFormat("Operacion bloqueada: riesgo de cartera ya al limite (max %.1f%%).", InpMaxPortfolioRiskPercent));
@@ -321,7 +347,7 @@ void OnTick()
       double slDistancePoints = (ask - sl) / point;
       if(slDistancePoints <= 0)
          return;
-      double lots = PST_CalcLotByRisk(_Symbol, InpRiskPercent, slDistancePoints);
+      double lots = PST_CalcLotByRisk(_Symbol, PST_RiesgoEfectivo(InpRiskPercent), slDistancePoints);
       if(lots <= 0)
         {
          PST_Log(EA_Name, "Lotaje calculado invalido (0). No se abre operacion larga.");
@@ -348,7 +374,7 @@ void OnTick()
       double slDistancePoints = (sl - bid) / point;
       if(slDistancePoints <= 0)
          return;
-      double lots = PST_CalcLotByRisk(_Symbol, InpRiskPercent, slDistancePoints);
+      double lots = PST_CalcLotByRisk(_Symbol, PST_RiesgoEfectivo(InpRiskPercent), slDistancePoints);
       if(lots <= 0)
         {
          PST_Log(EA_Name, "Lotaje calculado invalido (0). No se abre operacion corta.");
@@ -385,5 +411,12 @@ double OnTester()
                  TesterStatistics(STAT_EXPECTED_PAYOFF));
    PST_AppendOptCsv(fileName, header, line);
    return TesterStatistics(STAT_PROFIT_FACTOR);
+  }
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+void OnTimer()
+  {
+   PST_Control_OnTimer(trade);
   }
 //+------------------------------------------------------------------+

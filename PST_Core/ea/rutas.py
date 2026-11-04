@@ -50,6 +50,18 @@ def detectar_instalacion(terminal_datos):
         return r"C:\Program Files\FTMO Global Markets MT5 Terminal"
 
 
+def nombres_por_magic():
+    """magic -> nombre visible del EA (el id sin 'PST_'). Fuente unica: MT5/despliegues.json."""
+    import json
+    try:
+        datos = json.loads(DESPLIEGUES_JSON.read_text(encoding="utf-8"))["despliegues"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    nombres = {int(d["magic"]): d["id"].removeprefix("PST_") for d in datos}
+    nombres.setdefault(101801, "LiquiditySweep_EURUSD_M5 (variante retirada)")   # historico, ya no se despliega
+    return nombres
+
+
 def fuente_de(despliegue_id):
     """Ruta del .mq5 del despliegue en el repo (MT5/Experts/<categoria>/<id>.mq5)."""
     for p in EXPERTS_REPO.rglob(f"{despliegue_id}.mq5"):

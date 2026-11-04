@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
-//| PST_H5_BollingerRsi_GBPAUD_H4.mq5
-//| Despliegue: H5 - Bollinger + RSI (reversion a la media)
-//| Simbolo GBPAUD | TF H4 | magic 100502 | version 2.0
+//| PST_BollingerRsi_GBPUSD_H4.mq5
+//| Estrategia: Bollinger + RSI (reversion a la media)
+//| Simbolo GBPUSD | TF H4 | magic 100503 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
 //| Derivado de MeanReversion/PST_MeanReversion_EURGBP_BB.mq5 (v1, ver git 329ff20). La cabecera original
@@ -49,13 +49,13 @@
 #include <PST_V2\PST_OptExport.mqh>
 #include <PST_V2\PST_Control.mqh>
 
-#define PST_DESPLIEGUE_SIMBOLO "GBPAUD"
+#define PST_DESPLIEGUE_SIMBOLO "GBPUSD"
 #define PST_DESPLIEGUE_TF      PERIOD_H4
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H5_BollingerRsi_GBPAUD_H4";
-input int      InpMagicNumber      = 100502;
+input string   EA_Name             = "PST_BollingerRsi_GBPUSD_H4";
+input int      InpMagicNumber      = 100503;
 
 input group    "--- Estrategia H5: Bollinger + RSI (reversion a la media) ---"
 input int      InpBbPeriod         = 20;

@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
-//| PST_H20_RelativeStrength_MSFT_H1.mq5
-//| Despliegue: H20 - Fuerza relativa frente a US500.cash
+//| PST_RelativeStrength_MSFT_H1.mq5
+//| Estrategia: Fuerza relativa frente a US500.cash
 //| Simbolo MSFT | TF H1 | magic 101001 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
@@ -60,7 +60,7 @@
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H20_RelativeStrength_MSFT_H1";
+input string   EA_Name             = "PST_RelativeStrength_MSFT_H1";
 input int      InpMagicNumber      = 101001;
 
 input group    "--- Estrategia H20: fortaleza relativa vs indice ---"

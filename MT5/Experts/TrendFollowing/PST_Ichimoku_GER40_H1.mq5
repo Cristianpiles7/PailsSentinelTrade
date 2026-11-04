@@ -1,62 +1,67 @@
 //+------------------------------------------------------------------+
-//| PST_H42_GapAndGo_AAPL_H1.mq5
-//| Despliegue: H42 - Gap and go (hueco confirmado tras 1h)
-//| Simbolo AAPL | TF H1 | magic 101902 | version 2.0
+//| PST_Ichimoku_GER40_H1.mq5
+//| Estrategia: Tendencia Ichimoku (nube + Tenkan/Kijun)
+//| Simbolo GER40.cash | TF H1 | magic 102001 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
-//| Derivado de Breakout/PST_GapAndGo_AAPL_H1.mq5 (v1, ver git 329ff20). La cabecera original
+//| Derivado de TrendFollowing/PST_IchimokuTrend_GER40_H1.mq5 (v1, ver git 329ff20). La cabecera original
 //| sigue debajo; si habla de varios simbolos, aqui ya solo aplica al de arriba.
 //+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
-//|                   PST_GapAndGo_AAPL_H1.mq5                        |
+//|                  PST_IchimokuTrend_GER40_H1.mq5                   |
 //|                              PailsSentinelMT5TradeV2 — Fase 6+     |
 //|                                                                    |
-//| Hipotesis H42 (python/notebooks/backtest_engine.py::               |
-//| backtest_h42_gap_and_go), segunda idea de "inercia" para acciones  |
-//| de esta sesion (2026-09-02), especifica de AAPL. Idea clasica de    |
-//| trading de acciones ("gap and go"): compara el Close de la vela de |
-//| apertura de HOY (InpSessionOpenHour) contra el Close de la ultima  |
-//| vela de la sesion de AYER (InpForceCloseHour del dia anterior) --   |
-//| si el hueco de apertura supera InpGapThreshold Y en la vela de      |
-//| InpConfirmHour el precio ha seguido moviendose en la misma          |
-//| direccion del hueco (no lo ha rellenado), entra a favor -- apuesta  |
-//| a que un hueco que no se rellena en la primera hora tiende a        |
-//| continuar. Maximo 1 señal al dia (la mas selectiva de las 4 ideas   |
-//| de inercia probadas esta sesion). TP DINAMICO segun ADX en el       |
-//| momento de la entrada (mismo patron que PST_LiquiditySweepFade_     |
-//| EURUSD_M5.mq5 y PST_DonchianVolumeBreakout_Stocks.mq5). SL por ATR. |
-//| Cierre FORZADO fin de sesion (nunca overnight) -- comprueba la hora |
-//| de la vela que ACABA DE EMPEZAR (shift 0), mismo criterio que       |
-//| corrigio el bug de H20.                                             |
+//| Hipotesis H45 (python/notebooks/backtest_engine.py::               |
+//| backtest_h45_ichimoku_trend, run_h44_h45_new_indicators.py),       |
+//| primera estrategia del proyecto con Ichimoku Kinko Hyo. Sistema    |
+//| de tendencia clasico: precio ya por encima/debajo de la nube       |
+//| (Senkou A/B, filtro de tendencia de fondo) + cruce Tenkan/Kijun a  |
+//| favor de esa direccion como gatillo de entrada -- no hace falta    |
+//| EMA de tendencia aparte, la nube ya cumple ese papel. Sin ancla    |
+//| horaria (igual que H44/CCI) -- respeta la preferencia del usuario  |
+//| de no atar la estrategia a una franja horaria fija. TP DINAMICO    |
+//| segun ADX en el momento de la entrada (mismo patron que el resto   |
+//| de la familia H41/H42/H44), SL por ATR, sin limite de tiempo en    |
+//| la posicion (sale solo por TP o SL).                               |
 //|                                                                    |
-//| Validado en Python sobre datos H1 reales (2024.08-2026.08, ~2 años, |
-//| spread real en vivo 0.14), sesion 2026-09-02: **9/9 estable en TODO |
-//| el rango de InpGapThreshold probado (0.2%-1.5%)** -- meseta muy     |
-//| limpia, la                                                           |
-//| mejor de las 4 ideas de inercia en cuanto a robustez de umbral.     |
-//| Retorno +6% a +32% segun umbral, Sharpe hasta 0.36. SALVEDAD        |
-//| IMPORTANTE: InpConfirmHour SI parece un punto mas fragil que el     |
-//| umbral -- confirm_hour=17 (1h tras apertura, defecto) es el unico   |
-//| que funciono en el barrido; a las 2h (18) y 3h (19) el resultado se |
-//| rompe (signo invertido). Tiene sentido de mercado (si un hueco se   |
-//| va a rellenar, suele pasar en la primera hora), pero es una         |
-//| dependencia mas fuerte de un punto concreto que el resto de la      |
-//| hipotesis -- vigilar en la confirmacion real. SOLO AAPL: en el      |
-//| barrido inicial MSFT salio inestable y TSLA claramente NEGATIVO     |
-//| (-33% a -50% en el mismo rango de umbral) -- NO desplegar en otros  |
-//| simbolos sin retrabajar. Informes:                                  |
-//| python/reports/h40_h43_stocks_scan.csv y deepening posterior en la  |
-//| conversacion.                                                       |
+//| Cribado Python (cesta de indices/metales H1 + 4 pares forex        |
+//| mayores H4, split de la muestra en dos mitades, sesion             |
+//| 2026-09-02): GER40.cash H1 forma meseta real (tenkan/kijun/        |
+//| senkou_b = 9/26/52 estandar Y 10/30/60 ambos estables), pero con   |
+//| ASIMETRIA de split (casi todo el retorno en la 1a mitad, 23.9% y   |
+//| 14.5%, la 2a practicamente plana, 0.4-0.5%) -- mismo patron ya     |
+//| visto en H28b/GER40-MACD (que si paso la confirmacion real pese a  |
+//| una asimetria parecida, 4.9%/4.3%). No descalificante por si solo, |
+//| pero vigilar de cerca el split en la confirmacion real, no solo    |
+//| el signo total. Informe:                                           |
+//| python/reports/resumen_h44_h45_new_indicators.md.                  |
 //|                                                                    |
-//| CONFIRMADO en Strategy Tester real (2026-09-02): barrido de         |
-//| InpGapThreshold sobre AAPL H1, 2024.08.22-2026.08.20 -- todas las    |
-//| combinaciones probadas con Profit Factor 1.16-1.75 y Sharpe hasta   |
-//| 7.25. Pendiente split in/out-of-sample formal y que el usuario      |
-//| adjunte el EA al grafico de AAPL cuando decida darlo por bueno.     |
+//| CONFIRMADO en Strategy Tester real (2026-09-02), test individual   |
+//| con parametros por defecto (Tenkan=9/Kijun=26/SenkouB=52/          |
+//| AtrStopMult=2.0), sin limites de riesgo de cuenta (para split      |
+//| limpio, ver leccion metodologica H21 en la memoria del proyecto):  |
+//| periodo completo 2024.08.22-2026.08.20 -> +2322.96€ (23.2%), PF    |
+//| 1.181, 166 operaciones, Sharpe 1.21. Split in/out-of-sample: 1a    |
+//| mitad (2024.08.22-2025.08.21) +1848.80€ PF 1.342 80 ops Sharpe     |
+//| 2.10, 2a mitad (2025.08.21-2026.08.20) +525.23€ PF 1.084 86 ops    |
+//| Sharpe 0.57 -- AMBAS POSITIVAS, pasa el criterio de validacion del |
+//| proyecto (aunque con la misma asimetria ya prevista en el cribado  |
+//| Python, mas retorno en la 1a mitad). Fue el UNICO de los 4         |
+//| candidatos nuevos de esta sesion (GBPUSD/H44-CCI, AMD/H41,         |
+//| GOOG/H42, GER40/H45-Ichimoku) que paso la confirmacion real limpia |
+//| -- los otros 3 fallaron en real pese a pasar el cribado Python.    |
+//| Pendiente que el usuario adjunte el EA al grafico de GER40.cash H1 |
+//| cuando decida darlo por bueno.                                     |
 //|                                                                    |
-//| NOTA de fidelidad Python-vs-MT5: el SL y TP se envian como ordenes  |
-//| NATIVAS del broker desde la apertura, monitorizadas de forma        |
-//| continua -- igual que el resto de EAs del proyecto.                 |
+//| Nota de implementacion: el iIchimoku nativo de MT5 ya devuelve los |
+//| buffers Senkou Span A/B DESPLAZADOS hacia adelante (kijun_sen      |
+//| periodos, convenio estandar de la plataforma para dibujar la nube  |
+//| tal como se ve en el grafico) -- exactamente el mismo desplazamiento |
+//| causal que python/notebooks/backtest_engine.py::ichimoku() aplica  |
+//| con shift(displacement). Por eso CopyBuffer(handle, 2/3, 1, 1, buf) |
+//| en la vela shift=1 ya da directamente el valor de la nube "tal     |
+//| como estaba dibujada" en ese momento, sin necesidad de recalcular  |
+//| nada a mano (a diferencia del iMACD nativo, que si diverge).        |
 //+------------------------------------------------------------------+
 #property copyright "PailsSentinelMT5Trade"
 #property version   "2.00"
@@ -68,21 +73,20 @@
 #include <PST_V2\PST_OptExport.mqh>
 #include <PST_V2\PST_Control.mqh>
 
-#define PST_DESPLIEGUE_SIMBOLO "AAPL"
+#define PST_DESPLIEGUE_SIMBOLO "GER40.cash"
 #define PST_DESPLIEGUE_TF      PERIOD_H1
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H42_GapAndGo_AAPL_H1";
-input int      InpMagicNumber      = 101902;
+input string   EA_Name             = "PST_Ichimoku_GER40_H1";
+input int      InpMagicNumber      = 102001;
 
-input group    "--- Estrategia H42: gap and go ---"
-input double   InpGapThreshold     = 0.005;  // 0.5%, estable en todo el rango 0.2%-1.5%
-input int      InpSessionOpenHour  = 16;     // hora de servidor, apertura de NY (verificado)
-input int      InpConfirmHour      = 17;     // OJO: unico punto validado, ver cabecera
-input int      InpForceCloseHour   = 22;
+input group    "--- Estrategia H45: tendencia con nube de Ichimoku ---"
+input int      InpTenkanPeriod     = 9;
+input int      InpKijunPeriod      = 26;
+input int      InpSenkouBPeriod    = 52;
 
-input group    "--- Gestion de riesgo y TP dinamico por ADX (ver cabecera) ---"
+input group    "--- Gestion de riesgo y TP dinamico por ADX ---"
 input int      InpAtrPeriod        = 14;
 input double   InpAtrStopMult      = 2.0;
 input int      InpAdxPeriod        = 14;
@@ -106,17 +110,17 @@ input double   InpMaxTotalLossAmount    = 1000.0;
 
 //--------------------------------------------------------------- state
 CTrade trade;
-int    handleAtr, handleAdx;
+int    handleIchimoku, handleAdx, handleAtr;
 datetime lastBarTime = 0;
 double dayStartBalance = 0;
 datetime currentDay = 0;
 string g_correlationGroup[];
 
-datetime g_dayKey = 0;
-double   g_prevSessionClose = 0;
-double   g_pendingPrevClose = 0;
-double   g_todayOpenPrice = 0;
-bool     g_dayEnteredOrSkipped = false;
+// Buffers de iIchimoku: 0=Tenkan, 1=Kijun, 2=Senkou A (ya desplazado), 3=Senkou B (ya desplazado), 4=Chikou
+#define ICHIMOKU_TENKAN   0
+#define ICHIMOKU_KIJUN    1
+#define ICHIMOKU_SENKOU_A 2
+#define ICHIMOKU_SENKOU_B 3
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -129,9 +133,10 @@ int OnInit()
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetTypeFillingBySymbol(_Symbol);
 
-   handleAtr = iATR(_Symbol, PERIOD_CURRENT, InpAtrPeriod);
-   handleAdx = iADX(_Symbol, PERIOD_CURRENT, InpAdxPeriod);
-   if(handleAtr == INVALID_HANDLE || handleAdx == INVALID_HANDLE)
+   handleIchimoku = iIchimoku(_Symbol, PERIOD_CURRENT, InpTenkanPeriod, InpKijunPeriod, InpSenkouBPeriod);
+   handleAdx      = iADX(_Symbol, PERIOD_CURRENT, InpAdxPeriod);
+   handleAtr      = iATR(_Symbol, PERIOD_CURRENT, InpAtrPeriod);
+   if(handleIchimoku == INVALID_HANDLE || handleAdx == INVALID_HANDLE || handleAtr == INVALID_HANDLE)
      {
       PST_Log(EA_Name, "ERROR: no se pudo crear algun indicador en OnInit.");
       return(INIT_FAILED);
@@ -141,9 +146,9 @@ int OnInit()
    currentDay = 0;
    PST_ParseCsvGroup(InpCorrelationGroup, g_correlationGroup);
 
-   PST_Log(EA_Name, StringFormat("Inicializado en %s %s. Magic=%d GapThreshold=%.2f%% ConfirmHour=%d Riesgo=%.1f%%",
+   PST_Log(EA_Name, StringFormat("Inicializado en %s %s. Magic=%d Tenkan=%d Kijun=%d SenkouB=%d Riesgo=%.1f%%",
            _Symbol, EnumToString(PERIOD_CURRENT), InpMagicNumber,
-           InpGapThreshold * 100.0, InpConfirmHour, InpRiskPercent));
+           InpTenkanPeriod, InpKijunPeriod, InpSenkouBPeriod, InpRiskPercent));
    return(INIT_SUCCEEDED);
   }
 
@@ -151,8 +156,9 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    PST_Control_Deinit(reason);
-   IndicatorRelease(handleAtr);
+   IndicatorRelease(handleIchimoku);
    IndicatorRelease(handleAdx);
+   IndicatorRelease(handleAtr);
   }
 
 //+------------------------------------------------------------------+
@@ -205,76 +211,52 @@ void OnTick()
    if(!IsNewBar())
       return;
 
-   // Cierre forzado: comprueba la hora de la vela que ACABA DE EMPEZAR (shift 0), no la
-   // cerrada -- mismo criterio que corrigio el bug de H20 (ver cabecera).
-   MqlDateTime dtNow;
-   datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
-   TimeToStruct(currentBarTime, dtNow);
-   int currentHour = dtNow.hour;
-
    bool hasPosition = HasOpenPosition();
-   if(hasPosition && currentHour >= InpForceCloseHour)
-     {
-      double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      if(PST_CloseMyPosition(trade, _Symbol, InpMagicNumber))
-         PST_LogTrade(EA_Name, "CLOSE", _Symbol, 0, price, 0, 0, "cierre forzado fin de sesion");
-      else
-         PST_Log(EA_Name, "ERROR al cerrar posicion (cierre forzado): " + IntegerToString(trade.ResultRetcode()));
-      return;
-     }
-
-   MqlDateTime dtSignal;
-   datetime signalBarTime = iTime(_Symbol, PERIOD_CURRENT, 1);
-   TimeToStruct(signalBarTime, dtSignal);
-   datetime dayKey = (datetime)(dtSignal.year * 10000 + dtSignal.mon * 100 + dtSignal.day);
-   int signalHour = dtSignal.hour;
-
-   if(dayKey != g_dayKey)
-     {
-      g_dayKey = dayKey;
-      // El "prev close" de HOY es el ultimo Close registrado antes de que cambiara el dia.
-      g_prevSessionClose = g_pendingPrevClose;
-      g_todayOpenPrice = 0;
-      g_dayEnteredOrSkipped = false;
-     }
-
-   // Guarda continuamente el Close mas reciente de la sesion de HOY -- sera el "prev close"
-   // que se use manana. Se actualiza en cada vela de la sesion regular.
-   g_pendingPrevClose = iClose(_Symbol, PERIOD_CURRENT, 1);
-
-   if(signalHour == InpSessionOpenHour && g_todayOpenPrice == 0)
-      g_todayOpenPrice = iClose(_Symbol, PERIOD_CURRENT, 1);
-
    if(hasPosition)
-      return;
-   if(signalHour != InpConfirmHour || g_dayEnteredOrSkipped)
-      return;
-   if(g_prevSessionClose <= 0 || g_todayOpenPrice <= 0)
-      return;
+      return; // sale solo por TP/SL nativos, sin limite de tiempo (fiel al prototipo Python)
 
-   g_dayEnteredOrSkipped = true;
-   double openPrice = g_todayOpenPrice;
-
-   double gap = openPrice / g_prevSessionClose - 1.0;
-   double confirmClose = iClose(_Symbol, PERIOD_CURRENT, 1);
-
-   bool gapUpConfirmed   = gap > InpGapThreshold && confirmClose > openPrice;
-   bool gapDownConfirmed = gap < -InpGapThreshold && confirmClose < openPrice;
-   if(!gapUpConfirmed && !gapDownConfirmed)
-      return;
-
-   double atrBuf[];
-   ArraySetAsSeries(atrBuf, true);
-   double adxBuf[];
-   ArraySetAsSeries(adxBuf, true);
-   if(CopyBuffer(handleAtr, 0, 0, 2, atrBuf) < 2 || CopyBuffer(handleAdx, 0, 0, 2, adxBuf) < 2)
+   double tenkanBuf[], kijunBuf[], senkouABuf[], senkouBBuf[];
+   ArraySetAsSeries(tenkanBuf, true);
+   ArraySetAsSeries(kijunBuf, true);
+   ArraySetAsSeries(senkouABuf, true);
+   ArraySetAsSeries(senkouBBuf, true);
+   if(CopyBuffer(handleIchimoku, ICHIMOKU_TENKAN, 1, 2, tenkanBuf) < 2 ||
+      CopyBuffer(handleIchimoku, ICHIMOKU_KIJUN, 1, 2, kijunBuf) < 2 ||
+      CopyBuffer(handleIchimoku, ICHIMOKU_SENKOU_A, 1, 1, senkouABuf) < 1 ||
+      CopyBuffer(handleIchimoku, ICHIMOKU_SENKOU_B, 1, 1, senkouBBuf) < 1)
      {
-      PST_Log(EA_Name, "ERROR: fallo al copiar buffers de indicadores.");
+      PST_Log(EA_Name, "ERROR: fallo al copiar buffer de Ichimoku.");
       return;
      }
-   double atrRef = atrBuf[1];
-   double adxRef = adxBuf[1];
-   if(atrRef <= 0)
+   double tenkanNow  = tenkanBuf[0]; // shift 1: vela recien cerrada
+   double tenkanPrev = tenkanBuf[1]; // shift 2
+   double kijunNow   = kijunBuf[0];
+   double kijunPrev  = kijunBuf[1];
+   double cloudTop    = MathMax(senkouABuf[0], senkouBBuf[0]);
+   double cloudBottom = MathMin(senkouABuf[0], senkouBBuf[0]);
+
+   double closeSignal = iClose(_Symbol, PERIOD_CURRENT, 1);
+   bool aboveCloud = closeSignal > cloudTop;
+   bool belowCloud = closeSignal < cloudBottom;
+   bool bullishCross = tenkanNow > kijunNow && tenkanPrev <= kijunPrev;
+   bool bearishCross = tenkanNow < kijunNow && tenkanPrev >= kijunPrev;
+
+   bool wantLong  = aboveCloud && bullishCross;
+   bool wantShort = belowCloud && bearishCross;
+   if(!wantLong && !wantShort)
+      return;
+
+   double adxBuf[], atrBuf[];
+   ArraySetAsSeries(adxBuf, true);
+   ArraySetAsSeries(atrBuf, true);
+   if(CopyBuffer(handleAdx, 0, 1, 1, adxBuf) < 1 || CopyBuffer(handleAtr, 0, 1, 1, atrBuf) < 1)
+     {
+      PST_Log(EA_Name, "ERROR: fallo al copiar buffer de ADX/ATR.");
+      return;
+     }
+   double adxVal = adxBuf[0];
+   double atrVal = atrBuf[0];
+   if(atrVal <= 0)
       return;
 
    bool ddExceeded = PST_DailyDrawdownExceeded(InpMaxDailyDrawdownPct, dayStartBalance);
@@ -310,15 +292,17 @@ void OnTick()
    if(point <= 0)
       return;
 
-   double tpR = TpRByAdxRegime(adxRef);
-   double risk = InpAtrStopMult * atrRef;
+   double risk = InpAtrStopMult * atrVal;
+   if(risk <= 0)
+      return;
+   double tpR = TpRByAdxRegime(adxVal);
 
-   if(gapUpConfirmed)
+   if(wantLong)
      {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       double sl = NormalizeDouble(ask - risk, digits);
       double tp = NormalizeDouble(ask + risk * tpR, digits);
-      double slDistancePoints = risk / point;
+      double slDistancePoints = (ask - sl) / point;
       if(slDistancePoints <= 0)
          return;
       double lots = PST_CalcLotByRisk(_Symbol, PST_RiesgoEfectivo(InpRiskPercent), slDistancePoints);
@@ -333,16 +317,16 @@ void OnTick()
          return;
         }
       if(trade.Buy(lots, _Symbol, ask, sl, tp, EA_Name))
-         PST_LogTrade(EA_Name, "OPEN_BUY", _Symbol, lots, ask, sl, tp, StringFormat("Gap alcista %.2f%% confirmado (ADX=%.1f, TPxR=%.2f)", gap * 100.0, adxRef, tpR));
+         PST_LogTrade(EA_Name, "OPEN_BUY", _Symbol, lots, ask, sl, tp, StringFormat("Precio sobre la nube + cruce alcista Tenkan/Kijun (ADX=%.1f, TPxR=%.2f)", adxVal, tpR));
       else
          PST_Log(EA_Name, "ERROR al abrir compra: " + IntegerToString(trade.ResultRetcode()));
      }
-   else if(gapDownConfirmed)
+   else if(wantShort)
      {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double sl = NormalizeDouble(bid + risk, digits);
       double tp = NormalizeDouble(bid - risk * tpR, digits);
-      double slDistancePoints = risk / point;
+      double slDistancePoints = (sl - bid) / point;
       if(slDistancePoints <= 0)
          return;
       double lots = PST_CalcLotByRisk(_Symbol, PST_RiesgoEfectivo(InpRiskPercent), slDistancePoints);
@@ -357,7 +341,7 @@ void OnTick()
          return;
         }
       if(trade.Sell(lots, _Symbol, bid, sl, tp, EA_Name))
-         PST_LogTrade(EA_Name, "OPEN_SELL", _Symbol, lots, bid, sl, tp, StringFormat("Gap bajista %.2f%% confirmado (ADX=%.1f, TPxR=%.2f)", gap * 100.0, adxRef, tpR));
+         PST_LogTrade(EA_Name, "OPEN_SELL", _Symbol, lots, bid, sl, tp, StringFormat("Precio bajo la nube + cruce bajista Tenkan/Kijun (ADX=%.1f, TPxR=%.2f)", adxVal, tpR));
       else
          PST_Log(EA_Name, "ERROR al abrir venta: " + IntegerToString(trade.ResultRetcode()));
      }
@@ -368,9 +352,9 @@ double OnTester()
   {
    string fileName = StringFormat("PST_V2_OptResults\\%s_%s_%s.csv",
                                    EA_Name, _Symbol, EnumToString((ENUM_TIMEFRAMES)_Period));
-   string header = "GapThreshold;ConfirmHour;NetProfit;ProfitFactor;Trades;Sharpe;MaxDDPercent;ExpectedPayoff";
-   string line = StringFormat("%.4f;%d;%.2f;%.3f;%d;%.3f;%.2f;%.2f",
-                 InpGapThreshold, InpConfirmHour,
+   string header = "TenkanPeriod;KijunPeriod;SenkouBPeriod;NetProfit;ProfitFactor;Trades;Sharpe;MaxDDPercent;ExpectedPayoff";
+   string line = StringFormat("%d;%d;%d;%.2f;%.3f;%d;%.3f;%.2f;%.2f",
+                 InpTenkanPeriod, InpKijunPeriod, InpSenkouBPeriod,
                  TesterStatistics(STAT_PROFIT),
                  TesterStatistics(STAT_PROFIT_FACTOR),
                  (int)TesterStatistics(STAT_TRADES),

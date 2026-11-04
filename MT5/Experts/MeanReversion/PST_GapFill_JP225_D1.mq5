@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
-//| PST_H12_GapFill_JP225_D1.mq5
-//| Despliegue: H12 - Relleno de gap de apertura
+//| PST_GapFill_JP225_D1.mq5
+//| Estrategia: Relleno de gap de apertura
 //| Simbolo JP225.cash | TF D1 | magic 100700 | version 2.0
 //| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.
 //| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md
@@ -55,7 +55,7 @@
 #define PST_EA_VERSION         "2.0"
 
 //--------------------------------------------------------------- inputs
-input string   EA_Name             = "PST_H12_GapFill_JP225_D1";
+input string   EA_Name             = "PST_GapFill_JP225_D1";
 input int      InpMagicNumber      = 100700;
 
 input group    "--- Estrategia H12: reversion del gap de apertura ---"

@@ -54,6 +54,22 @@ REGISTRO_INICIAL = [
 ]
 
 
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def sufijo(nombre):
     return "" if nombre == NOMBRE_DEFECTO else f"_{nombre}"
 
@@ -324,7 +340,7 @@ def resultados():
     spec = importlib.util.spec_from_file_location("lt", SCRIPT)
     lt = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(lt)
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"MT5 no disponible: {mt5.last_error()}")
         return
     try:

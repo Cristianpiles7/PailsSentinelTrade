@@ -18,6 +18,22 @@ CACHE_DIR = os.path.join(REPO_ROOT, "Tools", ".ml_cache")
 _TIMEFRAMES = ("m2", "m3", "m5", "m15", "m30", "h1", "h4")
 
 
+def _pst_conectar_mt5(mt5):
+    """mt5.initialize() con la ruta del terminal configurado (nunca "el ultimo arrancado").
+    Ver PST_Core/utils/terminal_mt5.py y MT5/DESARROLLO_EAS.md (incidente 2026-11-04)."""
+    try:
+        from PST_Core.utils.terminal_mt5 import conectar
+    except ImportError:
+        import os as _os
+        import sys as _sys
+        _d = _os.path.dirname(_os.path.abspath(__file__))
+        while not _os.path.isdir(_os.path.join(_d, "PST_Core")) and _os.path.dirname(_d) != _d:
+            _d = _os.path.dirname(_d)
+        _sys.path.insert(0, _d)
+        from PST_Core.utils.terminal_mt5 import conectar
+    return conectar(mt5)
+
+
 def get_full_mtf_data(symbol: str, days: int, refresh: bool = False) -> dict:
     """Devuelve dict {"point", "spread_dist", "tick_value", "tick_size", "m2": df, ...}.
     Cachea en Tools/.ml_cache/{symbol}_{days}d.pkl. None si no hay datos."""
@@ -30,7 +46,7 @@ def get_full_mtf_data(symbol: str, days: int, refresh: bool = False) -> dict:
     import MetaTrader5 as mt5
     import pandas as pd
 
-    if not mt5.initialize():
+    if not _pst_conectar_mt5(mt5):
         print(f"    WARN: MT5 init fallo: {mt5.last_error()}")
         return None
     mt5.symbol_select(symbol, True)

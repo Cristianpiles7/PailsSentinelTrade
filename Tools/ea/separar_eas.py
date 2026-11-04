@@ -14,9 +14,11 @@ Es de un solo uso: a partir de aqui cada EA evoluciona por su cuenta. Se guarda 
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
+COMMIT_ORIGINALES = "329ff20"     # ultimo commit con los 9 EAs v1
 MT5 = Path(__file__).resolve().parents[2] / "MT5"
 EXPERTS = MT5 / "Experts"
 
@@ -33,7 +35,7 @@ def convertir(src, d):
     cab = (
         "//+------------------------------------------------------------------+\n"
         f"//| {d['id']}.mq5\n"
-        f"//| Despliegue: {d['hipotesis']} - {d['estrategia']}\n"
+        f"//| Estrategia: {d['estrategia']}\n"
         f"//| Simbolo {d['simbolo']} | TF {d['tf']} | magic {d['magic']} | version {d['version']}\n"
         "//| Un fichero = un despliegue: este EA solo arranca en ese simbolo y TF.\n"
         "//| Control desde la app: MT5/Include/PST_Control.mqh. Catalogo: MT5/CATALOGO_EAS.md\n"
@@ -85,7 +87,10 @@ def main():
     despliegues = json.loads((MT5 / "despliegues.json").read_text(encoding="utf-8"))["despliegues"]
     salida = {}
     for d in despliegues:
-        src = (EXPERTS / d["origen"]).read_text(encoding="utf-8")
+        # Los originales v1 ya no estan en disco (algunos nombres nuevos coinciden con los viejos):
+        # se leen siempre del commit en que existian.
+        src = subprocess.run(["git", "show", f"{COMMIT_ORIGINALES}:MT5/Experts/{d['origen']}"], cwd=MT5.parent,
+                             capture_output=True, check=True).stdout.decode("utf-8").replace("\r\n", "\n")
         try:
             salida[EXPERTS / d["categoria"] / f"{d['id']}.mq5"] = convertir(src, d)
         except ValueError as e:
