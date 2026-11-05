@@ -17,7 +17,7 @@
 //|    PST_H25_VwapAdx_UK100_H1;UK100.cash;H1;1                      |
 //+------------------------------------------------------------------+
 #property copyright "PailsSentinelTrade"
-#property version   "1.21"
+#property version   "1.22"
 #property strict
 
 input string InpPstControlDir = "PST_EA";
@@ -193,22 +193,26 @@ void Instalar(const int k)
 //+------------------------------------------------------------------+
 void EscribirEstado()
   {
-   int fh = FileOpen(InpPstControlDir + "\\gestor_estado.csv",
-                     FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON|FILE_SHARE_READ);
-   if(fh == INVALID_HANDLE)
-      return;
-   FileWriteString(fh, "id;instalar;grafico;cargado;error\r\n");
+   // Primero el texto (recorrer los graficos tarda segundos) y luego fichero temporal + FileMove: si se abre
+   // el definitivo antes, la app lo lee vacio durante todo el recorrido (visto 2026-11-05, ~10 s por ciclo).
+   string txt = "id;instalar;grafico;cargado;error\r\n";
    for(int k = 0; k < g_n; k++)
      {
       long c = ChartConEa(g_id[k]);
-      FileWriteString(fh, StringFormat("%s;%d;%I64d;%d;%s\r\n", g_id[k], g_instalar[k], c, c != 0 ? 1 : 0, g_error[k]));
+      txt += StringFormat("%s;%d;%I64d;%d;%s\r\n", g_id[k], g_instalar[k], c, c != 0 ? 1 : 0, g_error[k]);
      }
-   FileWriteString(fh, StringFormat("#gestor;%s;%I64d;%s;%s\r\n",
-                   TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS),
-                   AccountInfoInteger(ACCOUNT_LOGIN),
-                   TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "algo_on" : "algo_off",
-                   TerminalInfoString(TERMINAL_DATA_PATH)));
+   txt += StringFormat("#gestor;%s;%I64d;%s;%s\r\n",
+                       TimeToString(TimeLocal(), TIME_DATE|TIME_SECONDS),
+                       AccountInfoInteger(ACCOUNT_LOGIN),
+                       TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "algo_on" : "algo_off",
+                       TerminalInfoString(TERMINAL_DATA_PATH));
+   string tmp = InpPstControlDir + "\\gestor_estado.tmp";
+   int fh = FileOpen(tmp, FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(fh == INVALID_HANDLE)
+      return;
+   FileWriteString(fh, txt);
    FileClose(fh);
+   FileMove(tmp, FILE_COMMON, InpPstControlDir + "\\gestor_estado.csv", FILE_COMMON|FILE_REWRITE);
   }
 
 //+------------------------------------------------------------------+

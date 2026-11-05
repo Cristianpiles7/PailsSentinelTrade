@@ -153,7 +153,13 @@ def leer_gestor():
     edad = time.time() - ruta.stat().st_mtime
     salida = {"vivo": edad < 60, "edad_s": round(edad, 1), "despliegues": {}}
     try:
-        for linea in ruta.read_text(encoding="latin-1").splitlines()[1:]:
+        texto = ruta.read_text(encoding="latin-1")
+        for _ in range(10):        # gestor < 1.22 lo trunca y tarda segundos en reescribirlo
+            if texto.strip():
+                break
+            time.sleep(0.5)
+            texto = ruta.read_text(encoding="latin-1")
+        for linea in texto.splitlines()[1:]:
             partes = linea.split(";")
             if linea.startswith("#gestor") and len(partes) >= 4:
                 salida.update({"hora": partes[1], "cuenta": partes[2], "algo_trading": partes[3] == "algo_on",
