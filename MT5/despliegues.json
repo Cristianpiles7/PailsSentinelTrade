@@ -176,6 +176,50 @@
       "version": "2.0",
       "origen": "Breakout/PST_GapAndGo_AAPL_H1.mq5",
       "referencia_historica": "H42"
+    },
+    {
+      "id": "PST_RelativeStrengthV2_MSFT_H1",
+      "estrategia": "Fuerza relativa frente a US500.cash — umbral de alpha = 0,5 × ATR diario % (en vez de 1 % fijo)",
+      "categoria": "Experimental",
+      "simbolo": "MSFT",
+      "tf": "H1",
+      "magic": 105000,
+      "version": "1.0",
+      "estado_inicial": "experimental",
+      "origen": "alta por agente:mejora-eas"
+    },
+    {
+      "id": "PST_RelativeStrengthV2_TSLA_H1",
+      "estrategia": "Fuerza relativa frente a US500.cash — alpha ajustado por beta móvil de 60 días D1 (en vez de alpha bruto)",
+      "categoria": "Experimental",
+      "simbolo": "TSLA",
+      "tf": "H1",
+      "magic": 105001,
+      "version": "1.0",
+      "estado_inicial": "experimental",
+      "origen": "alta por agente:mejora-eas"
+    },
+    {
+      "id": "PST_DonchianVolumenV2_AAPL_H1",
+      "estrategia": "Ruptura Donchian + volumen + tendencia — ruptura confirmada por cierre de la vela (no por mecha)",
+      "categoria": "Experimental",
+      "simbolo": "AAPL",
+      "tf": "H1",
+      "magic": 105002,
+      "version": "1.0",
+      "estado_inicial": "experimental",
+      "origen": "alta por agente:mejora-eas"
+    },
+    {
+      "id": "PST_DonchianVolumenV3_AAPL_H1",
+      "estrategia": "Ruptura Donchian + volumen + tendencia — volumen frente a la media de la misma hora en 20 días (en vez de las 20 velas previas)",
+      "categoria": "Experimental",
+      "simbolo": "AAPL",
+      "tf": "H1",
+      "magic": 105003,
+      "version": "1.0",
+      "estado_inicial": "experimental",
+      "origen": "alta por agente:mejora-eas"
     }
   ]
 }
