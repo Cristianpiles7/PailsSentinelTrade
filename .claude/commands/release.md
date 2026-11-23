@@ -1,53 +1,59 @@
 # Release PST
 
-Automatiza el commit, tag y push de una nueva versión de PailsSentinelTrade.
+Prepara una nueva versión de PailsSentinelTrade en una rama y abre el PR a `main`.
+**No crea tags ni publica nada**: al fusionar el PR a `main`, la GitHub Action
+(`.github/workflows/build-release.yml`) crea el tag `vX.X.X` y compila la Release.
 
 ## Uso
 `/release vX.X.X - [descripción de los hitos]`
 
-Ejemplo: `/release v2.1.0 - Nuevo filtro macro y backtesting mejorado`
+Ejemplo: `/release v2.9.0 - Nuevo filtro macro y backtesting mejorado`
 
 ## Instrucciones
 
-Cuando el usuario invoque este comando, el argumento `$ARGUMENTS` tendrá el formato `vX.X.X - descripción` o solo `vX.X.X`.
+`$ARGUMENTS` tiene el formato `vX.X.X - descripción` o solo `vX.X.X`.
 
 Ejecuta estos pasos en orden:
 
 ### 1. Parsear versión
-Extrae el número de versión sin la "v" (ej. `2.1.0`) y la descripción opcional.
+Extrae el número sin la "v" (ej. `2.9.0`) y la descripción opcional.
 
-### 2. Actualizar archivos de versión
+### 2. Comprobar el estado del repo
+- Si `git status` muestra cambios sin relación con la release, pregunta antes de incluirlos.
+- Si la versión ya existe como tag (`git ls-remote --tags origin refs/tags/vX.X.X`), para y avisa.
 
-- **`version.txt`** (raíz): reemplazar el contenido con solo el número, ej. `2.1.0`
-- **`PST_UTIL/version.txt`**: ídem
-- **`PST_API/main.py` línea ~111**: cambiar `version="X.X.X"` con la nueva versión
-- **`PST_Web/src/App.jsx` línea ~1238**: cambiar `PST-CORE: VX.X.X SMC` con la nueva versión en mayúsculas
+### 3. Rama de release
+- Si estamos en `main`, crea una rama `release/vX.X.X` desde `main` actualizado.
+- Si estamos en una rama de feature que el usuario quiere publicar, úsala.
 
-### 3. Staging
+### 4. Actualizar archivos de versión
+- **`version.txt`** (raíz): solo el número, sin "v", ej. `2.9.0`. Es el que lee la Action.
+- **`PST_UTIL/version.txt`**: ídem.
+- **`PST_API/main.py`**: `version="X.X.X"` (buscar `version=` en la clase FastAPI).
+
+### 5. Commit
+Formato estricto, **sin** `Co-Authored-By`:
 ```
-git add version.txt PST_UTIL/version.txt PST_API/main.py PST_Web/src/App.jsx
-git add -A
-```
-
-### 4. Commit
-Formato estricto (sin Co-Authored-By en este commit):
-```
+git add version.txt PST_UTIL/version.txt PST_API/main.py
 git commit -m "vX.X.X - [descripción]"
 ```
+Si hay otros cambios que deban ir en la release, añádelos antes de este commit (`git add -A` solo si el usuario lo confirma).
 
-### 5. Tag — borrar si ya existe
-```
-git tag -d vX.X.X
-git push origin --delete vX.X.X
-git tag vX.X.X
-```
-(los borrados pueden fallar si no existía, ignorar errores)
+### 6. Confirmación única
+Antes de publicar, muestra al usuario la rama, el mensaje del commit y el título del PR, y pide confirmación.
+Este es el único punto de confirmación: el merge a `main` lo hace el usuario en GitHub.
 
-### 6. Push — pedir confirmación al usuario antes de ejecutar
+### 7. Push y PR
 ```
-git push origin <rama_actual>
-git push origin vX.X.X
+git push -u origin <rama>
+gh pr create --base main --head <rama> --title "vX.X.X - [descripción]" --body "[hitos]
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
 
-### 7. Confirmar
-Mostrar al usuario el tag subido y recordarle que la GitHub Action de build se habrá disparado automáticamente.
+### 8. Confirmar
+Muestra la URL del PR y recuerda: al fusionarlo a `main`, la Action crea el tag `vX.X.X` y compila la Release (~10 min).
+
+## Respaldo manual
+Si hace falta lanzar un build sin PR (p. ej. reconstruir una versión ya existente), usa
+`workflow_dispatch` de la Action en GitHub o empuja el tag a mano: `git push origin vX.X.X`.

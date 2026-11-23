@@ -1,21 +1,65 @@
 name: Build and Release PST Bot
 
+# Flujo automático: al fusionar a main con version.txt subido, este workflow
+# crea el tag v<version> y compila la Release en el mismo run.
+# Un tag v* empujado a mano también dispara el build (respaldo).
 on:
   push:
+    branches:
+      - main
     tags:
-      - 'v*' # Trigger on tags like v1.0.0
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+# Un solo release a la vez para no pisar tags.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  tag:
+    name: Crear tag desde version.txt
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      create: ${{ steps.version.outputs.create }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Calcular tag y crearlo si no existe
+        id: version
+        run: |
+          V=$(tr -d '[:space:]' < version.txt)
+          V=${V#v}
+          T="v$V"
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          # Solo en pushes a main: si el tag ya existe, no hay release nueva.
+          if [ "${GITHUB_REF_TYPE}" = "branch" ] && [ -z "$(git ls-remote --tags origin "refs/tags/$T")" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "$T" "$GITHUB_SHA"
+            git push origin "refs/tags/$T"
+            echo "create=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "create=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build Executables
+    needs: tag
+    if: ${{ needs.tag.outputs.create == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' }}
     runs-on: windows-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -97,6 +141,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.tag.outputs.tag }}
           files: release_assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
