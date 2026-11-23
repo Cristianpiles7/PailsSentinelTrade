@@ -35,10 +35,7 @@ POR_DEFECTO = {"activo": True, "min_operaciones": 20, "modelo": "sonnet", "esfue
 TIPOS = {"activo": bool, "min_operaciones": int, "modelo": str, "esfuerzo": str, "cadencia_min": int,
          "max_caracteres": int, "max_operaciones_contexto": int, "validar": bool, "validacion_n": int}
 
-CRITERIO_DEFECTO = """- Por defecto, quédate fuera (hold). La mayoría de las velas no tienen ventaja: entra solo con una razón clara y concreta.
-- Entra solo en una estructura concreta (un nivel o una lectura de indicador con nombre) del marco que elijas, y di en 'Riesgo:' qué invalidaría la idea.
-- Usa los marcos altos para la dirección y los bajos para el momento de entrada.
-- No operes contra los marcos altos sin una razón clara."""
+CRITERIO_DEFECTO = """- Regla de entrada única: entra solo si el setup de tu régimen se cumple y hay un nivel o una lectura de indicador con nombre en el marco que eliges. Si no, quédate fuera (hold)."""
 
 # Scalping: un criterio por simbolo, guardado con la clave "scalping:<simbolo>" para que no se mezcle con
 # la flota (un mismo simbolo podria pasar de una estrategia a otra). Sin fila, usa este por defecto.
