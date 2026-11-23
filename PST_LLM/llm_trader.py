@@ -41,6 +41,7 @@ from pathlib import Path
 import numpy as np
 
 import prompts                        # criterio de entrada por simbolo, en BBDD (PST_LLM/prompts.py)
+import estadistica_propia             # tasa de aciertos y R medio propios para el estado (PST_LLM/estadistica_propia.py)
 import calendario                     # puerta de calendario FTMO (PST_LLM/calendario.py)
 import sesiones                       # paradas recurrentes del mercado: cierre antes del fin de semana (PST_LLM/sesiones.py)
 import registro                       # BBDD central: decisiones y agentes para la app
@@ -174,8 +175,9 @@ and the TRADING CRITERIA sections below to decide whether and where to enter.
 Values outside these ranges are clamped by the system, not rejected: stay inside them.
 
 REGIME AND SETUPS
-Classify the market first with H1 and H4 (closed candles) and put it in 'regimen'. Each regime has its own entry:
-look for the one that fits, do not stay out just because of the regime.
+Classify the market first with H1 and H4 (closed candles) and put it in 'regimen'. The regime only picks the setup
+you look for (below); it never decides by itself whether to enter. Enter only when that setup and the TRADING
+CRITERIA are met; otherwise hold.
 - tendencia_fuerte (H1 ADX >= 25, DI and EMA20 of H1 and H4 on the same side) -> 'breakout' continuation: after
   a pause or shallow pullback on M15/H1, enter on the break of the pause high/low. Invalidation: the other side of the pause.
 - tendencia (H1 ADX 18-25, H1 DI and EMA20 on the same side) -> 'pullback': pullback to the H1 or M15 EMA20 or to
@@ -184,7 +186,7 @@ look for the one that fits, do not stay out just because of the regime.
   rejection; target the middle or the other side. Invalidation: outside the extreme.
 - ruptura (price breaks the H1 maximo_20/minimo_20 or the previous day high/low with strength) -> 'breakout' on
   the break, or 'rechazo_nivel' if the break fails and price comes back inside.
-Do not trade against H4 without a clear reason. The criteria below refine this for the symbol.
+The criteria below refine this for the symbol.
 
 TRADING CRITERIA (specific to this symbol, written in Spanish; it may be revised over time)
 {{criterio}}
@@ -196,6 +198,8 @@ COSTS AND SIZING (enforced by the system)
 - The fleet may hold at most {MAX_MISMO_LADO_CLASE} positions on the same side per asset class and {MAX_MISMO_LADO_TOTAL} on the
   same side in total: check 'cartera' before proposing a trade that stacks the same exposure.
 - Risk per trade is sized by the system. You only choose the stop distance and the take-profit multiple.
+- Trade math: with the minimum tp_r ({TP_R[0]}) you need more than ~{estadistica_propia.aciertos_minimos_pct(TP_R[0]):.0f}% winners
+  to break even before costs (1 / (1 + tp_r)); a higher tp_r needs fewer winners. Your own hit rate is in 'estadistica_propia'.
 
 CLOSING RULES (enforced by the system)
 - A close is rejected while position.close_locked_for_min is greater than 0. That field gives the minutes
@@ -216,6 +220,9 @@ STATE FIELDS (units in brackets)
 - timeframes.<TF>.px_vs_ema20_atr: signed distance of the last close to EMA20 [ATRs].
 - timeframes.<TF>.spread_atr: spread / ATR [ratio].
 - own_history: your last closed trades, oldest first: side; opened [local time]; minutes; exit (STOP, TAKE PROFIT, manual, agent, revisor, other); R (approximate: net result after costs / risk at entry, so -1 is a full stop); net_eur. Empty list if none. Use it to calibrate, do not chase the last result.
+- estadistica_propia: over your last closed trades (up to {estadistica_propia.N_ULTIMAS}): operaciones; tasa_aciertos_pct
+  (share of winners after costs); r_medio (average R); aciertos_minimos_pct (the hit rate that breaks even before costs
+  at tp_r {TP_R[0]}). With no previous trades it says so in 'aviso'. Small samples are noise: do not overreact to them.
 - timeframes.<TF>.niveles: structure levels of that timeframe. maximo_20 / minimo_20 [price units]: highest high and lowest low of the last 20 closed candles. swing_alto / swing_bajo [price units]: most recent swing high / low in the last 60 candles (a candle higher / lower than its 2 neighbours on each side), null if none. dist_*_atr: signed distance from the last close to each level [ATRs of that timeframe]; negative = the level is below the close.
 - dia_anterior: the previous daily candle: maximo, minimo, cierre [price units]; dist_maximo_atr, dist_minimo_atr [ATRs of the call-interval timeframe]; null if unavailable.
 - cartera: open positions of ALL the LLM agents together (the flota): abiertas; por_lado {{buy, sell}}; flotante_eur and realizado_hoy_eur [account currency]; posiciones: symbol, side, clase (asset class), floating_eur. Your own symbol appears there too if you are in a trade. Use it to avoid stacking exposure to the same risk (for example, several index shorts at once).
@@ -561,7 +568,10 @@ def snapshot(mt5, symbol, cadencia, tfs):
         "symbol": symbol, "call_interval": cadencia, "spread_price": round(float(spread), info.digits),
         "equity": round(cuenta.equity, 2), "timeframes": marcos, "position": None,
     }
-    estado["own_history"] = historial_propio(mt5)
+    # Una sola lectura de historial: las 5 ultimas van a own_history y todas las N a la estadistica.
+    hist_n = historial_propio(mt5, n=estadistica_propia.N_ULTIMAS)
+    estado["own_history"] = hist_n[-5:]
+    estado["estadistica_propia"] = estadistica_propia.resumen(hist_n, TP_R[0])
     estado["dia_anterior"] = dia_anterior(mt5, symbol, ind_por_tf[cadencia]["atr"],
                                           marcos[cadencia]["candles_ohlc"][-1][3], info.digits)
     estado["cartera"] = cartera(mt5, symbol)
