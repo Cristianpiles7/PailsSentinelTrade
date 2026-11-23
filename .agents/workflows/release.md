@@ -1,31 +1,13 @@
 ---
-description: Automatizar el commit, tag y lanzamiento de la GitHub Action (vX.X.X o incremento automático)
+description: Preparar una release de PST: versión, commit en rama y PR a main. El tag y el build los crea la GitHub Action al fusionar.
 ---
 
-Este workflow asegura que los lanzamientos de PST sigan un orden estricto y profesional en GitHub.
+Este workflow es el mismo que `.claude/commands/release.md`. Ese archivo es la fuente de verdad: síguelo.
 
-### Pasos del Proceso:
+Resumen:
+1. Subir `version.txt` (solo número, sin "v") y `PST_UTIL/version.txt` y `PST_API/main.py`.
+2. Commit `vX.X.X - descripción`, sin `Co-Authored-By`.
+3. Empujar la rama y abrir el PR a `main` (confirmación única antes de publicar).
+4. El usuario fusiona el PR. La Action `build-release.yml` crea el tag `vX.X.X` y compila la Release.
 
-1. **Preparación de Versión**:
-   - Actualizar el archivo `version.txt` con el nuevo número (ej. `1.8.4`).
-   - Asegurar que `PST_API/main.py` y `PST_Web/src/App.jsx` reflejen la nueva versión.
-
-2. **Consolidación de Cambios**:
-   - Ejecutar `git add .` para incluir todas las mejoras y correcciones.
-
-3. **Commit Estandarizado**:
-   - Realizar el commit siguiendo el formato histórico esperado por el usuario: 
-   - `git commit -m "vX.X.X - [Breve descripción de los hitos principales]"`
-
-4. **Tagging y Disparo de Action**:
-   - Crear el tag local: `git tag vX.X.X`
-   - Si el tag ya existía, se debe borrar primero: `git tag -d vX.X.X` y `git push origin --delete vX.X.X`.
-
-5. **Subida Final**:
-   // turbo
-   - Ejecutar el push de la rama y del tag:
-   - `git push origin [rama_actual]`
-   - `git push origin vX.X.X`
-
-### Uso Sugerido:
-Cuando el usuario diga `/release vX.X.X`, el Agent deberá seguir estos pasos rigurosamente para garantizar que el `PST_Launcher` se genere correctamente y el historial de GitHub quede impecable.
+No crear tags a mano salvo como respaldo.

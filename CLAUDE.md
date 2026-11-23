@@ -89,26 +89,22 @@ Guía completa: `manual_docs/ENTORNO_PRUEBAS.md`.
   `mt5.initialize()` sin ruta (se engancha al último terminal arrancado: incidente del 2026-11-04).
 - MCP `pst`: requiere `pip install -r requirements-dev.txt`. Sin `PST_ENTORNO=dev` actúa sobre producción.
 
-## 2. Cómo se publica una versión (tag → Release)
+## 2. Cómo se publica una versión (PR → merge → tag automático → Release)
 
-Idioma del historial: `vX.Y.Z - descripción en una línea`. Ver también `repo\.claude\commands\release.md` y `repo\.agents\workflows\release.md`.
+Idioma del historial: `vX.Y.Z - descripción en una línea`. Procedimiento completo: `repo\.claude\commands\release.md` (`/release vX.Y.Z - descripción`). `repo\.agents\workflows\release.md` apunta ahí.
 
-1. **Revisar cambios sin commit** en `repo\`: `git status`. Ahora mismo hay `PST_LLM/scalping.py` y `PST_LLM/scalping_config.py` modificados sin commit. `git add -A` los mete todos en la release: decide antes si deben ir.
-2. **Subir la versión** (solo número, sin "v"):
-   - `repo\version.txt` (ej. `2.7.0`). Es el que empaqueta la Action.
-   - `repo\PST_UTIL\version.txt`.
-   - `repo\PST_API\main.py`: `version="X.Y.Z"` (está en la clase FastAPI, buscar `version=`).
-   - `repo\PST_Web\src\App.jsx`: la cadena `PST-CORE: VX.Y.Z` **ya no existe** en ese archivo; si el release.md la menciona, omitir ese paso y buscar otra ubicación si hace falta.
-3. **Commit**: `git commit -m "vX.Y.Z - descripción"`. **Sin** línea `Co-Authored-By` en el commit de release (regla de `release.md`).
-4. **Tag**: `git tag vX.Y.Z`. Si ya existía: `git tag -d vX.Y.Z` y `git push origin --delete vX.Y.Z`. Si ya había una Release con ese tag, bórrala también en GitHub antes.
-5. **Push** — pedir confirmación al usuario antes de ejecutar:
-   - `git push origin main`
-   - `git push origin vX.Y.Z`
-6. **Action** `.github/workflows/build-release.yml` se dispara con el tag `v*`. En ~10 min:
-   - compila `PST_MASTER.exe` (PyInstaller, incluye `PST_Web/dist`) y `PST_LAUNCHER.exe`;
-   - inyecta `DIST_TOKEN` (secreto de GitHub) en `Tools/_dist_token.py` solo en el build;
-   - crea la Release con 3 assets: `PST_MASTER.exe`, `PST_LAUNCHER.exe`, `version.txt`.
-   - Ver el resultado en GitHub → Actions. `gh` no está instalado en este PC; usar la web o instalar `gh`.
+1. **Preparar la rama**: `/release` crea o usa una rama de release. Nunca se commitea directamente en `main`.
+2. **Revisar cambios sin commit** en `repo\`: `git status`. `git add -A` mete todo en la release: decide antes qué debe ir.
+3. **Subir la versión** (solo número, sin "v"): `repo\version.txt` (lo que lee la Action), `repo\PST_UTIL\version.txt` y `repo\PST_API\main.py` (`version="X.Y.Z"`).
+4. **Commit** `vX.Y.Z - descripción`, **sin** `Co-Authored-By`.
+5. **Push de la rama y PR a `main`**. Es el único punto de confirmación: pedir OK al usuario antes de publicar.
+6. **Merge**: lo hace el usuario en GitHub. **No crear tags a mano.**
+7. **Action** `.github/workflows/build-release.yml` en el push a `main`:
+   - si `version.txt` define una versión sin tag, crea `vX.Y.Z` en el commit fusionado (el job `tag`);
+   - si se creó, compila `PST_MASTER.exe` (PyInstaller, incluye `PST_Web/dist`) y `PST_LAUNCHER.exe`, inyecta `DIST_TOKEN` en `Tools/_dist_token.py` solo en el build, y publica la Release con `PST_MASTER.exe`, `PST_LAUNCHER.exe` y `version.txt`;
+   - un merge sin subida de versión no crea release;
+   - respaldo: empujar un tag `v*` a mano también dispara el build.
+   - Ver el resultado en GitHub → Actions (~10 min).
 
 ## 3. Cómo llega la actualización a este PC
 
@@ -137,7 +133,7 @@ Idioma del historial: `vX.Y.Z - descripción en una línea`. Ver también `repo\
 
 - Idioma de trabajo y de comentarios: español.
 - Commits que crea Claude: terminar con `Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>`. Excepción: el commit de release (sección 2, paso 3).
-- **Pedir confirmación** antes de `git push`, de crear o borrar tags/releases, y de tocar la BBDD.
+- **Pedir confirmación** antes de `git push` y de abrir el PR de release (una sola vez por release). No crear ni borrar tags ni releases a mano: lo hace la Action. Pedir confirmación antes de tocar la BBDD.
 - No ejecutar `Tools/RESET_DATABASE.py` ni borrar `PST_Core\data\` sin confirmación explícita.
 - No hacer commit de `.env`, `*.db`, `*.log` ni de la raíz de despliegue (no es git).
 - Los `.exe` y `PST_Core\data` de la raíz son runtime: no borrar ni renombrar sin preguntar.
