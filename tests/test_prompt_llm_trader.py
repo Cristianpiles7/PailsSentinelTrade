@@ -68,5 +68,63 @@ class EstadisticaPropia(unittest.TestCase):
         self.assertEqual(r["aciertos_minimos_pct"], 35.7)
 
 
+class BacktestRequerido(unittest.TestCase):
+    """Un criterio por simbolo solo se activa con un backtest guardado (BBDD temporal, nunca la real)."""
+
+    CRITERIO = "- Entra en el rechazo del nivel con confirmación en M1."
+
+    def setUp(self):
+        import registro
+        import sqlite3
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self._ruta = os.path.join(self._tmp.name, "test.db")
+        con = sqlite3.connect(self._ruta)
+        con.execute("""CREATE TABLE proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_run_id INTEGER,
+            kind TEXT, target TEXT, current_json TEXT, proposed_json TEXT, evidence_json TEXT, rationale TEXT,
+            state TEXT, created_at TEXT, decided_by TEXT, decided_at TEXT, applied_at TEXT)""")
+        con.commit()
+        con.close()
+        self._orig = registro.central
+        registro.central = lambda: sqlite3.connect(self._ruta)
+        self.addCleanup(self._restaurar)
+
+    def _restaurar(self):
+        import registro
+        registro.central = self._orig
+        self._tmp.cleanup()
+
+    def test_sin_backtest_no_se_activa(self):
+        with self.assertRaises(ValueError):
+            prompts.guardar("EURUSD", self.CRITERIO)
+        self.assertTrue(prompts.activo("EURUSD")["defecto"])
+
+    def test_con_backtest_guardado_se_activa(self):
+        prompts.registrar_backtest("EURUSD", self.CRITERIO, {"operaciones": 120, "pf": 1.4})
+        act = prompts.guardar("EURUSD", self.CRITERIO)
+        self.assertEqual(act["texto"], self.CRITERIO)
+        self.assertFalse(act["defecto"])
+
+    def test_backtest_de_otro_criterio_no_sirve(self):
+        prompts.registrar_backtest("EURUSD", self.CRITERIO + " otro", {"pf": 1.1})
+        with self.assertRaises(ValueError):
+            prompts.guardar("EURUSD", self.CRITERIO)
+
+    def test_backtest_es_por_simbolo(self):
+        prompts.registrar_backtest("EURUSD", self.CRITERIO, {"pf": 1.4})
+        with self.assertRaises(ValueError):
+            prompts.guardar("GBPUSD", self.CRITERIO)
+
+    def test_backtest_sin_metricas_se_rechaza(self):
+        with self.assertRaises(ValueError):
+            prompts.registrar_backtest("EURUSD", self.CRITERIO, {})
+
+    def test_restaurar_defecto_no_pide_backtest(self):
+        prompts.registrar_backtest("EURUSD", self.CRITERIO, {"pf": 1.4})
+        prompts.guardar("EURUSD", self.CRITERIO)
+        act = prompts.restaurar_defecto("EURUSD")
+        self.assertEqual(act["texto"], prompts.defecto_de("EURUSD"))
+
+
 if __name__ == "__main__":
     unittest.main()
