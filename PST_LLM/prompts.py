@@ -35,10 +35,7 @@ POR_DEFECTO = {"activo": True, "min_operaciones": 20, "modelo": "sonnet", "esfue
 TIPOS = {"activo": bool, "min_operaciones": int, "modelo": str, "esfuerzo": str, "cadencia_min": int,
          "max_caracteres": int, "max_operaciones_contexto": int, "validar": bool, "validacion_n": int}
 
-CRITERIO_DEFECTO = """- Por defecto, quédate fuera (hold). La mayoría de las velas no tienen ventaja: entra solo con una razón clara y concreta.
-- Entra solo en una estructura concreta (un nivel o una lectura de indicador con nombre) del marco que elijas, y di en 'Riesgo:' qué invalidaría la idea.
-- Usa los marcos altos para la dirección y los bajos para el momento de entrada.
-- No operes contra los marcos altos sin una razón clara."""
+CRITERIO_DEFECTO = """- Regla de entrada única: entra solo si el setup de tu régimen se cumple y hay un nivel o una lectura de indicador con nombre en el marco que eliges. No operes contra H4 sin una razón clara. Si no, quédate fuera (hold)."""
 
 # Scalping: un criterio por simbolo, guardado con la clave "scalping:<simbolo>" para que no se mezcle con
 # la flota (un mismo simbolo podria pasar de una estrategia a otra). Sin fila, usa este por defecto.
@@ -126,11 +123,41 @@ def _con():
         con.execute("ALTER TABLE llm_prompt_revisiones ADD COLUMN tickets TEXT")   # tablas creadas antes de esto
     except sqlite3.OperationalError:
         pass
+    con.execute("""CREATE TABLE IF NOT EXISTS llm_criterio_backtests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL, version TEXT NOT NULL, ts TEXT NOT NULL,
+        origen TEXT, metricas_json TEXT NOT NULL)""")
+    con.execute("CREATE INDEX IF NOT EXISTS ix_llm_criterio_backtests_sym ON llm_criterio_backtests(symbol, version)")
     return con
 
 
 def version_de(texto):
     return hashlib.sha1(texto.encode("utf-8")).hexdigest()[:10]
+
+
+# ── Backtests que respaldan un criterio por simbolo ──────────────────────────
+def registrar_backtest(symbol, texto, metricas, origen="terminal de pruebas"):
+    """Guarda el backtest de un criterio (por su version). Sin backtest guardado, el criterio no se activa."""
+    if not isinstance(metricas, dict) or not metricas:
+        raise ValueError("el backtest necesita métricas (un dict no vacío)")
+    texto = validar(texto)
+    con = _con()
+    try:
+        con.execute("INSERT INTO llm_criterio_backtests (symbol, version, ts, origen, metricas_json) VALUES (?,?,?,?,?)",
+                    (symbol, version_de(texto), datetime.now().strftime("%Y-%m-%d %H:%M:%S"), origen,
+                     json.dumps(metricas, ensure_ascii=False)))
+        con.commit()
+    finally:
+        con.close()
+    return version_de(texto)
+
+
+def tiene_backtest(symbol, texto):
+    con = _con()
+    try:
+        return con.execute("SELECT 1 FROM llm_criterio_backtests WHERE symbol=? AND version=? LIMIT 1",
+                           (symbol, version_de(texto))).fetchone() is not None
+    finally:
+        con.close()
 
 
 def activo(symbol):
@@ -177,12 +204,17 @@ def validar(texto, max_caracteres=None):
     return texto
 
 
-def guardar(symbol, texto, por="usuario", proposal_id=None):
+def guardar(symbol, texto, por="usuario", proposal_id=None, sin_backtest=False):
     """Activa un criterio nuevo para el simbolo. Las propuestas pendientes de ese simbolo quedan obsoletas
-    (estaban escritas sobre el criterio anterior), salvo la que se esta aplicando."""
+    (estaban escritas sobre el criterio anterior), salvo la que se esta aplicando.
+    Un criterio por simbolo solo se activa con un backtest guardado (registrar_backtest); el criterio por
+    defecto no lo necesita (sin_backtest=True)."""
     texto = validar(texto)
     if texto == activo(symbol)["texto"]:
         return activo(symbol)
+    if not sin_backtest and not tiene_backtest(symbol, texto):
+        raise ValueError(f"el criterio de {symbol} no tiene backtest guardado: no se activa "
+                         "(registrarlo en el terminal de pruebas antes)")
     con = _con()
     try:
         con.execute("INSERT INTO llm_criterios (symbol, version, texto, activado, por, proposal_id) VALUES (?,?,?,?,?,?)",
@@ -199,7 +231,7 @@ def guardar(symbol, texto, por="usuario", proposal_id=None):
 
 
 def restaurar_defecto(symbol, por="usuario"):
-    return guardar(symbol, defecto_de(symbol), por=por)
+    return guardar(symbol, defecto_de(symbol), por=por, sin_backtest=True)
 
 
 # ── Diferencias ──────────────────────────────────────────────────────────────
@@ -273,7 +305,10 @@ def aplicar(pid, por="usuario"):
         finally:
             con.close()
         return "obsoleta: el criterio cambió desde que se propuso; no se aplica"
-    guardar(p["target"], prop["criterio"], por=f"propuesta #{pid} ({por})", proposal_id=pid)
+    try:
+        guardar(p["target"], prop["criterio"], por=f"propuesta #{pid} ({por})", proposal_id=pid)
+    except ValueError as e:   # sin backtest: queda 'aprobada' para reintentar tras registrar el backtest
+        return f"no aplicada: {e}"
     con = _con()
     try:
         _mover(con, pid, "aprobada", "viva", por)
@@ -309,7 +344,11 @@ def revertir(pid, por="usuario"):
     if act.get("proposal_id") != pid:
         return "el criterio ya cambió después: no se toca"
     previo = json.loads(p["current_json"] or "{}").get("criterio") or defecto_de(p["target"])
-    guardar(p["target"], previo, por=f"revertida #{pid} ({por})")
+    try:
+        guardar(p["target"], previo, por=f"revertida #{pid} ({por})",
+                sin_backtest=previo == defecto_de(p["target"]))
+    except ValueError as e:
+        return f"no revertida: {e}"
     return "revertida: vuelve el criterio anterior"
 
 
